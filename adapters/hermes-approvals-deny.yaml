@@ -1,0 +1,15 @@
+# Hermes Agent — profile config.yaml, under `approvals:`. Blocks, unconditionally (even yolo / mode=off), every way an agent
+# could kill or launch Chrome without its owner: kill by pattern, quit Chrome through AppleScript, start a Chrome binary on a
+# debug port. The only way left is ~/bin/browser-owner (or its per-agent shortcut). Hermes re-reads the file on change.
+approvals:
+  deny:
+    - "pkill*"
+    - "*pkill *"
+    - "killall*"
+    - "*killall *"
+    - "*kill*$(pgrep*"
+    - "*kill*`pgrep*"
+    - "*pgrep*xargs*kill*"
+    - "*osascript*quit*google chrome*"
+    - "*osascript*google chrome*quit*"
+    - "*macos/google chrome*--remote-debugging-port*"
