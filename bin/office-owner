@@ -1,0 +1,7 @@
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+for PY in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+  if [ -x "$PY" ] && "$PY" -I -V >/dev/null 2>&1; then exec "$PY" -I "$DIR/agent-office.py" "$@"; fi
+done
+echo '{"status":"failed","why":"no working python3 found"}'
+exit 1
