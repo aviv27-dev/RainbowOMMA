@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.rainbowomma.agent-office-sweep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>~/bin/agent-office</string>
+    <string>sweep</string>
+    <string>--max-age-h</string>
+    <string>3</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>LANG</key><string>en_US.UTF-8</string><key>LC_ALL</key><string>en_US.UTF-8</string></dict>
+  <key>StartInterval</key><integer>900</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>~/.rainbowomma/logs/agent-office-sweep.out.log</string>
+  <key>StandardErrorPath</key><string>~/.rainbowomma/logs/agent-office-sweep.err.log</string>
+</dict>
+</plist>
