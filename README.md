@@ -126,3 +126,7 @@ focus, and how a theme is installed through the DevTools pipe on Chrome 137+.
 - Ready-made Claude Code and Codex CLI guardrails
 - A human-activity gate that waits while you're typing
 - Per-agent tab claims, an auth/login lease, and a separate Chrome channel per agent
+
+## License
+
+RainbowOMMA is released under the [Apache License 2.0](LICENSE).
