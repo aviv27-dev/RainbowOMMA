@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/rainbowomma-guard.py\""
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": ["Bash(pkill *)", "Bash(killall *)"]
+  }
+}

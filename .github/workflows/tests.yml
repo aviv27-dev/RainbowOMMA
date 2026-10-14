@@ -1,0 +1,19 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the test suite (fakes only — no real browser or app)
+        run: python3 tests/test_rainbowomma.py
+      - name: Shell syntax
+        run: for f in bin/*.sh install.sh install/*.sh examples/agent-launcher.sh; do bash -n "$f"; done

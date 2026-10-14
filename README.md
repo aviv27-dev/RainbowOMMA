@@ -1,5 +1,8 @@
 # 🌈 RainbowOMMA — One Mac, Many Agents
 
+[![tests](https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml/badge.svg)](https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Let a human and a whole team of AI agents share one Mac without stepping on each other.**
 
 Your agents drive Chrome, open Word documents and fill in web portals, and you're still on the same Mac doing
@@ -9,7 +12,7 @@ you're typing in.
 
 ![A shared Mac: the human's grey Chrome and three agent browsers, each in its own color with the agent's name written across the frame](docs/images/rainbow-desktop.png)
 
-<sub>Illustration of the window frames RainbowOMMA paints. Today the UI text is Hebrew (RTL), and English/LTR is on the roadmap.</sub>
+<sub>Illustration of the window frames RainbowOMMA paints, shown in its Hebrew (RTL) interface. RainbowOMMA speaks English and Hebrew.</sub>
 
 ---
 
@@ -70,6 +73,13 @@ For Hermes Agent, apply [`adapters/hermes-cua-cursor-theme.patch`](adapters/herm
 - With reduced motion on, `cua-driver serve` measured 0.0% CPU after sessions with the cursor shown.
 - Agents on Codex aren't covered yet. The Hermes patch is Hermes-only, and a Codex adapter is future work.
 
+### 🌍 English and Hebrew
+Every message a person sees comes in English or Hebrew: the `why` in each answer, notifications, desktop icon names and
+the text on the frame. The language follows your Mac's preferred language; set `RAINBOW_LANG=en` or `RAINBOW_LANG=he` to
+choose. The frame follows the direction too. In Hebrew (RTL) the tabs grow from the right, so the agent's name sits on the
+left. In English (LTR) the tabs grow from the left, so the name runs along the right part of the frame.
+Status words and exit codes stay the same in both languages, because agents parse them.
+
 ### 🖥️ One-click desktop controls
 `install/make-desktop-apps.sh` puts colored open/close icons on the desktop: one pair per agent, one for your own
 Chrome, and a "close all agents" button that asks for confirmation first.
@@ -82,7 +92,7 @@ Chrome, and a "close all agents" button that asks for confirmation first.
 
 ```bash
 git clone https://github.com/aviv27-dev/RainbowOMMA.git && cd RainbowOMMA
-cp bin/* ~/bin/                                # the tools look for each other in the same folder
+./install.sh                                   # tools into ~/bin; add --with-sweep for the launchd document sweep
 $EDITOR ~/bin/browsers.json                    # one row per agent: port, profile, color, label
 
 ~/bin/browser-owner start alpha --by alpha     # paints Alpha's browser and opens it in the background
@@ -119,7 +129,13 @@ Allow it once and later conversions run without asking.
 A guardrail stops an agent from going around the owner with its own `pkill`, `killall` or AppleScript `quit`:
 
 - **Hermes Agent:** a ready-made deny list in [`adapters/hermes-approvals-deny.yaml`](adapters/hermes-approvals-deny.yaml).
-- **Claude Code / Codex CLI:** the patterns are in [`docs/DESIGN.md`](docs/DESIGN.md#5-agent-adapters-the-guardrails). Ready-made adapters are on the roadmap.
+- **Claude Code:** a ready-made PreToolUse hook in [`adapters/claude-code/`](adapters/claude-code/). Install it like this:
+  ```bash
+  mkdir -p ~/.claude/hooks && cp adapters/claude-code/rainbowomma-guard.py ~/.claude/hooks/
+  ```
+  Then merge [`adapters/claude-code/settings.json`](adapters/claude-code/settings.json) into `~/.claude/settings.json`,
+  or into a project's `.claude/settings.json`. A blocked command tells the agent to use `browser-owner` instead.
+- **Codex CLI:** the patterns are in [`docs/DESIGN.md`](docs/DESIGN.md#5-agent-adapters-the-guardrails). A ready-made adapter is on the roadmap.
 
 Pattern rules only see the command an agent runs directly. The owner's own checks are the real protection.
 
@@ -128,6 +144,15 @@ Pattern rules only see the command an agent runs directly. The owner's own check
 macOS · Google Chrome · Python 3.9+ (standard library only) · `osascript` (built in). No dependencies to install.
 
 Optional: Microsoft Word for `office-owner pdf`, and Cua Driver for the colored agent cursor.
+
+## Configuration
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `RAINBOW_LANG` | your Mac's language | `en` or `he` for every message a person sees |
+| `RAINBOW_HOME` | `~/.rainbowomma` | where logs, state and themes live (`install.sh --with-sweep` hands it to the sweep job) |
+| `OFFICE_WORD_DIR` | `$RAINBOW_HOME/word-convert` | the one folder Word converts in |
+| `BROWSER_OWNER_REGISTRY` | `browsers.json` next to the tools | the agent registry |
 
 ## Tests
 
@@ -146,9 +171,7 @@ focus, and how a theme is installed through the DevTools pipe on Chrome 137+.
 
 ## Roadmap
 
-- English + Hebrew message catalog (LTR + RTL frames)
-- `install.sh`, launchd sweep with absolute paths, and one configurable state directory
-- Ready-made Claude Code and Codex CLI guardrails
+- A ready-made Codex CLI guardrail and cursor adapter
 - A human-activity gate that waits while you're typing
 - Per-agent tab claims, an auth/login lease, and a separate Chrome channel per agent
 

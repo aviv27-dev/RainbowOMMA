@@ -545,6 +545,55 @@ check("RAINBOW_HOME moves logs, state and themes in one place",
       and ao_root.LOG == tmp / "root" / "logs" / "agent-office.log" and ao_root.WORD_DIR == tmp / "root" / "word-convert",
       (bo_root.SHARED, ao_root.LEASES))
 
+# ── install.sh (into a fake home; launchd is never touched in a test) ──
+fake_home = tmp / "home"; fake_home.mkdir()
+ienv = dict(os.environ, HOME=str(fake_home), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_INSTALL_NO_LAUNCHCTL="1")
+ienv.pop("RAINBOW_HOME", None)
+installer = str(HERE.parent / "install.sh")
+r = subprocess.run(["bash", installer, "--with-sweep"], capture_output=True, text=True, env=ienv)
+ib = fake_home / "bin"
+plist = fake_home / "Library" / "LaunchAgents" / "com.rainbowomma.agent-office-sweep.plist"
+check("install: the tools land together in ~/bin, executable, with the message catalog",
+      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "office-owner", "agent-office", "kill-chrome.sh"))
+      and (ib / "rainbow_i18n.py").exists(), r.stdout + r.stderr)
+check("install: browsers.json is created from the example", json.loads((ib / "browsers.json").read_text())["agents"].keys() >= {"alpha"})
+check("install: the state folders exist", all((fake_home / ".rainbowomma" / d).is_dir() for d in ("logs", "state", "word-convert")))
+ptxt = plist.read_text() if plist.exists() else ""
+check("install: the sweep job has absolute paths — launchd does not expand ~",
+      "~" not in ptxt and f"<string>{ib}/agent-office</string>" in ptxt and str(fake_home / ".rainbowomma" / "logs") in ptxt, ptxt[:300])
+(ib / "browsers.json").write_text('{"agents": {"mine": {}}}')
+r = subprocess.run(["bash", installer], capture_output=True, text=True, env=ienv)
+check("install: a second run never overwrites your browsers.json", r.returncode == 0 and "mine" in (ib / "browsers.json").read_text())
+r = subprocess.run(["bash", installer, "--with-sweep"], capture_output=True, text=True, env=dict(ienv, RAINBOW_HOME=str(tmp / "elsewhere")))
+check("install: a custom RAINBOW_HOME is handed to the sweep job", "<key>RAINBOW_HOME</key><string>" + str(tmp / "elsewhere") in plist.read_text())
+dry_home = tmp / "dry"; dry_home.mkdir()
+r = subprocess.run(["bash", installer, "--with-sweep", "--dry-run"], capture_output=True, text=True, env=dict(ienv, HOME=str(dry_home)))
+check("install --dry-run changes nothing", r.returncode == 0 and not any(dry_home.iterdir()), list(dry_home.iterdir()))
+r = subprocess.run(["bash", installer], capture_output=True, text=True, env=dict(ienv, RAINBOW_INSTALL_ANY_OS="0"))
+check("install: refuses to run anywhere but macOS", sys.platform == "darwin" or (r.returncode == 1 and "macOS" in r.stderr), r.stderr)
+
+# ── the Claude Code guard (a PreToolUse hook; fed JSON on stdin like Claude Code does) ──
+guard = str(HERE.parent / "adapters" / "claude-code" / "rainbowomma-guard.py")
+def hook(cmd, tool="Bash"):
+    ev = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": cmd}}
+    r = subprocess.run([sys.executable, "-I", guard], input=json.dumps(ev), capture_output=True, text=True)
+    return r.returncode, r.stderr
+blocked_cmds = ["pkill -f 'Google Chrome'", "cd /tmp && pkill -f chrome", "sudo killall 'Google Chrome'", "kill -9 $(pgrep -f remote-debugging)",
+                "kill `pgrep Chrome`", "pgrep -f Chrome | xargs kill", "osascript -e 'tell application \"Google Chrome\" to quit'",
+                "osascript -e 'quit app \"Google Chrome\"'",
+                "'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --remote-debugging-port=9222 --user-data-dir=/tmp/x"]
+res = [hook(c) for c in blocked_cmds]
+check("Claude Code guard blocks every way around the owner (exit 2, a reason for Claude on stderr)",
+      all(code == 2 and "browser-owner" in err for code, err in res), [c for c, (code, _) in zip(blocked_cmds, res) if code != 2])
+allowed = ["~/bin/browser-owner start alpha --by alpha", "~/bin/office-owner pdf --agent alpha a.docx", "kill 12345", "ls ~/pkill-notes",
+           "echo skill", "osascript -e 'tell application \"Google Chrome\" to get URL of active tab of front window'"]
+res = [hook(c) for c in allowed]
+check("…and lets the owner and ordinary commands through", all(code == 0 for code, _ in res), [c for c, (code, _) in zip(allowed, res) if code])
+check("…and ignores tools other than Bash", hook("pkill x", tool="Read")[0] == 0)
+cc = json.loads((HERE.parent / "adapters" / "claude-code" / "settings.json").read_text())
+check("the Claude Code settings example wires the guard on Bash", cc["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
+      and "rainbowomma-guard.py" in cc["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
