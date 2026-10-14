@@ -5,32 +5,33 @@ DATA_DIR="$HOME/agents/alpha-profile"
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 mkdir -p "$DATA_DIR"
 
-notify() { osascript -e "display notification \"$1\" with title \"דפדפן אלפא (CDP)\"" >/dev/null 2>&1; }
+msg() { /usr/bin/python3 -I "$HOME/bin/rainbow_i18n.py" "$@" 2>/dev/null || echo "$1"; }
+notify() { osascript -e "display notification \"$1\" with title \"$(msg al.title name=Alpha)\"" >/dev/null 2>&1; }
 
 alive() { curl -s --max-time 2 http://127.0.0.1:9222/json/version >/dev/null 2>&1; }
 
 if [ "${ALPHA_BROWSER_OWNER:-0}" != "1" ] && [ -x "$HOME/bin/alpha-browser" ]; then
   OUT=$("$HOME/bin/alpha-browser" start --by human 2>&1); RC=$?
   case "$OUT" in
-    *'"status": "already-up"'*) notify "כבר רץ (פורט 9222) — לא נפתח חלון חדש" ;;
-    *'"status": "started"'*) notify "עלה — ערוץ CDP פעיל" ;;
+    *'"status": "already-up"'*) notify "$(msg al.already port=9222)" ;;
+    *'"status": "started"'*) notify "$(msg al.up)" ;;
     *'no working python3'*) OWNER_DOWN=1 ;;
-    *) notify "הפתיחה נכשלה — $OUT" ;;
+    *) notify "$(msg al.failed out="$OUT")" ;;
   esac
   if [ "${OWNER_DOWN:-0}" != "1" ]; then echo "$OUT"; exit $RC; fi
-  notify "הבעלים (alpha-browser) לא רץ — אין python3; פותח ישירות"
+  notify "the owner (alpha-browser) is not running — no python3; opening directly"   # no python3: no catalog either
 fi
 
 # Already running? Say so and stop. Starting a second copy on the same port would fail anyway,
 # and killing the live one costs the logged-in session.
 if alive; then
-  notify "כבר רץ (פורט 9222) — לא נפתח חלון חדש"
+  notify "$(msg al.already port=9222)"
   echo "CDP already running on 9222"
   exit 0
 fi
 
 if [ ! -x "$CHROME" ]; then
-  notify "שגיאה: Google Chrome לא נמצא"
+  notify "$(msg al.no_chrome)"
   echo "Chrome not found at: $CHROME" >&2
   exit 1
 fi
@@ -57,10 +58,10 @@ done
 if alive; then
   TABS=$(curl -s --max-time 3 http://127.0.0.1:9222/json 2>/dev/null \
          | grep -c '"type": "page"' || echo "?")
-  notify "עלה — ערוץ CDP פעיל, $TABS טאבים שוחזרו"
+  notify "$(msg al.up_tabs tabs="$TABS")"
   echo "CDP up on 9222 ($TABS pages)"
 else
-  notify "נפתח אבל ערוץ ה-CDP לא עלה על 9222 — הסוכן לא יוכל לשלוט בו"
+  notify "$(msg al.port_silent port=9222)"
   echo "Chrome started but port 9222 never answered" >&2
   exit 1
 fi

@@ -3,6 +3,9 @@ set -u
 
 PATTERN='(Google Chrome|Chromium|Google Chrome Helper|Google Chrome for Testing)( \([^)]*\))?\.app/Contents/MacOS/'
 
+I18N="$(cd "$(dirname "$0")" && pwd)/rainbow_i18n.py"
+msg() { /usr/bin/python3 -I "$I18N" "$@"; }
+
 KILL_CDP="${KILL_CDP:-0}"
 [ "${1:-}" = "--all" ] && KILL_CDP=1
 
@@ -17,7 +20,7 @@ if [ "$KILL_CDP" = "1" ]; then
   fi
   if [ -z "$NAMES" ]; then
     OWNER_NOTE="
-browser-owner לא ענה — דפדפני הסוכנים לא נסגרו (נסגר רק השאר). לסגור אותם: לתקן את browser-owner, או לסגור ידנית."
+$(msg kc.owner_silent)"
     KILL_CDP=0
   fi
   for NAME in $NAMES; do
@@ -28,12 +31,12 @@ browser-owner לא ענה — דפדפני הסוכנים לא נסגרו (נס�
     done
     if [ "$RC" -eq 0 ]; then
       case "$OWNER_OUT" in *'"processes": 0'*) ;; *) OWNER_NOTE="$OWNER_NOTE
-הדפדפן של $NAME נסגר דרך browser-owner ונרשם 'נסגר ע\"י האדם' — הוא לא ייפתח לבד." ;; esac
+$(msg kc.agent_closed name="$NAME")" ;; esac
     else
       PORT=$("$HOME/bin/browser-owner" status "$NAME" 2>/dev/null | sed -n 's/.*"port": \([0-9]*\).*/\1/p')
       [ -n "$PORT" ] && KEEP_PORTS="$KEEP_PORTS $PORT"
       OWNER_NOTE="$OWNER_NOTE
-browser-owner לא סגר את הדפדפן של $NAME ($OWNER_OUT) — הוא נשאר פתוח (לא נסגר כאן ישירות, כדי שלא ייפתח מחדש בלי רישום)."
+$(msg kc.agent_kept name="$NAME" out="$OWNER_OUT")"
     fi
   done
 fi
@@ -70,9 +73,9 @@ SPARED=$(spare_pids | grep -c '^[0-9]' || true)
 
 if [ "$BEFORE" -eq 0 ]; then
   if [ "$SPARED" -gt 0 ]; then
-    echo "אין תהליכי Chrome לסגירה. מה שפתוח הם דפדפני ה-CDP של הסוכנים ($SPARED תהליכים), והם מוחרגים בכוונה (כדי לא לאבד התחברויות פעילות של הסוכנים). לסגור גם אותם: kill-chrome.sh --all"
+    msg kc.only_agents n="$SPARED"
   else
-    echo "לא נמצאו תהליכי Chrome פתוחים.$OWNER_NOTE"
+    echo "$(msg kc.none)$OWNER_NOTE"
   fi
   exit 0
 fi
@@ -108,10 +111,10 @@ CLOSED=$((BEFORE - AFTER))
 SUFFIX=""
 [ "$SPARED" -gt 0 ] && SUFFIX="
 
-לא כולל את דפדפני ה-CDP של הסוכנים ($SPARED תהליכים) — הם נשארו פתוחים בכוונה (כדי לא לאבד התחברויות פעילות של הסוכנים)."
+$(msg kc.spared n="$SPARED")"
 
 if [ "$AFTER" -eq 0 ]; then
-  echo "נסגרו $CLOSED תהליכי Chrome.$SUFFIX$OWNER_NOTE"
+  echo "$(msg kc.closed_all n="$CLOSED")$SUFFIX$OWNER_NOTE"
 else
-  echo "נסגרו $CLOSED מתוך $BEFORE. נשארו $AFTER שלא נענו.$SUFFIX$OWNER_NOTE"
+  echo "$(msg kc.closed_some n="$CLOSED" total="$BEFORE" left="$AFTER")$SUFFIX$OWNER_NOTE"
 fi

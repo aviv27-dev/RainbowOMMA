@@ -4,9 +4,12 @@ DESK="$HOME/Desktop"
 ARCH="$DESK/Archive/browser-shortcuts-$(date +%Y%m%d-%H%M)"
 WORK="$(mktemp -d)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+I18N="$HERE/../bin/rainbow_i18n.py"; [ -f "$I18N" ] || I18N="$HOME/bin/rainbow_i18n.py"
+msg() { /usr/bin/python3 -I "$I18N" "$@"; }
+CANCEL="$(msg desk.btn_cancel)"; CLOSE="$(msg desk.btn_close)"; ERR="$(msg desk.error)"
 
 mkdir -p "$ARCH"
-for f in "$DESK"/*Chrome*.app "$DESK"/*דפדפן*.app; do
+for f in "$DESK"/*Chrome*.app "$DESK"/*דפדפן*.app "$DESK"/[1-9]\ ·\ *.app; do
   [ -e "$f" ] && mv "$f" "$ARCH/"
 done
 
@@ -25,7 +28,7 @@ function run(argv) {
   $.NSColor.colorWithDeviceRedGreenBlueAlpha(r, g, b, 1).setFill;
   $.NSBezierPath.bezierPathWithOvalInRect($.NSMakeRect(64, 64, S - 128, S - 128)).fill;
   const attrs = $.NSMutableDictionary.alloc.init;
-  attrs.setObjectForKey($.NSFont.boldSystemFontOfSize(text.length > 4 ? 200 : 260), $.NSFontAttributeName);
+  attrs.setObjectForKey($.NSFont.boldSystemFontOfSize(text.length > 7 ? 150 : text.length > 4 ? 200 : 260), $.NSFontAttributeName);
   attrs.setObjectForKey(light ? $.NSColor.colorWithDeviceRedGreenBlueAlpha(0.15, 0.12, 0, 1) : $.NSColor.whiteColor, $.NSForegroundColorAttributeName);
   const s = $.NSString.alloc.initWithUTF8String(text);
   const sz = s.sizeWithAttributes(attrs);
@@ -49,12 +52,12 @@ app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
     echo "-- $name — made by RainbowOMMA/make-desktop-apps.sh; the work is ~/bin/desk-browser.sh $act $who"
     echo "on run"
     if [ -n "$confirm" ]; then
-      echo "  display dialog \"$confirm\" with title \"$name\" buttons {\"ביטול\", \"סגור\"} default button \"ביטול\" cancel button \"ביטול\" with icon caution"
+      echo "  display dialog \"$confirm\" with title \"$name\" buttons {\"$CANCEL\", \"$CLOSE\"} default button \"$CANCEL\" cancel button \"$CANCEL\" with icon caution"
     fi
     echo "  try"
     echo "    set r to do shell script quoted form of ((POSIX path of (path to home folder)) & \"bin/desk-browser.sh\") & \" $act $who\""
     echo "  on error e"
-    echo "    set r to \"שגיאה: \" & e"
+    echo "    set r to \"$ERR\" & e"
     echo "  end try"
     echo "  display notification r with title \"$name\""
     echo "end run"
@@ -69,14 +72,15 @@ app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
   touch "$out"
 }
 
-app "1 · ⚪ האדם — פתח Chrome"            "#B0BEC5" "האדם"   open  human
-app "2 · 🟣 אלפא — פתח דפדפן"              "#8E24AA" "אלפא"   open  alpha
-app "3 · 🟢 בראבו — פתח דפדפן"              "#00897B" "בראבו"   open  bravo
-app "4 · 🟠 צ׳רלי — פתח דפדפן"              "#F4511E" "צ׳רלי"   open  charlie
-app "5 · ✖ האדם — סגור Chrome (לא סוכנות)" "#B0BEC5" "✖ האדם" close human
-app "6 · ✖ אלפא — סגור דפדפן"       "#8E24AA" "✖ אלפא" close alpha "לסגור את הדפדפן של אלפא? ההתחברות של הסוכן תתנתק, והוא לא ייפתח לבד עד לפתיחה ידנית מהקיצור."
-app "7 · ✖ בראבו — סגור דפדפן"              "#00897B" "✖ בראבו" close bravo
-app "8 · ✖ צ׳רלי — סגור דפדפן"              "#F4511E" "✖ צ׳רלי" close charlie
-app "9 · ✖ כל הסוכנים — סגור ⚠️"           "#757575" "✖ הכל"  close agents "לסגור את הדפדפנים של כל הסוכנים (אלפא, בראבו, צ׳רלי)? ההתחברויות של הסוכנים יתנתקו, ואף אחד מהם לא ייפתח לבד עד לפתיחה ידנית."
+H="$(msg desk.name.human)"; A="$(msg desk.name.alpha)"; B="$(msg desk.name.bravo)"; C="$(msg desk.name.charlie)"
+app "1 · ⚪ $(msg desk.app.open_human)"            "#B0BEC5" "$H"   open  human
+app "2 · 🟣 $(msg desk.app.open_agent name="$A")"  "#8E24AA" "$A"   open  alpha
+app "3 · 🟢 $(msg desk.app.open_agent name="$B")"  "#00897B" "$B"   open  bravo
+app "4 · 🟠 $(msg desk.app.open_agent name="$C")"  "#F4511E" "$C"   open  charlie
+app "5 · ✖ $(msg desk.app.close_human)"            "#B0BEC5" "✖ $H" close human
+app "6 · ✖ $(msg desk.app.close_agent name="$A")"  "#8E24AA" "✖ $A" close alpha "$(msg desk.confirm_one name="$A")"
+app "7 · ✖ $(msg desk.app.close_agent name="$B")"  "#00897B" "✖ $B" close bravo
+app "8 · ✖ $(msg desk.app.close_agent name="$C")"  "#F4511E" "✖ $C" close charlie
+app "9 · ✖ $(msg desk.app.close_all)"              "#757575" "✖ $(msg desk.name.all)" close agents "$(msg desk.confirm_all names="$A, $B, $C")"
 rm -rf "$WORK"
 echo "ok — 9 icons on the desktop; the old ones in $ARCH"

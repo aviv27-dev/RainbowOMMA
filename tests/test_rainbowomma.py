@@ -10,6 +10,7 @@ def load(name):
     loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), str(HERE / name))
     spec = importlib.util.spec_from_loader(loader.name, loader); m = importlib.util.module_from_spec(spec); loader.exec_module(m); return m
 
+os.environ["RAINBOW_LANG"] = "he"     # the checks below read the Hebrew messages; English has its own checks at the end
 results = []
 def check(name, cond, info=""):
     results.append(bool(cond)); print(("✅ " if cond else "❌ ") + name + ("" if cond else f"  — {info}"))
@@ -466,6 +467,83 @@ code, out = ao.cmd_pdf("bravo", str(src), out=str(tmp / "agent" / "x.docx"))
 check("pdf --out must end in .pdf", code == 1 and not calls, out)
 ao.RUN = osa
 
+
+# ── English + Hebrew: the message catalog, the frame's side, one configurable root ──
+import subprocess
+sys.path.insert(0, str(HERE))
+import rainbow_i18n as i18n
+check("every message has an English and a Hebrew text", all(set(v) >= {"en", "he"} and all(v.values()) for v in i18n.M.values()),
+      [k for k, v in i18n.M.items() if set(v) < {"en", "he"}])
+used = set()
+for f in [*HERE.glob("*.sh"), HERE.parent / "examples" / "agent-launcher.sh", HERE.parent / "install" / "make-desktop-apps.sh"]:
+    used |= set(re.findall(r"msg ([a-z]+\.[a-z_.]+)", f.read_text(encoding="utf-8")))
+used |= {f"desk.name.{n}" for n in ("alpha", "bravo", "charlie", "human")}
+check("every message a shell script asks for exists in the catalog", used and used <= set(i18n.M), sorted(used - set(i18n.M)))
+for f in [*HERE.glob("*.py"), *HERE.glob("*.sh"), HERE.parent / "examples" / "agent-launcher.sh", HERE.parent / "install" / "make-desktop-apps.sh"]:
+    if f.name == "rainbow_i18n.py":
+        continue
+    heb = [ln for ln in f.read_text(encoding="utf-8").splitlines() if re.search("[\u0590-\u05FF]", ln) and "*דפדפן*.app" not in ln]
+    check(f"no Hebrew left in code outside the catalog: {f.name}", not heb, heb[:2])
+
+os.environ["RAINBOW_LANG"] = "en"
+code, out = bo.do_stop(CHARLIE_A, "alpha")
+check("English: an agent's stop is refused with an English why — the status word and exit code unchanged",
+      code == 2 and out["status"] == "refused" and out["why"] == "only the human closes צ׳רלי's browser (stop --by human). An agent that needs a recovery uses recover", out)
+check("English: the profile is named '<label> — agent · do not touch'", bo.display_name({"label": "Charlie"}) == "Charlie — agent · do not touch")
+code, out = ao.cmd_pdf("bravo", str(tmp / "missing.docx"))
+check("English: office-owner explains in English too", code == 1 and out["why"].startswith("no such file"), out)
+os.environ["RAINBOW_LANG"] = "he"
+code, out = bo.do_stop(CHARLIE_A, "alpha")
+check("Hebrew: the same refusal in Hebrew", code == 2 and out["why"].startswith("רק האדם סוגר"), out)
+
+check("RTL keeps the theme key it always had (no rebuild for existing Hebrew installs)", bo.theme_key(CHARLIE_A) == f"{bo.THEME_VERSION}:#F4511E:צ׳רלי")
+os.environ["RAINBOW_LANG"] = "en"
+check("LTR has its own theme key, so switching language rebuilds the frame once", bo.theme_key(CHARLIE_A).endswith(":ltr"))
+bo_fresh = load("browser-owner.py")
+bo_fresh.THEMES = tmp / "themes-i18n"
+seen = []
+_run = bo_fresh.subprocess.run
+bo_fresh.subprocess.run = lambda args, **kw: (seen.append(args), subprocess.CompletedProcess(args, 1, "", ""))[1]
+try:
+    for lg in ("en", "he"):
+        os.environ["RAINBOW_LANG"] = lg
+        bo_fresh.build_theme({"name": "zed", "label": "Zed", "color": "#8E24AA"})
+finally:
+    bo_fresh.subprocess.run = _run
+check("frame text and side follow the language: LTR → 'Zed · AGENT · do not touch' drawn on the right",
+      seen[0][5] == "Zed · AGENT · do not touch" and seen[0][-1] == "ltr", seen[0][4:])
+check("…RTL → the Hebrew text on the left", seen[1][5] == "Zed · סוכן · לא לגעת" and seen[1][-1] == "rtl", seen[1][4:])
+check("the theme's name follows the language", json.loads((tmp / "themes-i18n" / "zed" / "manifest.json").read_text())["name"] == "סוכן: Zed")
+
+os.environ.pop("RAINBOW_LANG")
+i18n._mac_lang = lambda: ""
+for env, want in (({"LANG": "he_IL.UTF-8"}, "he"), ({"LANG": "en_US.UTF-8"}, "en"), ({}, "en")):
+    i18n._detected = None
+    saved = {k: os.environ.pop(k, None) for k in ("LC_ALL", "LC_MESSAGES", "LANG")}
+    os.environ.update(env)
+    got = i18n.lang()
+    for k, v in saved.items():
+        os.environ.pop(k, None)
+        if v is not None:
+            os.environ[k] = v
+    check(f"no RAINBOW_LANG: locale {env.get('LANG', '(none)')} → {want}", got == want, got)
+i18n._detected = None
+i18n._mac_lang = lambda: "he-il"
+check("macOS preferred language Hebrew → he (before LANG, which launchd sets to en_US)", i18n.lang() == "he")
+os.environ["RAINBOW_LANG"] = "en"
+check("RAINBOW_LANG wins over the Mac's language", i18n.lang() == "en")
+r = subprocess.run([sys.executable, "-I", str(HERE / "rainbow_i18n.py"), "desk.opened", "name=Alpha"], capture_output=True, text=True,
+                   env=dict(os.environ, RAINBOW_LANG="en"))
+check("the shell scripts' helper prints one message", r.stdout.strip() == "Alpha's browser is open", r.stdout)
+os.environ["RAINBOW_LANG"] = "he"
+
+os.environ["RAINBOW_HOME"] = str(tmp / "root")
+bo_root, ao_root = load("browser-owner.py"), load("agent-office.py")
+os.environ.pop("RAINBOW_HOME")
+check("RAINBOW_HOME moves logs, state and themes in one place",
+      bo_root.SHARED == tmp / "root" and bo_root.THEMES == tmp / "root" / "themes" and ao_root.LEASES == tmp / "root" / "state" / "doc_leases"
+      and ao_root.LOG == tmp / "root" / "logs" / "agent-office.log" and ao_root.WORD_DIR == tmp / "root" / "word-convert",
+      (bo_root.SHARED, ao_root.LEASES))
 
 
 print(f"\n{sum(results)}/{len(results)} passed")
