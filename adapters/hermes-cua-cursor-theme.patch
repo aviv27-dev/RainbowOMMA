@@ -1,0 +1,16 @@
+--- a/tools/computer_use/cua_backend.py
++++ b/tools/computer_use/cua_backend.py
+@@ -326,6 +326,13 @@
+             if _cua_no_overlay():  # belt-and-suspenders when --no-overlay is unsupported or ignored
+                 self._best_effort("set_agent_cursor_enabled failed",
+                                   self.set_agent_cursor_enabled, False, cursor_id=self._session_id)
++            # RainbowOMMA: a profile may name its own installed cursor theme (computer_use.cursor_theme) so the agent's
++            # CUA cursor has the agent's color. reduced_motion "on" by default: the overlay stops redrawing at rest.
++            _theme = str(_computer_use_cfg().get("cursor_theme") or "").strip()
++            if _theme and not _cua_no_overlay():
++                self._best_effort("set_agent_cursor_theme failed", self._session.call_tool, "set_agent_cursor_theme",
++                                  {"session": self._session_id, "theme_id": _theme,
++                                   "reduced_motion": str(_computer_use_cfg().get("cursor_reduced_motion") or "on")})
+ 
+     def stop(self) -> None:
+         # Best-effort end_session so the driver cleans per-session state (cursor overlay, recording ownership,

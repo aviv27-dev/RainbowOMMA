@@ -1,0 +1,6 @@
+# Hermes Agent — profile config.yaml. The agent's CUA cursor in the agent's color (needs adapters/hermes-cua-cursor-theme.patch
+# applied to Hermes, and the theme built + installed by tools/cursor-themes/build_cursor_themes.py --install).
+computer_use:
+  no_overlay: false                              # Hermes turns the overlay off on macOS by default
+  cursor_theme: com.rainbowomma.cursor.alpha     # com.rainbowomma.cursor.<agent name in browsers.json>
+  cursor_reduced_motion: 'on'                    # the overlay stops redrawing while the cursor rests (CPU)

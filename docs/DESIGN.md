@@ -1,10 +1,11 @@
 # RainbowOMMA — design
 
 ## 1. Principles
-1. **One owner per resource; everyone else asks it.** Owners: `browser-owner` (agent browsers), `agent-office`
+1. **One owner per resource; everyone else asks it.** Owners: `browser-owner` (agent browsers), `office-owner` (= `agent-office`)
    (documents agents open), the human (their own Chrome).
 2. **The human first.** Only the human closes an agent's browser for good (`stop --by human`); a person's ⌘Q is
-   respected; a new window never stays in front of the human; shared GUI apps are never quit.
+   respected; a new window never stays in front of the human; an app the human launched is never quit (office-owner
+   quits only apps it launched itself, after 10 idle minutes with no documents open).
 3. **Unknown = do nothing.** A port that answers but is not the agent's browser is `blocked`, not "up". A profile in use
    is `profile-busy`. An app that cannot answer means "keep the lease". A process table that changed during the probes
    means "do not kill".
@@ -16,7 +17,7 @@
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · human-theme`, `--by WHO` |
 | `bin/browsers.json` | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme` |
 | `bin/theme-frame.js` | draws the agent's name onto the theme's frame image (AppKit via JXA — no image library) |
-| `bin/agent-office(.py)` | document leases in Word/Excel/Acrobat/Preview: `open · close · renew · sweep · list` |
+| `bin/office-owner` = `bin/agent-office(.py)` | document leases in Word/Excel/Acrobat/Preview, real-Word → PDF, quitting only the apps it launched: `open · close · renew · pdf · sweep · list · apps` |
 | `bin/kill-chrome.sh` | the human's broom: closes their Chrome + headless leftovers, spares every agent browser; `--all` goes through the owner |
 | `bin/desk-browser.sh`, `install/make-desktop-apps.sh` | colored desktop icons: open/close each agent, the human's Chrome, all agents |
 | `examples/agent-shortcut` | `<agent>-browser <cmd>` = `browser-owner <cmd> <agent>` (kept for callers that know the old name) |
@@ -60,9 +61,38 @@ SAME AppleScript that closes it. Never `tell application` an app that is not run
 screen). One lock for open/renew/close/sweep; the sweep re-reads each lease before closing; leases < 2 min are not
 dropped (`open -g` returns before the app lists the document); leases of documents closed by hand are dropped.
 
+**Word → PDF (`pdf`).** Always the real Word (LibreOffice renders complex Word layouts differently). The source is copied to a
+uniquely named file (`ofc-pdf-<hex>`) inside ONE fixed work folder — Word's sandbox asks permission per folder, so a fixed
+folder means one grant ever. Only documents with that name (or its PDF) are closed; `active document` is never used, so a
+human typing in another Word window is never touched. Conversions run in parallel; a dialog or a hang ends in a timeout
+(100 s), the copy is closed by name and the call fails clearly. Use LibreOffice only for spreadsheets and slides.
+
+**Quitting apps (`sweep` → idle quit).** Every use records who launched the app: if it was already running when
+office-owner first touched it, it is the human's and is never quit. An app office-owner launched is quit when it has been
+idle ≥ 10 minutes, no lease or conversion is in flight on it, the SAME process is still running (a relaunch by someone else
+makes it the human's), and — checked inside the quit AppleScript itself — it has no documents open. One window per agent
+working in parallel is fine; the app is shared, the documents are not.
+
 ## 5. Agent adapters (the guardrails)
 - **Hermes Agent:** `adapters/hermes-approvals-deny.yaml`.
 - **Claude Code (todo):** a PreToolUse hook on Bash + `permissions.deny` with the same patterns.
 - **Codex CLI (todo):** `prefix_rule(decision="forbidden", justification="use ~/bin/browser-owner")` with `match`/`not_match` self-tests.
 Pattern rules only see the direct command — the owner-side checks stay the real protection.
 
+## 6. The agent's CUA cursor (computer use)
+Cua Driver draws an agent cursor overlay per session and supports installed cursor **themes** (dotLottie,
+`cua.cursor-theme/2`: 12 action animations, 128×128 at 30 fps, vector shapes only). Its built-in default is tinted per session
+name; an installed custom theme keeps its own colors.
+
+- `tools/cursor-themes/build_cursor_themes.py` copies Cua's default source and swaps its single base color for each agent's
+  color from `browsers.json`, giving `com.rainbowomma.cursor.<agent>`; `--install` runs `cua-driver cursor-theme
+  validate / build / install`, so the driver itself checks every theme.
+- Hermes Agent: apply `adapters/hermes-cua-cursor-theme.patch` (selects the profile's theme right after `start_session`) and
+  add `adapters/hermes-cursor-config.yaml` to the profile. Reduced motion keeps the overlay from redrawing at rest.
+- A theme is selected per session (there is no global default in the driver); an agent framework without a hook needs its
+  own adapter.
+
+```bash
+python3 tools/cursor-themes/build_cursor_themes.py --registry ~/bin/browsers.json --install
+cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
+```

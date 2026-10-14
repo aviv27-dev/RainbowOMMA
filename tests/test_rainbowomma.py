@@ -46,7 +46,7 @@ check("whole argument values: port 92220 / profile alpha-profile-personal are no
       not bo.is_root(ALPHA_A, ALPHA.replace("9222 ", "92220 ")) and not bo.is_root(ALPHA_A, ALPHA.replace(P, P + "-personal")))
 check("Charlie's browser is Charlie's, not Alpha's", not bo.is_root(ALPHA_A, ALPHA.replace(P, CHARLIE_A["profile"]).replace("9222", "9224"))
       and bo.is_root(CHARLIE_A, ALPHA.replace(P, CHARLIE_A["profile"]).replace("9222", "9224")))
-for bad, why in ((dict(port=9222), "duplicate port"), (dict(port=8080), "port outside the range"), (dict(color="charlie_col"), "color"),
+for bad, why in ((dict(port=9222), "duplicate port"), (dict(port=8080), "port outside the range"), (dict(color="not-a-color"), "color"),
                  (dict(profile="/tmp/with space"), "space in profile")):
     r = json.loads(REG.read_text()); r["agents"]["zed"] = dict({"label": "z", "port": 9230, "profile": "/tmp/z", "color": "#000000"}, **bad)
     bp = tmp / "bad.json"; bp.write_text(json.dumps(r))
@@ -128,12 +128,12 @@ bo.processes = lambda: [(200, 1, HUMAN)]
 code, out = bo.do_start(CHARLIE_A, "charlie")
 mp = json.loads(Path(CHARLIE_A["profile"], "Default", "Preferences").read_text())
 ls = json.loads(Path(CHARLIE_A["profile"], "Local State").read_text())
-charlie_col = bo.chrome_color("#F4511E")
+agent_color = bo.chrome_color("#F4511E")
 mst = json.loads(Path(CHARLIE_A["state"]).read_text())
 check("a new agent: its THEME is installed before the first launch (solid frame + its name), the profile named 'צ׳רלי — סוכן · לא לגעת'",
       code == 0 and launched[-1] == "charlie" and mst["themeId"] == "fakethemeid" and mst["theme"] == bo.theme_key(CHARLIE_A)
       and mst["lastStart"]["theme"] == "installed" and mp["profile"]["name"] == "צ׳רלי — סוכן · לא לגעת"
-      and "theme" not in mp.get("browser", {}) and ls["profile"]["info_cache"]["Default"]["profile_highlight_color"] == charlie_col, (out, mp, mst))
+      and "theme" not in mp.get("browser", {}) and ls["profile"]["info_cache"]["Default"]["profile_highlight_color"] == agent_color, (out, mp, mst))
 check("…the theme install closed its windowless Chrome — recorded as an OWNER stop (so it is never read as the human's ⌘Q)",
       mst["lastStop"]["by"] == "theme-install")
 up[9224] = False
@@ -153,13 +153,13 @@ code, out = bo.do_start(CHARLIE_A, "charlie")
 mp = json.loads(Path(CHARLIE_A["profile"], "Default", "Preferences").read_text())
 mst = json.loads(Path(CHARLIE_A["state"]).read_text())
 check("theme install fails → the start goes on with the profile color (fallback) and the reason is recorded",
-      code == 0 and mst["lastStart"]["theme"] == "failed" and "loadUnpacked" in mst["themeError"] and mp["browser"]["theme"]["user_color2"] == charlie_col, (out, mst))
+      code == 0 and mst["lastStart"]["theme"] == "failed" and "loadUnpacked" in mst["themeError"] and mp["browser"]["theme"]["user_color2"] == agent_color, (out, mst))
 bo.install_theme = _it if False else (lambda a, folder, timeout=25.0: (True, "fakethemeid"))
 mp2 = {"profile": {}, "account_values": {"browser": {"theme": {"user_color2": -8497214}}}}
 pp = Path(tmp / "acct" / "Default"); pp.mkdir(parents=True, exist_ok=True); (pp / "Preferences").write_text(json.dumps(mp2))
 bo.paint(dict(CHARLIE_A, profile=str(tmp / "acct")))
 check("a profile copied from another agent: its account_values color is overwritten too (a copied profile must not keep the other agent's color)",
-      json.loads((pp / "Preferences").read_text())["account_values"]["browser"]["theme"]["user_color2"] == charlie_col)
+      json.loads((pp / "Preferences").read_text())["account_values"]["browser"]["theme"]["user_color2"] == agent_color)
 up[9224] = False
 check("the agent's start recorded the focus check (kept — the human's app stayed in front)", json.loads(Path(CHARLIE_A["state"]).read_text())["lastStart"]["focus"] == "kept")
 bo.processes = lambda: [(200, 1, HUMAN), (400, 1, ALPHA.replace(P, CHARLIE_A["profile"]).replace("9222", "9224"))]
@@ -305,6 +305,8 @@ bo.launch = None
 # ── agent-office ──
 ao = load("agent-office.py")
 ao.LEASES = tmp / "leases"; ao.LOG = tmp / "office.log"
+ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"
+ao.PGREP = lambda app: None              # never the real process table or the real state file in a test
 SEP = ao.SEP
 d1 = tmp / "agent"; d1.mkdir(); d2 = tmp / "human"; d2.mkdir()
 f1 = d1 / "טיוטה, סופית.docx"; f1.write_text("x")
@@ -405,6 +407,65 @@ check("close: cannot tell whether Word runs → unknown", ao.close_if_saved("wor
 ao.RUN = real_osa
 docs.clear()
 check("an app that is not running is never started to look", ao.open_paths("word") == [])
+
+# ── office-owner : who launched the app, Word→PDF, quit only what the owner launched ──
+ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"
+pids = {"word": None}
+ao.PGREP = lambda app: pids.get(app)
+calls = []
+def word_osa(sc):
+    calls.append(sc)
+    if "save as d file name" in sc:
+        m = re.search(r'file name "([^"]+)"', sc); Path(m.group(1)).write_bytes(b"%PDF- test"); pids["word"] = 777
+        return 0, ""
+    if "count of documents) is 0 then" in sc:
+        return 0, "quit" if not docs.get("Microsoft Word") else "busy %d" % len(docs["Microsoft Word"])
+    return osa(sc)
+ao.RUN = word_osa
+src = tmp / "agent" / "מכתב.docx"; src.write_text("x")
+code, out = ao.cmd_pdf("bravo", str(src))
+st = json.loads(ao.APPS_STATE.read_text())
+check("pdf: through real Word, its own uniquely named copy (never 'active document'), PDF beside the source",
+      code == 0 and out["renderer"] == "Microsoft Word" and Path(out["pdf"]).exists() and "active document" not in calls[0]
+      and "ofc-pdf-" in calls[0] and not list(ao.WORD_DIR.glob("ofc-pdf-*.docx")), (out, calls[:1]))
+check("pdf: Word was NOT running → recorded as launched by the owner, with its pid", st["word"]["launchedBy"].startswith("office-owner/")
+      and st["word"]["pid"] == 777, st)
+st["word"]["lastActivity"] = time.time() - 5; ao.save_apps_state(st)
+check("idle < 10 min → not quit", ao.idle_quit() == [])
+st["word"]["lastActivity"] = time.time() - 700; ao.save_apps_state(st)
+docs["Microsoft Word"] = {"/x/human.docx": True}
+r = ao.idle_quit()
+check("idle 10+ min but a document is open in it → 'busy', never quit (count checked in the same AppleScript)", r and r[0]["result"].startswith("busy"), r)
+docs["Microsoft Word"] = {}
+r = ao.idle_quit()
+check("owner-launched, idle 10+ min, no lease, no documents → quit", r and r[0]["result"] == "quit" and "word" not in json.loads(ao.APPS_STATE.read_text()), r)
+pids["word"] = 888
+ao.note_use("word", "office-owner/bravo")
+st = json.loads(ao.APPS_STATE.read_text())
+check("Word already running when the owner arrives → the human's, never quit", st["word"]["launchedBy"] == "human")
+st["word"]["lastActivity"] = time.time() - 9999; ao.save_apps_state(st)
+check("…even after hours idle", ao.idle_quit() == [])
+ao.save_apps_state({"word": {"launchedBy": "office-owner/x", "pid": 777, "lastActivity": time.time() - 9999}})
+pids["word"] = 999
+ao.idle_quit()
+check("owner launched pid 777, but Word now runs as 999 (the human relaunched it) → it becomes the human's", json.loads(ao.APPS_STATE.read_text())["word"]["launchedBy"] == "human")
+ao.save_apps_state({"word": {"launchedBy": "office-owner/x", "pid": 999, "lastActivity": time.time() - 9999}})
+with ao.inflight("word"):
+    r = ao.idle_quit()
+check("a conversion in flight → never quit", r == [], r)
+def stuck(sc):
+    calls.append(sc); return 124, ""
+ao.RUN = stuck; calls.clear()
+code, out = ao.cmd_pdf("bravo", str(src))
+check("Word hangs (a dialog) → clear failure, and the cleanup closes ONLY that copy by name", code == 1 and any("close x saving no" in c and "ofc-pdf-" in c for c in calls[1:]), (out, len(calls)))
+check("…and no leftover temp copy or empty PDF in the work folder", not list(ao.WORD_DIR.glob("ofc-pdf-*")), list(ao.WORD_DIR.glob("*")))
+calls.clear()
+code, out = ao.cmd_pdf("bravo", str(src), out=str(src))
+check("pdf --out = the source itself → refused before Word is touched (never overwrite the document)", code == 1 and not calls and src.read_text() == "x", out)
+code, out = ao.cmd_pdf("bravo", str(src), out=str(tmp / "agent" / "x.docx"))
+check("pdf --out must end in .pdf", code == 1 and not calls, out)
+ao.RUN = osa
+
 
 
 print(f"\n{sum(results)}/{len(results)} passed")

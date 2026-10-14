@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""agent-office — documents an AI agent opens in a SHARED Office/PDF app, and only those.
+"""agent-office / office-owner — the ONE owner of the shared Office/PDF apps an AI agent touches.
 
-    agent-office open|close|renew --agent NAME <file> · agent-office sweep [--max-age-h 3] [--dry-run] · agent-office list
+    office-owner open|close|renew --agent NAME <file> · office-owner pdf --agent NAME <file.docx> [--out file.pdf]
+    office-owner sweep [--max-age-h 3] [--dry-run] · office-owner list · office-owner apps
 
 A document is closed only if the agent leased it, nobody had it open before, and the app says it is saved (checked in the
-same AppleScript that closes it). Apps are never quit. Exit codes: 0 done · 3 left open · 1 failure.
+same AppleScript that closes it). `pdf` converts through the real Word, on a uniquely named temp copy closed by name, so
+parallel conversions never touch the human's documents. An app is quit only if office-owner itself launched it, after
+10 idle minutes with no documents open — an app that was already running is the human's and is never quit.
+Exit codes: 0 done · 3 left open · 1 failure.
 """
 from __future__ import annotations
 
 import argparse
 import fcntl
+import shutil
 import json
 import tempfile
 import os
@@ -32,6 +37,14 @@ APPS = {
 EXT_APP = {".doc": "word", ".docx": "word", ".rtf": "word", ".xls": "excel", ".xlsx": "excel", ".csv": "excel", ".pdf": "acrobat"}
 RUN = None   # tests replace it: (script) -> (code, stdout)
 TIMEOUT_S = 20
+APPS_STATE = LEASES.parent / "office_apps.json"     # app → {launchedBy, pid, launchedAt, lastActivity}
+INFLIGHT = LEASES.parent / "office_inflight"         # one file per running conversion: {app, pid}
+IDLE_QUIT_S = 600
+PDF_TIMEOUT_S = 100
+WORD_DIR = Path(os.environ.get("OFFICE_WORD_DIR") or (Path.home() / ".rainbowomma" / "word-convert"))
+APP_BIN = {"word": "/Microsoft Word.app/Contents/MacOS/", "excel": "/Microsoft Excel.app/Contents/MacOS/",
+           "acrobat": "/Adobe Acrobat.app/Contents/MacOS/", "preview": "/Preview.app/Contents/MacOS/"}
+PGREP = None   # tests replace it: (app) -> pid | None
 
 
 def log(msg):
@@ -43,12 +56,12 @@ def log(msg):
         pass
 
 
-def osa(script):
+def osa(script, timeout=None):
     """→ (code, stdout); a hang (a dialog, a permission prompt) is a failure, never an answer"""
     if RUN:
         return RUN(script)
     try:
-        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=TIMEOUT_S)
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout or TIMEOUT_S)
         return r.returncode, (r.stdout or "").strip()
     except subprocess.TimeoutExpired:
         return 124, ""
@@ -170,6 +183,7 @@ def cmd_open(agent, path, app=None):
     app = app or EXT_APP.get(p.suffix.lower())
     if app not in APPS:
         return 1, {"status": "failed", "why": "אפליקציה לא נתמכת — word / excel / acrobat / preview"}
+    note_use(app, "office-owner/" + agent)
     before = open_paths(app)
     shared = before is None or any(x in before for x in forms(path))
     if not RUN:
@@ -241,6 +255,174 @@ def drop_closed(ls):
 FRESH_S = 120
 
 
+# ── office-owner: who launched each app, Word→PDF, quitting what the owner launched ──────────────────────────────────────────
+def app_pid(app):
+    """the app's main process id, or None"""
+    if PGREP:
+        return PGREP(app)
+    try:
+        out = subprocess.run(["pgrep", "-f", APP_BIN[app]], capture_output=True, text=True, timeout=5).stdout.split()
+        return int(out[0]) if out else None
+    except Exception:
+        return None
+
+
+def apps_state():
+    try:
+        return json.loads(APPS_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_apps_state(st):
+    APPS_STATE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".office_apps.", suffix=".tmp", dir=str(APPS_STATE.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(st, ensure_ascii=False, indent=1))
+    os.replace(tmp, APPS_STATE)
+
+
+def note_use(app, by):
+    st = apps_state()
+    rec = st.get(app) or {}
+    pid = app_pid(app)
+    if pid is None:
+        rec = {"launchedBy": by, "launchedAt": time.time(), "pid": None}
+    elif not rec or (rec.get("pid") and rec["pid"] != pid):
+        rec = {"launchedBy": "human", "seenAt": time.time(), "pid": pid}
+    rec["lastActivity"] = time.time()
+    st[app] = rec
+    save_apps_state(st)
+    return rec
+
+
+def touch(app):
+    st = apps_state()
+    rec = st.get(app)
+    if rec is None:
+        return
+    rec["lastActivity"] = time.time()
+    if rec.get("pid") is None and rec.get("launchedBy") != "human":
+        rec["pid"] = app_pid(app)
+    st[app] = rec
+    save_apps_state(st)
+
+
+class inflight:
+    """one file per running conversion — the sweep never quits an app with work in flight (dead pids are ignored)"""
+
+    def __init__(self, app):
+        self.app = app
+
+    def __enter__(self):
+        INFLIGHT.mkdir(parents=True, exist_ok=True)
+        self.f = INFLIGHT / f"{os.getpid()}-{uuid.uuid4().hex[:8]}.json"
+        self.f.write_text(json.dumps({"app": self.app, "pid": os.getpid(), "at": time.time()}), encoding="utf-8")
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            self.f.unlink()
+        except OSError:
+            pass
+
+
+def inflight_for(app):
+    n = 0
+    for f in INFLIGHT.glob("*.json") if INFLIGHT.exists() else []:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+            os.kill(int(d["pid"]), 0)
+            n += d.get("app") == app
+        except (OSError, ValueError, KeyError):
+            try:
+                f.unlink()                 # a dead converter's record
+            except OSError:
+                pass
+    return n
+
+
+def cmd_pdf(agent, src, out=None):
+    p = Path(norm(src))
+    if not p.exists():
+        return 1, {"status": "failed", "why": f"אין קובץ: {p}"}
+    ext = p.suffix.lower()
+    if ext not in (".doc", ".docx", ".rtf"):
+        return 1, {"status": "failed", "why": "pdf דרך Word — רק doc / docx / rtf"}
+    dest = Path(norm(out)) if out else p.with_suffix(".pdf")
+    if dest.suffix.lower() != ".pdf" or dest.resolve() == p.resolve():
+        return 1, {"status": "failed", "why": "--out חייב להיות קובץ ‎.pdf ולא קובץ המקור"}
+    WORD_DIR.mkdir(parents=True, exist_ok=True)
+    base = "ofc-pdf-" + uuid.uuid4().hex[:12]
+    tmp, tmp_pdf = WORD_DIR / (base + ext), WORD_DIR / (base + ".pdf")
+    shutil.copy2(p, tmp)
+    with leases_lock():
+        note_use("word", "office-owner/" + agent)
+    names = [tmp.name, tmp_pdf.name]
+    close_mine = (f'repeat with x in (documents as list)\ntry\nset n to name of x\nif n is {q(names[0])} or n is {q(names[1])} '
+                  f'then close x saving no\nend try\nend repeat')
+    script = (f'with timeout of {PDF_TIMEOUT_S - 10} seconds\ntell application "Microsoft Word"\nlaunch\nopen (POSIX file {q(str(tmp))})\n'
+              f'set d to document {q(tmp.name)}\nsave as d file name {q(str(tmp_pdf))} file format format PDF\n{close_mine}\n'
+              f'end tell\nend timeout')
+    try:
+        with inflight("word"):
+            code, msg = osa(script, PDF_TIMEOUT_S)
+            ok = tmp_pdf.exists() and tmp_pdf.stat().st_size > 0
+            if not ok:
+                osa(f'with timeout of 15 seconds\ntell application "Microsoft Word"\n{close_mine}\nend tell\nend timeout')
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    with leases_lock():
+        touch("word")
+    if not ok:
+        try:
+            tmp_pdf.unlink()
+        except OSError:
+            pass
+        log(f"pdf FAILED {agent} {p} ({msg[:120]})")
+        return 1, {"status": "failed", "why": "Word לא הפיק PDF — " + (msg.strip()[:160] or f"exit {code}")}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(tmp_pdf), str(dest))
+    log(f"pdf {agent} {p} -> {dest}")
+    return 0, {"status": "converted", "pdf": str(dest), "renderer": "Microsoft Word"}
+
+
+def idle_quit(dry=False):
+    """quit an app ONLY if the owner launched it (the same process), idle ≥ 10 min, no lease or conversion on it, no documents"""
+    out, st = [], apps_state()
+    for app, rec in list(st.items()):
+        pid = app_pid(app)
+        if pid is None:
+            st.pop(app, None)                      # not running any more — forget it
+            continue
+        if rec.get("launchedBy") == "human" or (rec.get("pid") and rec["pid"] != pid):
+            if rec.get("pid") and rec["pid"] != pid:
+                st[app] = {"launchedBy": "human", "seenAt": time.time(), "pid": pid}
+            continue
+        if rec.get("pid") is None:
+            rec["pid"] = pid
+        if time.time() - float(rec.get("lastActivity") or 0) < IDLE_QUIT_S:
+            continue
+        if inflight_for(app) or any(d["app"] == app for d in leases()):
+            continue
+        if dry:
+            out.append({"app": app, "would": "quit if it has no documents"})
+            continue
+        name, coll = APPS[app][0], APPS[app][1]
+        code, res = osa(f'with timeout of 15 seconds\ntell application {q(name)}\nif (count of {coll}) is 0 then\nquit\nreturn "quit"\n'
+                        f'end if\nreturn "busy " & (count of {coll})\nend tell\nend timeout')
+        res = res.strip() if code == 0 else "unknown"
+        if res == "quit":
+            st.pop(app, None)
+            log(f"quit {app} — launched by {rec.get('launchedBy')}, idle {int((time.time() - float(rec.get('lastActivity') or 0)) / 60)} min, no documents")
+        out.append({"app": app, "result": res})
+    save_apps_state(st)
+    return out
+
+
 def cmd_sweep(max_age_h=3.0, dry=False):
     now, report = time.time(), []
     ls = leases()
@@ -250,6 +432,7 @@ def cmd_sweep(max_age_h=3.0, dry=False):
     for d in ls:
         age_h = (now - float(d.get("openedAt") or now)) / 3600
         if age_h < max_age_h:
+            touch(d["app"])                 # a live lease keeps its app "in use"
             continue
         if dry:
             report.append({"path": d["path"], "agent": d["agent"], "app": d["app"], "ageH": round(age_h, 1), "would": "check"})
@@ -263,7 +446,8 @@ def cmd_sweep(max_age_h=3.0, dry=False):
             write_lease(d)
             log(f"left open — {res}: {d['agent']} {d['app']} {d['path']} ({age_h:.1f}h)")
         report.append({"path": d["path"], "agent": d["agent"], "app": d["app"], "ageH": round(age_h, 1), "result": res})
-    return 0, {"status": "swept", "items": report}
+    apps = idle_quit(dry)
+    return 0, {"status": "swept", "items": report, "apps": apps}
 
 
 def main(argv=None):
@@ -274,10 +458,22 @@ def main(argv=None):
     r = sub.add_parser("renew"); r.add_argument("--agent", required=True); r.add_argument("file")
     s = sub.add_parser("sweep"); s.add_argument("--max-age-h", type=float, default=3.0); s.add_argument("--dry-run", action="store_true")
     sub.add_parser("list")
+    pd = sub.add_parser("pdf"); pd.add_argument("--agent", required=True); pd.add_argument("--out"); pd.add_argument("file")
+    sub.add_parser("apps")
     a = ap.parse_args(argv)
+    if a.cmd == "pdf":                      # NOT under the leases lock: conversions run in parallel (each its own copy)
+        try:
+            code, out = cmd_pdf(a.agent.strip().lower(), a.file, a.out)
+        except Exception as exc:
+            code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+        print(json.dumps(out, ensure_ascii=False))
+        return code
     try:
         with leases_lock():
-            if a.cmd == "open":
+            if a.cmd == "apps":
+                st = apps_state()
+                code, out = 0, {"apps": {k: dict(v, running=app_pid(k) is not None, inflight=inflight_for(k)) for k, v in st.items()}}
+            elif a.cmd == "open":
                 code, out = cmd_open(a.agent.strip().lower(), a.file, a.app)
             elif a.cmd == "close":
                 code, out = cmd_close(a.agent.strip().lower(), a.file)
