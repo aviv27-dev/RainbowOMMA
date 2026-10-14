@@ -594,6 +594,72 @@ cc = json.loads((HERE.parent / "adapters" / "claude-code" / "settings.json").rea
 check("the Claude Code settings example wires the guard on Bash", cc["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
       and "rainbowomma-guard.py" in cc["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
 
+# ── cua-color-proxy: a fake `cua-driver mcp` (MCP over stdio) — never the real driver in a test ──
+FAKE_DRIVER = r"""
+import json, sys
+calls = open(sys.argv[1], "a")
+for line in sys.stdin:
+    m = json.loads(line)
+    calls.write(line); calls.flush()
+    if "id" not in m:
+        continue
+    if m["method"] == "initialize":
+        res = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake-cua", "version": "0.21.0"}}
+    elif m["method"] == "tools/call":
+        n, a = m["params"]["name"], m["params"].get("arguments") or {}
+        if n == "start_session":
+            sc = {"session": a.get("session") or "implicit-7", "active": True}
+            res = {"content": [{"type": "text", "text": json.dumps(sc)}], "structuredContent": sc}
+        elif n == "set_agent_cursor_theme" and a["theme_id"].endswith(".missing"):
+            res = {"content": [{"type": "text", "text": "theme not installed"}], "isError": True}
+        else:
+            res = {"content": [{"type": "text", "text": n + " ok"}], "structuredContent": {"ok": True}}
+    else:
+        res = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": m["id"], "result": res}), flush=True)
+"""
+(tmp / "fake_cua.py").write_text(FAKE_DRIVER)
+proxy = str(HERE / "cua-color-proxy.py")
+def through_proxy(msgs, agent="alpha", idle=None):
+    log_f = tmp / f"cua-calls-{time.time_ns()}.jsonl"
+    env = dict(os.environ, RAINBOW_HOME=str(tmp / "cua-home"))
+    if idle is not None:
+        env["RAINBOW_CUA_IDLE_S"] = str(idle)
+    r = subprocess.run([sys.executable, "-I", proxy, "--agent", agent, "--driver", sys.executable, "--", "-I", str(tmp / "fake_cua.py"), str(log_f)],
+                       input="".join(json.dumps(m) + "\n" for m in msgs), capture_output=True, text=True, timeout=60, env=env)
+    got = [json.loads(x) for x in r.stdout.splitlines() if x.strip()]
+    seen = [json.loads(x) for x in log_f.read_text().splitlines()] if log_f.exists() else []
+    return got, [(c["params"]["name"], c["params"].get("arguments") or {}) for c in seen if c.get("method") == "tools/call"]
+def tc(i, name, **args):
+    return {"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": name, "arguments": args}}
+INIT = [{"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"}]
+got, calls = through_proxy(INIT + [tc(1, "click", x=1, y=2), tc(2, "type_text", text="hi")])
+check("proxy: before the agent's first action, its implicit session starts with the agent's cursor theme",
+      calls[:3] == [("start_session", {"cursor_theme": {"theme_id": "com.rainbowomma.cursor.alpha", "reduced_motion": "on"}}),
+                    ("set_agent_cursor_theme", {"session": "implicit-7", "theme_id": "com.rainbowomma.cursor.alpha", "reduced_motion": "on"}),
+                    ("click", {"x": 1, "y": 2})], calls)
+check("proxy: …once — the next action goes straight through", [c[0] for c in calls] == ["start_session", "set_agent_cursor_theme", "click", "type_text"], calls)
+check("proxy: the agent sees only its own answers, ids unchanged (ours never reach it)",
+      [m.get("id") for m in got] == [0, 1, 2] and got[1]["result"]["content"][0]["text"] == "click ok", got)
+got, calls = through_proxy(INIT + [tc(1, "click", session="run1"), tc(2, "click", session="run1"), tc(3, "end_session", session="run1"),
+                                   tc(4, "click", session="run1")], agent="bravo")
+check("proxy: a named session is themed once, with the agent's own theme",
+      calls[:2] == [("start_session", {"cursor_theme": {"theme_id": "com.rainbowomma.cursor.bravo", "reduced_motion": "on"}, "session": "run1"}),
+                    ("set_agent_cursor_theme", {"session": "run1", "theme_id": "com.rainbowomma.cursor.bravo", "reduced_motion": "on"})], calls)
+check("proxy: a session the agent ended is never revived by the proxy",
+      [c[0] for c in calls] == ["start_session", "set_agent_cursor_theme", "click", "click", "end_session", "click"], calls)
+got, calls = through_proxy(INIT + [tc(1, "click"), tc(2, "click")], idle=0)
+check("proxy: after an idle gap (the driver drops the implicit session) it is themed again",
+      [c[0] for c in calls].count("start_session") == 2, calls)
+got, calls = through_proxy(INIT + [tc(1, "click")], agent="missing")
+check("proxy: a theme that is not installed never blocks the agent — its call goes through and it gets its answer",
+      calls[-1] == ("click", {}) and [m.get("id") for m in got] == [0, 1] and "isError" not in got[1]["result"], (calls, got))
+r = subprocess.run([sys.executable, "-I", proxy, "--agent", "alpha", "--driver", ""], capture_output=True, text=True,
+                   env=dict(os.environ, PATH="/nonexistent", CUA_DRIVER=""))
+check("proxy: no cua-driver → a clear error on stderr, nothing on stdout (stdout belongs to the MCP client)",
+      sys.platform == "darwin" or (r.returncode == 1 and not r.stdout and "cua-driver not found" in r.stderr), (r.stdout, r.stderr))
+
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

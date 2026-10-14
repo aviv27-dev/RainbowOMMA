@@ -23,6 +23,7 @@
 | `examples/agent-shortcut` | `<agent>-browser <cmd>` = `browser-owner <cmd> <agent>` (kept for callers that know the old name) |
 | `examples/agent-launcher.sh` | an agent with its own launcher; the owner calls it back with `<LAUNCHER_ENV>=1` |
 | `adapters/hermes-approvals-deny.yaml` | Hermes guardrail: no pkill/killall/AppleScript-quit/Chrome-on-a-debug-port |
+| `bin/cua-color-proxy(.py)` | MCP stdio proxy in front of `cua-driver mcp`: every session of an MCP agent wears that agent's cursor theme — §6 |
 | `bin/rainbow_i18n.py` | the message catalog (English + Hebrew) and the language choice — §7 |
 | `install.sh` | copies the tools, creates `browsers.json` from the example (never overwrites), the state folders, and with `--with-sweep` the launchd job with absolute paths |
 | `adapters/claude-code/` | Claude Code guard: a PreToolUse hook + a settings example |
@@ -93,8 +94,17 @@ name; an installed custom theme keeps its own colors.
   validate / build / install`, so the driver itself checks every theme.
 - Hermes Agent: apply `adapters/hermes-cua-cursor-theme.patch` (selects the profile's theme right after `start_session`) and
   add `adapters/hermes-cursor-config.yaml` to the profile. Reduced motion keeps the overlay from redrawing at rest.
-- A theme is selected per session (there is no global default in the driver); an agent framework without a hook needs its
-  own adapter.
+- A theme is selected per session, because the driver has no global default. **`bin/cua-color-proxy`** handles this for
+  every MCP client. It runs `cua-driver mcp` as a child and relays MCP stdio both ways unchanged. Before the first action on
+  a session, it sends its own `start_session` (with `cursor_theme`) and `set_agent_cursor_theme`, and swallows their
+  answers, so the agent never sees them and its request ids are untouched. Rules from the 0.21 session contract:
+  - A call without `session` uses the transport's implicit session. The driver drops that session after 5 idle minutes or
+    an `end_session`, so the proxy themes it again after 240 s without actions, or after the agent ends it.
+  - A labelled session is themed once. A label the agent ended is never touched again, because `start_session` would
+    revive it, and ordinary actions do not.
+  - A failure, such as a theme that is not installed or no answer within 10 s, is logged to
+    `$RAINBOW_HOME/logs/cua-color-proxy.log`, and the agent's call goes through as it came.
+  - Tests drive it with a fake `cua-driver mcp`. *Not yet run against the real driver.*
 
 ```bash
 python3 tools/cursor-themes/build_cursor_themes.py --registry ~/bin/browsers.json --install

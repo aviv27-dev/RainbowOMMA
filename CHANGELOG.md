@@ -3,6 +3,12 @@
 All notable changes to RainbowOMMA. Versions follow [Semantic Versioning](https://semver.org/); JSON status words and
 exit codes are an API and change only in a major version.
 
+## [Unreleased]
+
+### Added
+- `cua-color-proxy`: an MCP proxy in front of `cua-driver mcp` that gives every session of any MCP agent (Claude Code,
+  OpenClaw, OpenCode, Codex CLI, Cursor, …) that agent's colored cursor, with no change to the agent.
+
 ## [0.1.0] — 2026-10-14
 
 First public release.
