@@ -9,7 +9,7 @@
 3. **Unknown = do nothing.** A port that answers but is not the agent's browser is `blocked`, not "up". A profile in use
    is `profile-busy`. An app that cannot answer means "keep the lease". A process table that changed during the probes
    means "do not kill".
-4. **One JSON answer, always** (exit 0 ok · 2 refused · 1 failure) — agents parse it; humans read the Hebrew/English why.
+4. **One JSON answer, always** (exit 0 ok · 2 refused · 1 failure) — agents parse it; humans read the why in English or Hebrew (§7).
 
 ## 2. Components (repo layout)
 | Path | What |
@@ -23,6 +23,9 @@
 | `examples/agent-shortcut` | `<agent>-browser <cmd>` = `browser-owner <cmd> <agent>` (kept for callers that know the old name) |
 | `examples/agent-launcher.sh` | an agent with its own launcher; the owner calls it back with `<LAUNCHER_ENV>=1` |
 | `adapters/hermes-approvals-deny.yaml` | Hermes guardrail: no pkill/killall/AppleScript-quit/Chrome-on-a-debug-port |
+| `bin/rainbow_i18n.py` | the message catalog (English + Hebrew) and the language choice — §7 |
+| `install.sh` | copies the tools, creates `browsers.json` from the example (never overwrites), the state folders, and with `--with-sweep` the launchd job with absolute paths |
+| `adapters/claude-code/` | Claude Code guard: a PreToolUse hook + a settings example |
 | `tests/test_rainbowomma.py` | fake process table, fake osascript, fake Chrome — never touches a real browser |
 
 ## 3. browser-owner — behaviour that was measured, not guessed
@@ -75,7 +78,8 @@ working in parallel is fine; the app is shared, the documents are not.
 
 ## 5. Agent adapters (the guardrails)
 - **Hermes Agent:** `adapters/hermes-approvals-deny.yaml`.
-- **Claude Code (todo):** a PreToolUse hook on Bash + `permissions.deny` with the same patterns.
+- **Claude Code:** `adapters/claude-code/rainbowomma-guard.py`, a PreToolUse hook on Bash with the same patterns (exit 2 + the reason on
+  stderr, so the agent is told to use the owner), plus `permissions.deny` for `pkill` / `killall` in `adapters/claude-code/settings.json`.
 - **Codex CLI (todo):** `prefix_rule(decision="forbidden", justification="use ~/bin/browser-owner")` with `match`/`not_match` self-tests.
 Pattern rules only see the direct command — the owner-side checks stay the real protection.
 
@@ -96,3 +100,17 @@ name; an installed custom theme keeps its own colors.
 python3 tools/cursor-themes/build_cursor_themes.py --registry ~/bin/browsers.json --install
 cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
 ```
+
+## 7. Language and the configurable root
+- **One message catalog:** `bin/rainbow_i18n.py` holds every text a person sees, in `en` and `he`: `why`, notifications,
+  desktop icon names, the profile and theme names, and the frame text. The Python tools import it, and the shell scripts
+  call it (`rainbow_i18n.py KEY name=value`). The language is `RAINBOW_LANG`, else the Mac's first preferred language
+  (`defaults read -g AppleLanguages`, checked before `LANG`, which the launchd job sets to `en_US`), else the locale, else
+  English. Status words, exit codes and JSON keys are never translated.
+- **Direction on the frame:** Chrome lays the frame image from the window's left edge. In RTL the tab strip grows from the
+  right, so the name is drawn twice on the free left part. In LTR the tabs grow from the left, so the name repeats along
+  the rest of the 3000 px image, and the right part of any window width carries it. The RTL theme key is unchanged, so
+  existing Hebrew installs are not rebuilt. LTR has its own key, so switching language rebuilds the theme once. *The LTR
+  placement is not yet measured on a real Mac.*
+- **One root:** `RAINBOW_HOME` (default `~/.rainbowomma`) holds logs, state, themes and the Word work folder.
+
