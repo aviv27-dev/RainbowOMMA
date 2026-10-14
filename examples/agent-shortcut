@@ -1,0 +1,4 @@
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+CMD="${1:-status}"; [ $# -gt 0 ] && shift
+exec "$DIR/browser-owner" "$CMD" alpha "$@"
