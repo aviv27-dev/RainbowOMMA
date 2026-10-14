@@ -22,10 +22,13 @@ import time
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
+from rainbow_i18n import direction, t  # noqa: E402
+
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
 REGISTRY = Path(os.environ.get("BROWSER_OWNER_REGISTRY") or HERE / "browsers.json")
-SHARED = HOME / ".rainbowomma"
+SHARED = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(HOME / ".rainbowomma")))   # logs, state, themes
 CHROME_APP = "/Applications/Google Chrome.app"
 CHROME_BIN = "Google Chrome.app/Contents/MacOS/Google Chrome"
 STALE_FLAG_AFTER = 120
@@ -267,7 +270,7 @@ def chrome_color(hex_rgb):
 
 
 def display_name(a):
-    return f"{a['label']} — סוכן · לא לגעת"
+    return t("bo.display_name", label=a["label"])
 
 
 def paint(a, themed=False):
@@ -328,7 +331,8 @@ def rgb(hex_rgb):
 
 
 def theme_key(a):
-    return f"{THEME_VERSION}:{a['color'].upper()}:{a['label']}"
+    # an RTL theme keeps the key it always had; an LTR one (the name on the other side of the frame) gets its own
+    return f"{THEME_VERSION}:{a['color'].upper()}:{a['label']}" + ("" if direction() == "rtl" else ":ltr")
 
 
 def build_theme(a, text=None, title=None):
@@ -340,7 +344,7 @@ def build_theme(a, text=None, title=None):
     ink = [int(c * 0.35) for c in base]
     d = THEMES / a["name"]
     d.mkdir(parents=True, exist_ok=True)
-    manifest = {"manifest_version": 3, "name": title or f"סוכן: {a['label']}", "version": f"{THEME_VERSION}.{int(time.time()) % 100000}",
+    manifest = {"manifest_version": 3, "name": title or t("bo.theme_title", label=a["label"]), "version": f"{THEME_VERSION}.{int(time.time()) % 100000}",
                 "description": "browser-owner — the agent's browser theme (RainbowOMMA)",
                 "theme": {"images": {}, "colors": {
                     "frame": frame, "frame_inactive": inactive, "frame_incognito": frame, "toolbar": tint,
@@ -349,8 +353,8 @@ def build_theme(a, text=None, title=None):
                     "bookmark_text": ink, "toolbar_button_icon": ink, "omnibox_background": [255, 255, 255], "omnibox_text": [20, 20, 20],
                     "ntp_background": tint, "ntp_text": ink}}}
     try:
-        r = subprocess.run(["osascript", "-l", "JavaScript", str(FRAME_JS), str(d / "frame.png"), text or f"{a['label']} · סוכן · לא לגעת",
-                            *map(str, frame), "dark" if light else "light"],
+        r = subprocess.run(["osascript", "-l", "JavaScript", str(FRAME_JS), str(d / "frame.png"), text or t("bo.frame_text", label=a["label"]),
+                            *map(str, frame), "dark" if light else "light", direction()],
                            capture_output=True, text=True, timeout=30)
         if r.returncode == 0 and (d / "frame.png").exists():
             manifest["theme"]["images"] = {"theme_frame": "frame.png", "theme_frame_inactive": "frame.png"}
@@ -458,7 +462,7 @@ def chrome_args(a):
 def launch(a):
     if a.get("launcher"):
         if not Path(a["launcher"]).exists():
-            return 1, f"המפעיל חסר: {a['launcher']}"
+            return 1, t("bo.launcher_missing", path=a["launcher"])
         env = dict(os.environ, **{a.get("launcherEnv") or "BROWSER_OWNER_LAUNCH": "1"})
         r = subprocess.run(["bash", a["launcher"]], capture_output=True, text=True, timeout=60, env=env, start_new_session=True)
         return r.returncode, (r.stdout or r.stderr or "").strip()
@@ -471,7 +475,7 @@ def launch(a):
         if healthy(a):
             return 0, f"CDP up on {a['port']}"
         time.sleep(1)
-    return 1, f"Chrome נפתח אבל פורט {a['port']} לא ענה"
+    return 1, t("bo.port_silent", port=a["port"])
 
 
 FOCUS_NO_PERMISSION = "no-permission"
@@ -555,13 +559,12 @@ def reconcile(a, st, v):
 
 
 def blocked(v, a=None):
-    who = (f"pid {v['foreignRoots']}" if v.get("foreignRoots") else "") or (listener(a) if a else "") or "תהליך לא מזוהה"
-    return 1, {"status": "blocked", "why": f"פורט {v['port']} עונה, אבל לא מהדפדפן של {v['label']} ({who}); לא נוגעים. האדם צריך לסגור אותו"}
+    who = (f"pid {v['foreignRoots']}" if v.get("foreignRoots") else "") or (listener(a) if a else "") or t("bo.unknown_process")
+    return 1, {"status": "blocked", "why": t("bo.blocked", port=v["port"], label=v["label"], who=who)}
 
 
 def profile_busy(v):
-    return 1, {"status": "profile-busy", "why": f"הפרופיל של {v['label']} פתוח ב-Chrome אחר בלי פורט השליטה (pid {v['profileBusy']}) — "
-               f"לא צובעים ולא פותחים; האדם צריך לסגור אותו"}
+    return 1, {"status": "profile-busy", "why": t("bo.profile_busy", label=v["label"], pids=v["profileBusy"])}
 
 
 def do_start(a, by):
@@ -573,17 +576,16 @@ def do_start(a, by):
         return profile_busy(v)
     st = reconcile(a, st, v)
     if st.get("offByHuman") and by != "human":
-        return 2, {"status": "refused", "why": f"האדם סגר את הדפדפן של {a['label']} ב-{st.get('offAt')} — נפתח רק כשהאדם פותח"}
+        return 2, {"status": "refused", "why": t("bo.refused_off", label=a["label"], at=st.get("offAt"))}
     if by == "human" and st.get("offByHuman"):
         st["offByHuman"] = False
         save(a, st)
     if v["status"] == "up":
         return 0, {"status": "already-up"}
     if v["status"] == "hung":
-        return 1, {"status": "hung", "why": f"Chrome של {a['label']} רץ (pid {v['roots']}) אבל לא עונה — recover, לא start"}
+        return 1, {"status": "hung", "why": t("bo.hung", label=a["label"], pids=v["roots"])}
     if by != "human" and quit_by_person(a, st=st):
-        return 2, {"status": "closed-by-person", "why": f"הדפדפן של {a['label']} נסגר ביציאה רגילה (⌘Q) בשעתיים האחרונות — לא נפתח אוטומטית; "
-                   "האדם פותח, או שהסוכן מבקש זאת"}
+        return 2, {"status": "closed-by-person", "why": t("bo.closed_by_person", label=a["label"])}
     theme = ensure_theme(a, st) if not a.get("noTheme") else "off"
     painted = paint(a, themed=theme in ("installed", "kept"))
     before = front_pid() if by != "human" else None
@@ -598,7 +600,7 @@ def do_start(a, by):
 
 def do_stop(a, by, allow_reopen=False):
     if by != "human":
-        return 2, {"status": "refused", "why": f"רק האדם סוגר את הדפדפן של {a['label']} (stop --by human). סוכן שצריך התאוששות — recover"}
+        return 2, {"status": "refused", "why": t("bo.only_human_stops", label=a["label"])}
     rows = processes()
     roots, tree = tree_of(a, rows)
     st = load(a)
@@ -612,7 +614,7 @@ def do_stop(a, by, allow_reopen=False):
 
 def do_idle_stop(a, by):
     if not a.get("idleMinutes"):
-        return 2, {"status": "refused", "why": f"לדפדפן של {a['label']} אין סגירה בחוסר פעילות (idleMinutes) — רק האדם סוגר (stop --by human)"}
+        return 2, {"status": "refused", "why": t("bo.no_idle", label=a["label"])}
     rows = processes()
     roots, tree = tree_of(a, rows)
     if not tree:
@@ -635,21 +637,21 @@ def do_recover(a, by):
         return profile_busy(v)
     st = reconcile(a, st, v)
     if st.get("offByHuman") and by != "human":
-        return 2, {"status": "refused", "why": f"האדם סגר את הדפדפן של {a['label']} ב-{st.get('offAt')}"}
+        return 2, {"status": "refused", "why": t("bo.refused_off_short", label=a["label"], at=st.get("offAt"))}
     if v["status"] == "up":
         return 0, {"status": "healthy"}
     roots, tree = tree_of(a, rows)
     if len(roots) > 1:
-        return 1, {"status": "failed", "why": f"יותר משורש אחד של הדפדפן של {a['label']}: {roots} — לא נוגעים"}
+        return 1, {"status": "failed", "why": t("bo.many_roots", label=a["label"], roots=roots)}
     if tree and by != "human":
         if not really_down(a):
-            return 0, {"status": "healthy", "why": "ענה בבדיקה החוזרת — לא נסגר"}
+            return 0, {"status": "healthy", "why": t("bo.healthy_recheck")}
         if healthy(a, timeout=5):
-            return 0, {"status": "healthy", "why": "ענה ממש לפני הסגירה — לא נסגר"}
+            return 0, {"status": "healthy", "why": t("bo.healthy_last")}
     if tree:
         roots2, tree2 = tree_of(a, processes())
         if roots2 != roots:
-            return 1, {"status": "failed", "why": f"התהליכים השתנו בזמן הבדיקה ({roots} → {roots2}) — לא סוגרים; לנסות שוב"}
+            return 1, {"status": "failed", "why": t("bo.tree_changed", before=roots, after=roots2)}
         tree = tree2
     left = terminate_tree(tree) if tree else []
     if tree:
@@ -671,7 +673,8 @@ def main(argv=None):
         print(json.dumps({"status": "failed", "why": f"registry: {type(exc).__name__}: {exc}"[:300]}, ensure_ascii=False))
         return 1
     if a.cmd == "human-theme":
-        d = build_theme({"name": "human-human", "label": "האדם", "color": "#B0BEC5"}, text="האדם · HUMAN · ניתן להשתמש", title="האדם · HUMAN")
+        d = build_theme({"name": "human-human", "label": t("bo.human_label"), "color": "#B0BEC5"}, text=t("bo.human_text"),
+                        title=t("bo.human_title"))
         print(json.dumps({"status": "built", "folder": str(d)}, ensure_ascii=False))
         return 0
     if a.cmd == "names":
@@ -688,20 +691,20 @@ def main(argv=None):
             return 1
     ag = reg.get((a.agent or "").strip().lower())
     if not ag:
-        print(json.dumps({"status": "failed", "why": f"סוכן לא רשום: {a.agent!r} — רשומים: {', '.join(reg)}"}, ensure_ascii=False))
+        print(json.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(a.agent), names=", ".join(reg))}, ensure_ascii=False))
         return 1
     if a.cmd == "status":
         print(json.dumps(view(ag), ensure_ascii=False))
         return 0
     if ag.get("managedBy"):
-        print(json.dumps({"status": "refused", "why": f"הדפדפן של {ag['label']} מנוהל על ידי {ag['managedBy']} — כאן רק דיווח"}, ensure_ascii=False))
+        print(json.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
         return 2
     Path(ag["lock"]).parent.mkdir(parents=True, exist_ok=True)
     with open(ag["lock"], "w") as lk:
         try:
             fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            print(json.dumps({"status": "busy", "why": "פעולה אחרת על הדפדפן הזה רצה עכשיו"}, ensure_ascii=False))
+            print(json.dumps({"status": "busy", "why": t("bo.busy")}, ensure_ascii=False))
             return 1
         fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover}[a.cmd]
         try:

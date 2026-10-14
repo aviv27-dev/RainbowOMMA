@@ -24,8 +24,12 @@ import time
 import uuid
 from pathlib import Path
 
-LEASES = Path.home() / ".rainbowomma" / "state" / "doc_leases"
-LOG = Path.home() / ".rainbowomma" / "logs" / "agent-office.log"
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
+from rainbow_i18n import t  # noqa: E402
+
+ROOT = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))   # logs, state, work folder
+LEASES = ROOT / "state" / "doc_leases"
+LOG = ROOT / "logs" / "agent-office.log"
 SEP = "␞"          # ␞ — never inside a file path, unlike ", "
 APPS = {
     # AppleScript app name · collection · how to read a document's POSIX path · "is it safe to close" · close statement
@@ -41,7 +45,7 @@ APPS_STATE = LEASES.parent / "office_apps.json"     # app → {launchedBy, pid, 
 INFLIGHT = LEASES.parent / "office_inflight"         # one file per running conversion: {app, pid}
 IDLE_QUIT_S = 600
 PDF_TIMEOUT_S = 100
-WORD_DIR = Path(os.environ.get("OFFICE_WORD_DIR") or (Path.home() / ".rainbowomma" / "word-convert"))
+WORD_DIR = Path(os.environ.get("OFFICE_WORD_DIR") or (ROOT / "word-convert"))
 APP_BIN = {"word": "/Microsoft Word.app/Contents/MacOS/", "excel": "/Microsoft Excel.app/Contents/MacOS/",
            "acrobat": "/Adobe Acrobat.app/Contents/MacOS/", "preview": "/Preview.app/Contents/MacOS/"}
 PGREP = None   # tests replace it: (app) -> pid | None
@@ -179,10 +183,10 @@ def reread(d):
 def cmd_open(agent, path, app=None):
     p = Path(norm(path))
     if not p.exists():
-        return 1, {"status": "failed", "why": f"אין קובץ: {p}"}
+        return 1, {"status": "failed", "why": t("ao.no_file", path=p)}
     app = app or EXT_APP.get(p.suffix.lower())
     if app not in APPS:
-        return 1, {"status": "failed", "why": "אפליקציה לא נתמכת — word / excel / acrobat / preview"}
+        return 1, {"status": "failed", "why": t("ao.bad_app")}
     note_use(app, "office-owner/" + agent)
     before = open_paths(app)
     shared = before is None or any(x in before for x in forms(path))
@@ -216,7 +220,7 @@ def mine(agent, path):
 def cmd_close(agent, path):
     ds = mine(agent, path)
     if not ds:
-        return 1, {"status": "failed", "why": "אין חכירה של הסוכן הזה על המסמך הזה (לפי הנתיב המלא) — סוגרים רק מה שהסוכן פתח דרך agent-office"}
+        return 1, {"status": "failed", "why": t("ao.no_lease")}
     res = [_close_lease(d, "by agent") for d in ds][-1]
     return (0 if res in ("closed", "gone") else 3), {"status": res}
 
@@ -345,13 +349,13 @@ def inflight_for(app):
 def cmd_pdf(agent, src, out=None):
     p = Path(norm(src))
     if not p.exists():
-        return 1, {"status": "failed", "why": f"אין קובץ: {p}"}
+        return 1, {"status": "failed", "why": t("ao.no_file", path=p)}
     ext = p.suffix.lower()
     if ext not in (".doc", ".docx", ".rtf"):
-        return 1, {"status": "failed", "why": "pdf דרך Word — רק doc / docx / rtf"}
+        return 1, {"status": "failed", "why": t("ao.pdf_types")}
     dest = Path(norm(out)) if out else p.with_suffix(".pdf")
     if dest.suffix.lower() != ".pdf" or dest.resolve() == p.resolve():
-        return 1, {"status": "failed", "why": "--out חייב להיות קובץ ‎.pdf ולא קובץ המקור"}
+        return 1, {"status": "failed", "why": t("ao.pdf_out")}
     WORD_DIR.mkdir(parents=True, exist_ok=True)
     base = "ofc-pdf-" + uuid.uuid4().hex[:12]
     tmp, tmp_pdf = WORD_DIR / (base + ext), WORD_DIR / (base + ".pdf")
@@ -383,7 +387,7 @@ def cmd_pdf(agent, src, out=None):
         except OSError:
             pass
         log(f"pdf FAILED {agent} {p} ({msg[:120]})")
-        return 1, {"status": "failed", "why": "Word לא הפיק PDF — " + (msg.strip()[:160] or f"exit {code}")}
+        return 1, {"status": "failed", "why": t("ao.pdf_failed", detail=msg.strip()[:160] or f"exit {code}")}
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(tmp_pdf), str(dest))
     log(f"pdf {agent} {p} -> {dest}")

@@ -3,8 +3,10 @@ set -u
 
 DATA_DIR="$HOME/Library/Application Support/Google/Chrome"
 EXE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+I18N="$(cd "$(dirname "$0")" && pwd)/rainbow_i18n.py"
+msg() { /usr/bin/python3 -I "$I18N" "$@"; }
 
-notify() { osascript -e "display notification \"$1\" with title \"Chrome של האדם\"" >/dev/null 2>&1; }
+notify() { osascript -e "display notification \"$1\" with title \"$(msg hc.title)\"" >/dev/null 2>&1; }
 
 mine() {
   ps -axo pid=,command= | while read -r pid cmd; do
@@ -33,6 +35,6 @@ done
 if [ -n "$pid" ]; then
   osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true" >/dev/null 2>&1
 else
-  notify "לא עלה — לבדוק ש-Google Chrome מותקן"
+  notify "$(msg hc.not_up)"
   exit 1
 fi
