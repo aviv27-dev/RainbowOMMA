@@ -66,12 +66,31 @@ python3 tools/cursor-themes/build_cursor_themes.py --registry ~/bin/browsers.jso
 cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
 ```
 
-For Hermes Agent, apply [`adapters/hermes-cua-cursor-theme.patch`](adapters/hermes-cua-cursor-theme.patch) and add
+**Any MCP agent:** register `cua-color-proxy` wherever your agent would run `cua-driver mcp`. The proxy sits between the
+agent and Cua Driver, passes everything through unchanged, and gives every session the agent starts its color before the
+first click. The agent's code and prompt stay as they are, so this works for Claude Code, OpenClaw, OpenCode, Codex CLI,
+Cursor and any other MCP client:
+
+```bash
+# Claude Code (the same key Cua's own `cua-driver mcp-config --client claude` uses)
+claude mcp add-json --scope user cua-computer-use "{\"command\":\"$HOME/bin/cua-color-proxy\",\"args\":[\"--agent\",\"alpha\"]}"
+# OpenClaw
+openclaw mcp set cua-driver "{\"command\":\"$HOME/bin/cua-color-proxy\",\"args\":[\"--agent\",\"bravo\"]}"
+# Codex CLI (only when it uses Cua Driver instead of its own computer use)
+codex mcp add cua-driver -- ~/bin/cua-color-proxy --agent charlie
+```
+
+For OpenCode, Cursor and other JSON configs, take the snippet from `cua-driver mcp-config --client <name>` and replace the
+`cua-driver` command and its `mcp` argument with `/Users/<you>/bin/cua-color-proxy` and `--agent <name>`. JSON configs need
+the full path, because `~` is not expanded there. The agent name is its row in `browsers.json`.
+
+**Hermes Agent** uses its built-in computer use rather than MCP. Apply
+[`adapters/hermes-cua-cursor-theme.patch`](adapters/hermes-cua-cursor-theme.patch) and add
 [`adapters/hermes-cursor-config.yaml`](adapters/hermes-cursor-config.yaml) to the agent's profile.
 
 - Tested with Cua Driver **0.21.0**, the version Hermes pins. Don't `cua-driver update` past the version your agent framework pins: a mismatched driver breaks computer use.
 - With reduced motion on, `cua-driver serve` measured 0.0% CPU after sessions with the cursor shown.
-- Agents on Codex aren't covered yet. The Hermes patch is Hermes-only, and a Codex adapter is future work.
+- Claude's built-in computer use has no cursor color to set, so Claude Code gets a colored cursor only when it works through Cua Driver, as above.
 
 ### 🌍 English and Hebrew
 Every message a person sees comes in English or Hebrew: the `why` in each answer, notifications, desktop icon names and
