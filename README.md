@@ -10,9 +10,9 @@ your own work. RainbowOMMA keeps that arrangement civil: each agent gets **its o
 one owner decides who may open or close it, and nothing an agent does can kill your browser or close a document
 you're typing in.
 
-![A shared Mac: the human's grey Chrome and three agent browsers, each in its own color with the agent's name written across the frame](docs/images/rainbow-desktop.png)
+![One Mac, three agents: Alpha, Bravo and Charlie each work in their own Chrome, in their own color with their name across the frame, and each moves its own colored cursor](docs/images/rainbow-desktop.png)
 
-<sub>Illustration of the window frames RainbowOMMA paints, shown in its Hebrew (RTL) interface. RainbowOMMA speaks English and Hebrew.</sub>
+<sub>A real screenshot of three agent browsers on one Mac, with Chrome in Hebrew (RTL). Agent names and personal details were replaced, and each agent's cursor was added from Cua Driver's own cursor theme, recolored the way RainbowOMMA does it.</sub>
 
 ---
 
