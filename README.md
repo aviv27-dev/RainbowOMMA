@@ -1,7 +1,17 @@
-# 🌈 RainbowOMMA — One Mac, Many Agents
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/header-dark.png">
+    <img alt="RainbowOMMA" src="docs/brand/header-light.png" width="520">
+  </picture>
+</p>
 
-[![tests](https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml/badge.svg)](https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<h1 align="center">One Mac, Many Agents</h1>
+
+<p align="center">
+  <a href="https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
+  <a href="https://github.com/aviv27-dev/RainbowOMMA/releases"><img alt="release" src="https://img.shields.io/github/v/release/aviv27-dev/RainbowOMMA"></a>
+</p>
 
 **Let a human and a whole team of AI agents share one Mac without stepping on each other.**
 
