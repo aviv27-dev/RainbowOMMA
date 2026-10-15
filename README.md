@@ -12,7 +12,7 @@ you're typing in.
 
 ![One Mac, three agents: Alpha, Bravo and Charlie each work in their own Chrome, in their own color with their name across the frame, and each moves its own colored cursor](docs/images/rainbow-desktop.png)
 
-<sub>A real screenshot of three agent browsers on one Mac, with Chrome in Hebrew (RTL). Agent names and personal details were replaced, and each agent's cursor was added from Cua Driver's own cursor theme, recolored the way RainbowOMMA does it.</sub>
+<sub>The browser and terminal screenshots are real captures from one Mac, with Chrome in Hebrew (RTL), showing a local demo page and terminal. Before publishing, agent names were replaced with placeholders, personal details were removed, and the cursors were drawn from Cua Driver's own cursor theme, recolored the way RainbowOMMA does it. The terminal shows command output with names replaced and some fields trimmed (`…`). The desktop icons further down are an illustration.</sub>
 
 ---
 
@@ -40,11 +40,15 @@ Each agent's browser wears a **real Chrome theme**: the whole frame is painted i
 written across it. One look at the screen tells you whose window is in front, and your own browser can be marked
 "HUMAN · free to use".
 
+![Three agent browsers side by side, each with its own color, its own page and its own colored cursor](docs/images/three-agents.png)
+
 ### 🧑 The human comes first
 - Only the human closes an agent's browser for good. After you close it, agent and keepalive restarts are `refused` until you reopen it.
 - If you quit an agent's Chrome with ⌘Q, the tool remembers that and doesn't relaunch it behind your back (`closed-by-person`).
 - A new agent window that takes focus hands it straight back to whatever you were using.
 - An app you launched is never quit. `office-owner` quits only the apps it launched itself, after 10 idle minutes with no documents open. An app that isn't running is never launched just to check on it.
+
+![The human closes Bravo's browser; Bravo and the keepalive are refused; only the human reopens it](docs/images/owner-refusal.png)
 
 ### 🛑 If in doubt, do nothing
 A port that answers but isn't the agent's own browser is reported as `blocked`, not "up". A profile open somewhere
@@ -55,11 +59,11 @@ browser, the tool probes it three times over 30 seconds or more, so a Mac deep i
 Every command prints **one JSON answer** with stable status words and exit codes (`browser-owner`: `0` ok · `2` refused · `1` failure;
 `office-owner`: `0` done · `3` left open · `1` failure), so an agent can branch on the result instead of guessing.
 
-![browser-owner in a terminal: start, already-up, an agent refused when it tries to close another agent's browser, and a refusal to reopen a browser the human closed](docs/images/browser-owner-terminal.png)
-
 ### 🖱️ A cursor in the same color
 When an agent drives the Mac through [Cua Driver](https://github.com/trycua/cua) computer use, its on-screen cursor
 wears the agent's color too, so you can see which agent is clicking.
+
+![The Cua cursor in each agent's color, with its session badge](docs/images/cua-cursors.png)
 
 ```bash
 python3 tools/cursor-themes/build_cursor_themes.py --registry ~/bin/browsers.json --install
@@ -142,6 +146,8 @@ Documents work the same way. Tell agents to open Word, Excel and Acrobat documen
 `pdf` converts a uniquely named copy in one fixed work folder (`~/.rainbowomma/word-convert`, or set `OFFICE_WORD_DIR`).
 Word's sandbox asks permission once per folder, so **the first conversion on a new Mac shows a Word permission prompt**.
 Allow it once and later conversions run without asking.
+
+![office-owner: a lease on a demo document, which apps are running and who launched them, and Word to PDF](docs/images/office-owner.png)
 
 ## Guardrails for your agent framework
 
