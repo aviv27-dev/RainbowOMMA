@@ -3,12 +3,7 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$HOME/.claude/hooks/rainbowomma-guard.py\""
-          }
-        ]
+        "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard" }]
       }
     ]
   },

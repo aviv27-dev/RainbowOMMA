@@ -1,0 +1,7 @@
+# Codex CLI exec policy (~/.codex/rules/rainbowomma.rules). Token-prefix rules: a hard "forbidden" for pkill/killall.
+# The hook in hooks.json catches the rest (osascript quitting Chrome, kill $(pgrep …), Chrome on a debug port).
+prefix_rule(
+    pattern = [["pkill", "killall"]],
+    decision = "forbidden",
+    justification = "Use RainbowOMMA's browser-owner to stop or recover a browser",
+)

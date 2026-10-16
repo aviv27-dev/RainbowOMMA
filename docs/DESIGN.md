@@ -22,15 +22,15 @@
 | `bin/desk-browser.sh`, `install/make-desktop-apps.sh` | colored desktop icons: open/close each agent, the human's Chrome, all agents |
 | `examples/agent-shortcut` | `<agent>-browser <cmd>` = `browser-owner <cmd> <agent>` (kept for callers that know the old name) |
 | `examples/agent-launcher.sh` | an agent with its own launcher; the owner calls it back with `<LAUNCHER_ENV>=1` |
-| `adapters/hermes-approvals-deny.yaml` | Hermes guardrail: no pkill/killall/AppleScript-quit/Chrome-on-a-debug-port |
+| `bin/rainbowomma-guard(.py)` | the one pre-tool hook every guardrail adapter runs; reads each framework's hook payload — §5 |
+| `adapters/<framework>/` | one folder per agent framework: hook wiring, native deny rules, plugins — see `docs/AGENTS.md` |
 | `bin/cua-color-proxy(.py)` | MCP stdio proxy in front of `cua-driver mcp`: every session of an MCP agent wears that agent's cursor theme — §6 |
 | `bin/rainbow_i18n.py` | the message catalog (English + Hebrew) and the language choice — §7 |
 | `install.sh` | copies the tools, creates `browsers.json` from the example (never overwrites), the state folders, and with `--with-sweep` the launchd job with absolute paths |
-| `adapters/claude-code/` | Claude Code guard: a PreToolUse hook + a settings example |
 | `bin/human-chrome.sh` | opens (or brings to front) the human's own Chrome, never an agent's |
 | `bin/desk-browser.sh` | what the desktop icons run: `open\|close <agent>`, `open\|close human`, `close agents` |
 | `tools/cursor-themes/build_cursor_themes.py`, `cua.default.lottie` | one Cua cursor theme per agent in its color — §6 |
-| `adapters/hermes-cua-cursor-theme.patch`, `adapters/hermes-cursor-config.yaml` | Hermes Agent: select the agent's cursor theme per session — §6 |
+| `adapters/hermes/cua-cursor-theme.patch`, `adapters/hermes/cursor-config.yaml` | Hermes Agent: select the agent's cursor theme per session — §6 |
 | `install/com.rainbowomma.agent-office-sweep.plist` | the launchd sweep template; `install.sh --with-sweep` writes it with absolute paths |
 | `.github/workflows/tests.yml`, `release.yml` | tests on macOS for every push and PR · a release from a `v*` tag or by hand from the Actions tab |
 | `tests/test_rainbowomma.py` | fake process table, fake osascript, fake Chrome — never touches a real browser |
@@ -84,10 +84,17 @@ makes it the human's), and — checked inside the quit AppleScript itself — it
 working in parallel is fine; the app is shared, the documents are not.
 
 ## 5. Agent adapters (the guardrails)
-- **Hermes Agent:** `adapters/hermes-approvals-deny.yaml`.
-- **Claude Code:** `adapters/claude-code/rainbowomma-guard.py`, a PreToolUse hook on Bash with the same patterns (exit 2 + the reason on
-  stderr, so the agent is told to use the owner), plus `permissions.deny` for `pkill` / `killall` in `adapters/claude-code/settings.json`.
-- **Codex CLI (todo):** `prefix_rule(decision="forbidden", justification="use ~/bin/browser-owner")` with `match`/`not_match` self-tests.
+- **One guard, many frameworks.** `bin/rainbowomma-guard.py` holds the patterns (`pkill`, `killall`, `kill $(pgrep …)`,
+  `pgrep | xargs kill`, AppleScript quitting Chrome, a Chrome binary on a debug port). It finds the command in each
+  framework's payload (`tool_input.command`, Cursor's `command`, Windsurf's `tool_info.command_line`, Copilot CLI's
+  `toolArgs` JSON text, Cline's `tool_call.input` / `preToolUse.parameters`) and refuses with exit 2 and the reason
+  on stderr, or Cline's `{"cancel": true}` with `--format cline`. A payload it can't read is let through.
+- **Native rules as a second layer** where a framework has them: Claude Code and Qwen `permissions.deny`, Codex exec
+  policy `forbidden`, Gemini policy TOML, OpenCode / Kilo `permission.bash`, Factory `commandBlocklist`, Zed
+  `always_deny`. Plugins where a framework only takes code: OpenCode / Kilo (`tool.execute.before`), OpenClaw
+  (`before_tool_call`, draft).
+- **Per-framework caveats** (Codex loads new hooks untrusted, Hermes needs hook consent, Copilot fails open on a hook
+  timeout, Cline's refusal cancels the task, Warp's denylist only asks) are in `docs/AGENTS.md`.
 Pattern rules only see the direct command — the owner-side checks stay the real protection.
 
 ## 6. The agent's CUA cursor (computer use)
@@ -98,8 +105,8 @@ name; an installed custom theme keeps its own colors.
 - `tools/cursor-themes/build_cursor_themes.py` copies Cua's default source and swaps its single base color for each agent's
   color from `browsers.json`, giving `com.rainbowomma.cursor.<agent>`; `--install` runs `cua-driver cursor-theme
   validate / build / install`, so the driver itself checks every theme.
-- Hermes Agent: apply `adapters/hermes-cua-cursor-theme.patch` (selects the profile's theme right after `start_session`) and
-  add `adapters/hermes-cursor-config.yaml` to the profile. Reduced motion keeps the overlay from redrawing at rest.
+- Hermes Agent: apply `adapters/hermes/cua-cursor-theme.patch` (selects the profile's theme right after `start_session`) and
+  add `adapters/hermes/cursor-config.yaml` to the profile. Reduced motion keeps the overlay from redrawing at rest.
 - A theme is selected per session, because the driver has no global default. **`bin/cua-color-proxy`** handles this for
   every MCP client. It runs `cua-driver mcp` as a child and relays MCP stdio both ways unchanged. Before the first action on
   a session, it sends its own `start_session` (with `cursor_theme`) and `set_agent_cursor_theme`, and swallows their

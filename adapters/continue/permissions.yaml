@@ -1,0 +1,4 @@
+# Continue CLI (~/.continue/permissions.yaml). Note: `cn --auto` and `--readonly` ignore this file.
+exclude:
+  - Bash(pkill*)
+  - Bash(killall*)

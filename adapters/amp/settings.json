@@ -1,0 +1,11 @@
+{
+  "amp.permissions": [
+    { "tool": "Bash", "matches": { "cmd": "*pkill*" }, "action": "reject" },
+    { "tool": "Bash", "matches": { "cmd": "*killall*" }, "action": "reject" },
+    { "tool": "Bash", "matches": { "cmd": "*osascript*Google Chrome*" }, "action": "reject" },
+    { "tool": "Bash", "matches": { "cmd": "*Google Chrome*--remote-debugging-port*" }, "action": "reject" }
+  ],
+  "amp.mcpServers": {
+    "cua": { "command": "/Users/you/bin/cua-color-proxy", "args": ["--agent", "alpha"] }
+  }
+}

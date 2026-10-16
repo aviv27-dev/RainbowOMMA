@@ -1,0 +1,14 @@
+# Gemini CLI policy (~/.gemini/policies/rainbowomma.toml): a hard deny, matched on the shell command.
+[[rule]]
+toolName = "run_shell_command"
+commandPrefix = ["pkill", "killall"]
+decision = "deny"
+priority = 900
+denyMessage = "Use RainbowOMMA's browser-owner to stop or recover a browser"
+
+[[rule]]
+toolName = "run_shell_command"
+commandRegex = ".*(osascript.*quit.*Google Chrome|osascript.*Google Chrome.*quit|MacOS/Google Chrome.*--remote-debugging-port|kill.*\\$\\(\\s*pgrep|pgrep.*\\|\\s*xargs.*kill)"
+decision = "deny"
+priority = 900
+denyMessage = "Use RainbowOMMA's browser-owner to stop or recover a browser"

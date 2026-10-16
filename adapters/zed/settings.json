@@ -1,0 +1,17 @@
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "always_deny": [
+            { "pattern": "(^|[\\s;&|(`$])(sudo\\s+)?(pkill|killall)\\b" },
+            { "pattern": "\\bkill\\b.*(\\$\\(|`)\\s*pgrep\\b" },
+            { "pattern": "\\bpgrep\\b.*\\|\\s*xargs\\b.*\\bkill\\b" },
+            { "pattern": "osascript.*quit.*google chrome|osascript.*google chrome.*quit" },
+            { "pattern": "macos/google chrome.*--remote-debugging-port" }
+          ]
+        }
+      }
+    }
+  }
+}

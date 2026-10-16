@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "BeforeTool": [
+      { "matcher": "run_shell_command", "hooks": [{ "name": "rainbowomma", "type": "command", "command": "/Users/you/bin/rainbowomma-guard" }] }
+    ]
+  }
+}
