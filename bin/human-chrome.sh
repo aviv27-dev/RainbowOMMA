@@ -4,7 +4,15 @@ set -u
 DATA_DIR="$HOME/Library/Application Support/Google/Chrome"
 EXE="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 I18N="$(cd "$(dirname "$0")" && pwd)/rainbow_i18n.py"
-msg() { /usr/bin/python3 -I "$I18N" "$@"; }
+py() {   # the first python3 that works — never macOS's stub, which only asks to install the developer tools
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ -x "$p" ] || continue
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    "$p" "$@"; return
+  done
+  return 127
+}
+msg() { py -I "$I18N" "$@" 2>/dev/null || echo "$1"; }
 
 notify() { osascript -e "display notification \"$1\" with title \"$(msg hc.title)\"" >/dev/null 2>&1; }
 

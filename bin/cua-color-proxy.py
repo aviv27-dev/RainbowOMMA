@@ -116,8 +116,9 @@ class Proxy:
     def before(self, msg):
         if not isinstance(msg, dict) or msg.get("method") != "tools/call":
             return
-        params = msg.get("params") or {}
-        name, args = params.get("name"), params.get("arguments") or {}
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        name = params.get("name")
+        args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         label = args.get("session") if isinstance(args.get("session"), str) and args.get("session") else IMPLICIT
         now = time.monotonic()
         if name == "end_session":
@@ -144,7 +145,10 @@ class Proxy:
 
     def pump_agent(self, stdin):
         for line in iter(stdin.readline, b""):
-            self.before(self._parse(line))
+            try:
+                self.before(self._parse(line))
+            except Exception as exc:                     # a message we can't read still reaches the driver
+                log(f"{self.agent}: skipped theming for one message — {type(exc).__name__}: {exc}")
             self._send_raw(line)
         try:
             self.proc.stdin.close()

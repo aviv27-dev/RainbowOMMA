@@ -1,6 +1,7 @@
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
 for PY in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+  [ "$PY" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue   # macOS's install-the-tools stub
   if [ -x "$PY" ] && "$PY" -I -V >/dev/null 2>&1; then exec "$PY" -I "$DIR/cua-color-proxy.py" "$@"; fi
 done
 echo "cua-color-proxy: no working python3 found" >&2   # stdout belongs to the MCP client

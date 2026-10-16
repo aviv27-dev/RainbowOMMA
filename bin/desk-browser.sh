@@ -5,8 +5,16 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 OWNER="$DIR/browser-owner"
 I18N="$DIR/rainbow_i18n.py"
 ACT="${1:-}"; WHO="${2:-}"
-msg() { /usr/bin/python3 -I "$I18N" "$@"; }
-field() { /usr/bin/python3 -I -c 'import json,sys
+py() {   # the first python3 that works — never macOS's stub, which only asks to install the developer tools
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ -x "$p" ] || continue
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    "$p" "$@"; return
+  done
+  return 127
+}
+msg() { py -I "$I18N" "$@" 2>/dev/null || echo "$1"; }
+field() { py -I -c 'import json,sys
 try: d=json.loads(sys.stdin.read().strip().splitlines()[-1])
 except Exception: d={}
 print(d.get(sys.argv[1]) or "")' "$1"; }

@@ -122,10 +122,10 @@ why); `office-owner` `0` done · `3` left open · `1` failure.
 | `browser-owner start <agent> --by <who>` | paints and opens the agent's browser in the background; `already-up` if it runs |
 | `browser-owner stop <agent> --by human [--allow-reopen]` | only the human closes it; it stays closed unless `--allow-reopen` |
 | `browser-owner recover <agent> --by <who>` | restarts a hung browser after three probes; never one the human closed |
-| `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json` |
+| `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
-| `office-owner pdf --agent <a> <file.docx>` · `apps` · `list` · `sweep` | Word → PDF · which apps run and who launched them · the leases · drop stale leases and quit idle apps it launched |
+| `office-owner pdf --agent <a> <file.docx> [--force]` · `apps` · `list` · `sweep` | Word → PDF (never over an existing PDF without `--force`) · which apps run and who launched them · the leases · drop stale leases and quit idle apps it launched |
 
 ### 🖱️ A cursor in the same color
 When an agent drives the Mac through [Cua Driver](https://github.com/trycua/cua) computer use, its on-screen cursor

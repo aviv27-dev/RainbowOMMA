@@ -11,7 +11,15 @@ ARCH="$DESK/Archive/browser-shortcuts-$(date +%Y%m%d-%H%M)"
 WORK="$(mktemp -d)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 I18N="$BIN/rainbow_i18n.py"; [ -f "$I18N" ] || I18N="$HERE/../bin/rainbow_i18n.py"
-msg() { /usr/bin/python3 -I "$I18N" "$@"; }
+py() {   # the first python3 that works — never macOS's stub, which only asks to install the developer tools
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ -x "$p" ] || continue
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    "$p" "$@"; return
+  done
+  return 127
+}
+msg() { py -I "$I18N" "$@" 2>/dev/null || echo "$1"; }
 CANCEL="$(msg desk.btn_cancel)"; CLOSE="$(msg desk.btn_close)"; ERR="$(msg desk.error)"
 
 mkdir -p "$ARCH"
@@ -57,20 +65,25 @@ JS
   iconutil -c icns "$set" -o "$1"
 }
 
+asq() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }   # text safe inside an AppleScript "string" (a label may hold " or \)
+
 app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
   local name="$1" hex="$2" txt="$3" act="$4" who="$5" confirm="${6:-}" src="$WORK/a.applescript" out="$DESK/$1.app"
+  local qn qc qb qcancel qclose qerr
+  qn="$(asq "$name")"; qc="$(asq "$confirm")"; qb="$(asq "$BIN/desk-browser.sh")"
+  qcancel="$(asq "$CANCEL")"; qclose="$(asq "$CLOSE")"; qerr="$(asq "$ERR")"
   {
     echo "-- $name — made by RainbowOMMA/make-desktop-apps.sh; the work is $BIN/desk-browser.sh $act $who"
     echo "on run"
     if [ -n "$confirm" ]; then
-      echo "  display dialog \"$confirm\" with title \"$name\" buttons {\"$CANCEL\", \"$CLOSE\"} default button \"$CANCEL\" cancel button \"$CANCEL\" with icon caution"
+      echo "  display dialog \"$qc\" with title \"$qn\" buttons {\"$qcancel\", \"$qclose\"} default button \"$qcancel\" cancel button \"$qcancel\" with icon caution"
     fi
     echo "  try"
-    echo "    set r to do shell script quoted form of \"$BIN/desk-browser.sh\" & \" $act $who\""
+    echo "    set r to do shell script quoted form of \"$qb\" & \" $act $who\""
     echo "  on error e"
-    echo "    set r to \"$ERR\" & e"
+    echo "    set r to \"$qerr\" & e"
     echo "  end try"
-    echo "  display notification r with title \"$name\""
+    echo "  display notification r with title \"$qn\""
     echo "end run"
   } > "$src"
   rm -rf "$out"
@@ -84,7 +97,7 @@ app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
 }
 
 # the agents this owner may stop, with their label and color, from browsers.json
-AGENTS=$("$BIN/browser-owner" list 2>/dev/null | /usr/bin/python3 -I -c '
+AGENTS=$("$BIN/browser-owner" list 2>/dev/null | py -I -c '
 import json, sys
 names = set(sys.argv[1].split())
 for a in json.load(sys.stdin).get("agents", []):

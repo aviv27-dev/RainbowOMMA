@@ -56,6 +56,10 @@ M = {
     "bo.managed": {"en": "{label}'s browser is managed by {by} — report only here", "he": "הדפדפן של {label} מנוהל על ידי {by} — כאן רק דיווח"},
     "bo.no_registry": {"en": "no browsers.json at {path} — run install.sh, or copy examples/browsers.example.json there",
                        "he": "אין browsers.json ב-{path} — להריץ את install.sh, או להעתיק לשם את examples/browsers.example.json"},
+    "bo.idle_not_yours": {"en": "{by} is another agent — only {label}'s own reaper (or the keepalive) idle-closes {label}'s browser",
+                          "he": "{by} הוא סוכן אחר — רק המנקה של {label} (או ה-keepalive) סוגר את הדפדפן של {label} בחוסר פעילות"},
+    "bo.idle_too_soon": {"en": "{label}'s browser was started {mins} min ago — not idle yet (idleMinutes = {idle})",
+                         "he": "הדפדפן של {label} נפתח לפני {mins} דק׳ — עוד לא בחוסר פעילות (idleMinutes = {idle})"},
     "bo.busy": {"en": "another action on this browser is running right now", "he": "פעולה אחרת על הדפדפן הזה רצה עכשיו"},
     # ── office-owner / agent-office ──
     "ao.no_file": {"en": "no such file: {path}", "he": "אין קובץ: {path}"},
@@ -65,6 +69,8 @@ M = {
                     "he": "אין חכירה של הסוכן הזה על המסמך הזה (לפי הנתיב המלא) — סוגרים רק מה שהסוכן פתח דרך agent-office"},
     "ao.pdf_types": {"en": "pdf through Word — doc / docx / rtf only", "he": "pdf דרך Word — רק doc / docx / rtf"},
     "ao.pdf_out": {"en": "--out must be a .pdf file and not the source file", "he": "--out חייב להיות קובץ ‎.pdf ולא קובץ המקור"},
+    "ao.pdf_exists": {"en": "{path} already exists — not replacing it (pass --force to replace it, or --out for another name)",
+                      "he": "{path} כבר קיים — לא מחליפים אותו (‎--force כדי להחליף, או ‎--out לשם אחר)"},
     "ao.pdf_failed": {"en": "Word produced no PDF — {detail}", "he": "Word לא הפיק PDF — {detail}"},
     # ── desktop icons (desk-browser.sh, make-desktop-apps.sh) ──
     "desk.name.human": {"en": "Human", "he": "האדם"},

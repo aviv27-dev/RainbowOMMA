@@ -84,8 +84,11 @@ makes it the human's), and — checked inside the quit AppleScript itself — it
 working in parallel is fine; the app is shared, the documents are not.
 
 ## 5. Agent adapters (the guardrails)
-- **One guard, many frameworks.** `bin/rainbowomma-guard.py` holds the patterns (`pkill`, `killall`, `kill $(pgrep …)`,
-  `pgrep | xargs kill`, AppleScript quitting Chrome, a Chrome binary on a debug port). It finds the command in each
+- **One guard, many frameworks.** `bin/rainbowomma-guard.py` splits the shell line into simple commands (through pipes,
+  `;`/`&&`, `$( )`, backticks, `sh -c`, `eval`, and wrappers like `sudo`/`env`/`xargs`; heredoc bodies are data) and
+  judges each command by its name (`/usr/bin/pkill` is `pkill`): `pkill`, `killall`, `kill` with a process search
+  (`pgrep`, or `ps`/`lsof` on Chrome or a 92xx port), AppleScript quitting Chrome, Chrome on a debug port (its binary
+  or `open -a`), and an agent acting as the human (`--by human`, `LAUNCH_BY=human`, the desktop scripts). It finds the command in each
   framework's payload (`tool_input.command`, Cursor's `command`, Windsurf's `tool_info.command_line`, Copilot CLI's
   `toolArgs` JSON text, Cline's `tool_call.input` / `preToolUse.parameters`) and refuses with exit 2 and the reason
   on stderr, or Cline's `{"cancel": true}` with `--format cline`. A payload it can't read is let through.

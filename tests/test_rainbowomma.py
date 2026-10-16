@@ -135,8 +135,8 @@ check("a new agent: its THEME is installed before the first launch (solid frame 
       code == 0 and launched[-1] == "charlie" and mst["themeId"] == "fakethemeid" and mst["theme"] == bo.theme_key(CHARLIE_A)
       and mst["lastStart"]["theme"] == "installed" and mp["profile"]["name"] == "צ׳רלי — סוכן · לא לגעת"
       and "theme" not in mp.get("browser", {}) and ls["profile"]["info_cache"]["Default"]["profile_highlight_color"] == agent_color, (out, mp, mst))
-check("…the theme install closed its windowless Chrome — recorded as an OWNER stop (so it is never read as the human's ⌘Q)",
-      mst["lastStop"]["by"] == "theme-install")
+check("…the theme install closed its windowless Chrome — recorded apart from lastStop (never read as the human's ⌘Q, never hides the real stop)",
+      "at" in mst["lastThemeInstall"] and (mst.get("lastStop") or {}).get("by") != "theme-install")
 up[9224] = False
 inst = []
 _it = bo.install_theme; bo.install_theme = lambda a, folder, timeout=25.0: inst.append(1) or (True, "x")
@@ -457,7 +457,7 @@ check("a conversion in flight → never quit", r == [], r)
 def stuck(sc):
     calls.append(sc); return 124, ""
 ao.RUN = stuck; calls.clear()
-code, out = ao.cmd_pdf("bravo", str(src))
+code, out = ao.cmd_pdf("bravo", str(src), force=True)
 check("Word hangs (a dialog) → clear failure, and the cleanup closes ONLY that copy by name", code == 1 and any("close x saving no" in c and "ofc-pdf-" in c for c in calls[1:]), (out, len(calls)))
 check("…and no leftover temp copy or empty PDF in the work folder", not list(ao.WORD_DIR.glob("ofc-pdf-*")), list(ao.WORD_DIR.glob("*")))
 calls.clear()
@@ -732,6 +732,110 @@ with contextlib.redirect_stdout(buf):
 bo.REGISTRY = _reg
 check("no browsers.json → one JSON answer that says how to create it", rc == 1 and "install.sh" in json.loads(buf.getvalue())["why"], buf.getvalue())
 
+
+# ── the second review's findings stay fixed ──
+# 1–3: the guard reads the shell line (words, pipes, $( ), sh -c), not the raw text
+bypasses = ["/usr/bin/pkill -f Chrome", "/usr/bin/killall 'Google Chrome'", "\\pkill Chrome", "sudo -u root /usr/bin/pkill x", "nohup env A=1 pkill x &",
+            "bash -c 'pkill Chrome'", "eval \"killall Chrome\"", "ls\npkill Chrome", "kill -9 \"$(pgrep -f Chrome)\"",
+            "ps aux | grep Chrome | awk '{print $2}' | xargs kill -9", "lsof -ti :9223 | xargs kill",
+            "open -na 'Google Chrome' --args --remote-debugging-port=9223 --user-data-dir=/tmp/x",
+            "~/bin/browser-owner stop bravo --by human", "browser-owner start bravo --by=HUMAN", "python3 -I ~/bin/browser-owner.py stop bravo --by human",
+            "~/bin/office-owner close --agent bravo x.docx --by human", "~/bin/desk-browser.sh close agents", "bash ~/bin/kill-chrome.sh --all",
+            "LAUNCH_BY=human ~/bin/agent-launcher.sh", "export LAUNCH_BY=human; ~/bin/agent-launcher.sh"]
+res = [hook(c) for c in bypasses]
+check("guard: no way around it by path, backslash, wrapper, sh -c, eval, a new line, ps/lsof | xargs kill, open -a, or posing as the human",
+      all(code == 2 for code, _ in res), [c for c, (code, _) in zip(bypasses, res) if code != 2])
+harmless = ["git commit -m 'stop using killall and pkill'", "echo \"don't pkill please\"", "grep -rn pkill bin/", "lsof -ti :3000 | xargs kill",
+            "cat > notes.md <<'EOF'\nnever run pkill or killall\nEOF", "~/bin/browser-owner stop alpha --by alpha", "~/bin/browser-owner idle-stop bravo --by bravo",
+            "echo \"unbalanced", "npm run build && npm test", "python3 -c 'print(1)'"]
+res = [hook(c) for c in harmless]
+check("guard: words in a message, a search or a heredoc are not commands — let through", all(code == 0 for code, _ in res),
+      [c for c, (code, _) in zip(harmless, res) if code])
+# 4: one message the proxy can't read never stops the agent's traffic
+pm = load("cua-color-proxy.py")
+class _Sink:
+    def __init__(self): self.lines = []
+    def write(self, b): self.lines.append(b)
+    def flush(self): pass
+    def close(self): pass
+px = pm.Proxy.__new__(pm.Proxy); px.agent, px.themed, px.ended = "alpha", {}, set()
+px.proc = type("P", (), {"stdin": _Sink()})()
+px.theme_session = lambda label: None
+feed = [b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"click","arguments":[1]}}\n',
+        b'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":"x"}\n', b'{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"click"}}\n']
+px.pump_agent(io.BytesIO(b"".join(feed)))
+check("proxy: malformed tool calls pass through, and the messages after them still reach the driver", px.proc.stdin.lines == feed, px.proc.stdin.lines)
+# 5: pdf never replaces a PDF that is already there
+ao.RUN = word_osa; calls.clear()
+src2 = tmp / "agent" / "report.docx"; src2.write_text("x"); (tmp / "agent" / "report.pdf").write_bytes(b"%PDF- the human's")
+code, out = ao.cmd_pdf("bravo", str(src2))
+check("pdf: report.pdf already exists → refused before Word is touched, the old PDF intact",
+      code == 1 and not calls and (tmp / "agent" / "report.pdf").read_bytes() == b"%PDF- the human's", out)
+code, out = ao.cmd_pdf("bravo", str(src2), force=True)
+check("pdf --force: replaces it on purpose", code == 0 and (tmp / "agent" / "report.pdf").read_bytes() == b"%PDF- test", out)
+ao.RUN = osa
+# 6: a launch record with no pid of ours never adopts the human's Word
+ao.save_apps_state({"word": {"launchedBy": "office-owner/x", "pid": None, "launchedAt": time.time() - 9999, "lastActivity": time.time() - 9999}})
+pids["word"] = 555
+ao.touch("word")
+check("touch: a stale owner record without a pid does not adopt the Word running now", json.loads(ao.APPS_STATE.read_text())["word"]["pid"] is None)
+r = ao.idle_quit()
+check("idle quit: …and that Word becomes the human's, never quit", r == [] and json.loads(ao.APPS_STATE.read_text())["word"]["launchedBy"] == "human", r)
+import subprocess as _sp
+class _FailOpen:
+    TimeoutExpired = _sp.TimeoutExpired
+    @staticmethod
+    def run(args, **kw):
+        return _sp.CompletedProcess(args, 1 if args[0] == "open" else 0, "false", "could not open")
+ao.save_apps_state({}); pids["word"] = None
+_sub, _run = ao.subprocess, ao.RUN
+ao.subprocess, ao.RUN = _FailOpen, None
+code, out = ao.cmd_open("bravo", str(src2))
+ao.subprocess, ao.RUN = _sub, _run
+check("open fails → no 'launched by the owner' record is left behind", code == 1 and "word" not in ao.apps_state(), (out, ao.apps_state()))
+# 7: a theme install leaves no file descriptors behind
+bo3 = load("browser-owner.py")
+class _NoChrome:
+    def __init__(self, *a, **k): pass
+    def terminate(self): pass
+    def wait(self, timeout=None): return 0
+    def kill(self): pass
+bo3.subprocess = type("S", (), {"Popen": _NoChrome, "DEVNULL": _sp.DEVNULL})
+fd_dir = "/proc/self/fd" if os.path.isdir("/proc/self/fd") else "/dev/fd"
+n0 = len(os.listdir(fd_dir))
+t0 = time.time()
+ok, why = bo3.install_theme({"profile": str(tmp / "fd-profile")}, tmp, timeout=3)
+check("install_theme: no file descriptor leaks, and a Chrome that never answers is seen at once (EOF), not after the timeout",
+      not ok and len(os.listdir(fd_dir)) == n0 and time.time() - t0 < 2, (n0, len(os.listdir(fd_dir)), why))
+# 8: the theme install's own clean quit is told apart, without hiding the real lastStop
+qp = tmp / "q-profile"; (qp / "Default").mkdir(parents=True, exist_ok=True)
+(qp / "Default" / "Preferences").write_text(json.dumps({"profile": {"exit_type": "Normal"}}))
+_bt = bo.boot_time; bo.boot_time = lambda: 0
+qa = {"profile": str(qp), "state": str(tmp / "q.json")}
+check("a clean quit right after a theme install is the owner's, not a person's ⌘Q", bo.quit_by_person(qa, st={"lastThemeInstall": {"at": bo.now_iso()}}) is False)
+check("…and a clean quit with no owner close around it is still a person's ⌘Q", bo.quit_by_person(qa, st={}) is True)
+bo.boot_time = _bt
+# 9: idle-stop only by the agent itself (or its reaper), and only once it can be idle
+bo.processes = lambda: [(200, 1, HUMAN), (600, 1, BRAVO_CMD)]
+BR = dict(BRAVO_A, peers=["alpha", "bravo", "charlie"])
+Path(BR["state"]).write_text(json.dumps({"lastStart": {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 7200))}}))
+killed.clear()
+code, out = bo.do_idle_stop(BR, "alpha")
+check("idle-stop: another agent is refused — Alpha never closes Bravo's browser", code == 2 and out["status"] == "refused" and not killed, out)
+Path(BR["state"]).write_text(json.dumps({"lastStart": {"at": bo.now_iso()}}))
+code, out = bo.do_idle_stop(BR, "bravo")
+check("idle-stop: refused when the browser was opened less than idleMinutes ago", code == 2 and not killed, out)
+Path(BR["state"]).write_text(json.dumps({"lastStart": {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 7200))}}))
+code, out = bo.do_idle_stop(BR, "bravo")
+check("idle-stop: by the agent itself, after its idle time → closed", code == 0 and killed == [{600}], out)
+# 10: the shell tools never call macOS's python3 stub (it pops up an install dialog)
+stubby = [f for f in ("bin/kill-chrome.sh", "bin/desk-browser.sh", "bin/human-chrome.sh", "install/make-desktop-apps.sh", "examples/agent-launcher.sh")
+          if re.search(r"^[^#]*/usr/bin/python3 -I", (ROOT_DIR / f).read_text(encoding="utf-8"), re.M) or "xcode-select -p" not in (ROOT_DIR / f).read_text(encoding="utf-8")]
+stubby += [f for f in ("browser-owner", "office-owner", "agent-office", "rainbowomma-guard", "cua-color-proxy") if "xcode-select -p" not in (HERE / f).read_text()]
+check("shell tools and wrappers skip the python3 stub when the developer tools are missing", not stubby, stubby)
+r = subprocess.run(["bash", str(HERE / "desk-browser.sh"), "nonsense"], capture_output=True, text=True, env=dict(os.environ, RAINBOW_LANG="en"))
+check("…and still print their messages", r.returncode == 2 and "usage" in r.stdout, (r.stdout, r.stderr))
+check("desktop icons: a label is escaped inside the AppleScript strings", 'asq "$name"' in mk and '\\"$name\\"' not in mk)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
