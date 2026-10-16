@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": ".*", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard", "on_failure": "block" }] }
+    ]
+  }
+}

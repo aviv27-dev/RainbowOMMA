@@ -1,0 +1,7 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Execute", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard", "timeout": 10 }] }
+    ]
+  }
+}

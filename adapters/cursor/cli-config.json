@@ -1,0 +1,3 @@
+{
+  "permissions": { "allow": [], "deny": ["Shell(pkill)", "Shell(killall)"] }
+}

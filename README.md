@@ -69,8 +69,8 @@ A row in `browsers.json`:
 
 Then tell each agent, in its prompt, skill or rules, to open its browser **only** through
 `browser-owner start <name> --by <name>`, and to stop when the answer is `refused`, `closed-by-person`, `blocked`
-or `profile-busy`. [Works with your agent](#works-with-your-agent) has a ready-made guardrail for each agent framework, so
-an agent can't go around this with its own `pkill`.
+or `profile-busy`. [Works with your agent](#works-with-your-agent) has ready-made guardrails for 17 agent frameworks, so an
+agent can't go around this with its own `pkill`.
 
 Documents work the same way. Tell agents to open Word, Excel and Acrobat documents only through `office-owner`:
 
@@ -157,51 +157,39 @@ If you installed the tools somewhere other than `~/bin`, pass `--bin <folder>`.
 
 ## Works with your agent
 
-RainbowOMMA itself doesn't care which agent framework calls it. Two optional pieces plug into the framework:
+RainbowOMMA works with any agent that can run a shell command. Two optional plug-ins go into the agent framework:
 
-- a **guardrail**, so the agent can't go around the owner with its own `pkill`, `killall` or AppleScript `quit`;
-- the **colored cursor**, for agents that do computer use through Cua Driver over MCP.
+- a **guardrail**, so the agent can't go around the owner with its own `pkill`, `killall`, AppleScript `quit` or a
+  Chrome started on a debug port. Every adapter points to one shared hook, `~/bin/rainbowomma-guard`, which reads each
+  framework's hook payload, plus the framework's own deny list where it has one;
+- the **colored cursor**, for agents that do computer use through Cua Driver over MCP: register
+  `~/bin/cua-color-proxy --agent <name>` wherever the agent would run `cua-driver mcp`. The proxy passes everything
+  through unchanged and gives every session the agent starts its color before the first click.
 
-**Colored cursor, any MCP agent:** register `cua-color-proxy` wherever your agent would run `cua-driver mcp`. The proxy sits between the
-agent and Cua Driver, passes everything through unchanged, and gives every session the agent starts its color before the
-first click. The agent's code and prompt stay as they are, so this works for Claude Code, OpenClaw, OpenCode, Codex CLI,
-Cursor and any other MCP client:
+| Ready-made plug-ins | Agents |
+|---|---|
+| Guardrail + colored cursor | Claude Code · Codex CLI · Gemini CLI · OpenCode · Kilo Code · Qwen Code · Factory Droid · Goose · Zed · GitHub Copilot (CLI and VS Code) · Cursor · Cline · Continue |
+| Guardrail + colored cursor via patch | Hermes Agent |
+| Drafts, not yet verified on the real agent | Windsurf / Devin Desktop · Amp · OpenClaw |
+| Colored cursor only | Warp (its denylist only asks) |
+
+**[docs/AGENTS.md](docs/AGENTS.md)** has the table in full and the exact files and steps for each agent. For example, Claude Code:
 
 ```bash
-# Claude Code (the same key Cua's own `cua-driver mcp-config --client claude` uses)
+# guardrail: merge adapters/claude-code/settings.json into ~/.claude/settings.json (fill in your home folder)
+sed "s|/Users/you|$HOME|g" adapters/claude-code/settings.json
+# colored cursor
 claude mcp add-json --scope user cua-computer-use "{\"command\":\"$HOME/bin/cua-color-proxy\",\"args\":[\"--agent\",\"alpha\"]}"
-# OpenClaw
-openclaw mcp set cua-driver "{\"command\":\"$HOME/bin/cua-color-proxy\",\"args\":[\"--agent\",\"bravo\"]}"
-# Codex CLI (only when it uses Cua Driver instead of its own computer use)
-codex mcp add cua-driver -- ~/bin/cua-color-proxy --agent charlie
 ```
 
-For OpenCode, Cursor and other JSON configs, take the snippet from `cua-driver mcp-config --client <name>` and replace the
-`cua-driver` command and its `mcp` argument with `/Users/<you>/bin/cua-color-proxy` and `--agent <name>`. JSON configs need
-the full path, because `~` is not expanded there. The agent name is its row in `browsers.json`.
-
-**Hermes Agent** uses its built-in computer use rather than MCP. Apply
-[`adapters/hermes-cua-cursor-theme.patch`](adapters/hermes-cua-cursor-theme.patch) and add
-[`adapters/hermes-cursor-config.yaml`](adapters/hermes-cursor-config.yaml) to the agent's profile.
-
+Notes on the colored cursor:
 - Tested with Cua Driver **0.21.0**, the version Hermes pins. Don't `cua-driver update` past the version your agent framework pins: a mismatched driver breaks computer use.
 - With reduced motion on, `cua-driver serve` measured 0.0% CPU after sessions with the cursor shown.
-- Claude's built-in computer use has no cursor color to set, so Claude Code gets a colored cursor only when it works through Cua Driver, as above.
+- Claude's built-in computer use has no cursor color to set, so Claude Code gets a colored cursor only when it works through Cua Driver.
 - The first action of a new session may take a moment longer: the proxy gives the session its color first.
 - *Known limitation:* `cua-color-proxy` is tested against a fake driver; it hasn't run against a real Cua Driver yet.
 
-**Guardrails:**
-
-- **Hermes Agent:** a ready-made deny list in [`adapters/hermes-approvals-deny.yaml`](adapters/hermes-approvals-deny.yaml).
-- **Claude Code:** a ready-made PreToolUse hook in [`adapters/claude-code/`](adapters/claude-code/). Install it like this:
-  ```bash
-  mkdir -p ~/.claude/hooks && cp adapters/claude-code/rainbowomma-guard.py ~/.claude/hooks/
-  ```
-  Then merge [`adapters/claude-code/settings.json`](adapters/claude-code/settings.json) into `~/.claude/settings.json`,
-  or into a project's `.claude/settings.json`. A blocked command tells the agent to use `browser-owner` instead.
-- **Codex CLI:** the patterns are in [`docs/DESIGN.md`](docs/DESIGN.md#5-agent-adapters-the-guardrails). A ready-made adapter is on the roadmap.
-
-Pattern rules only see the command an agent runs directly. The owner's own checks are the real protection.
+Pattern rules only see the command text an agent runs. The owner's own checks are the real protection.
 
 ## Requirements
 
@@ -235,7 +223,7 @@ focus, and how a theme is installed through the DevTools pipe on Chrome 137+.
 
 ## Roadmap
 
-- A ready-made Codex CLI guardrail and cursor adapter
+- Verify the draft adapters (Windsurf, Amp, OpenClaw) and add Kiro and Augment
 - A human-activity gate that waits while you're typing
 - Per-agent tab claims, an auth/login lease, and a separate Chrome channel per agent
 

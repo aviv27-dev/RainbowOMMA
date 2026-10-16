@@ -6,12 +6,18 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- Guardrail plug-ins for 17 agent frameworks (`docs/AGENTS.md`): Claude Code, Codex CLI, Gemini CLI, OpenCode, Kilo
+  Code, Qwen Code, Factory Droid, Hermes Agent, Goose, Zed, GitHub Copilot (CLI and VS Code), Cursor, Cline, Continue,
+  and drafts for Windsurf, Amp and OpenClaw. They share one hook, `bin/rainbowomma-guard`, which reads each
+  framework's payload, and add the framework's own deny rules where it has them.
 - `cua-color-proxy`: an MCP proxy in front of `cua-driver mcp` that gives every session of any MCP agent (Claude Code,
   OpenClaw, OpenCode, Codex CLI, Cursor, …) that agent's colored cursor, with no change to the agent.
 - `CONTRIBUTING.md`, `SECURITY.md`, issue and pull request templates.
 - A logo, real screenshots, and a branded social preview.
 
 ### Changed
+- The Claude Code guard moved to `bin/rainbowomma-guard` (installed with the other tools); the Hermes adapter files
+  moved to `adapters/hermes/`.
 - Desktop icons (`make-desktop-apps.sh`, `desk-browser.sh`) are made for every agent in `browsers.json`, in its own
   color, instead of three fixed agents. Every "close" icon asks for confirmation. `make-desktop-apps.sh --bin DIR`.
 - The example registry uses orange, blue and green, like the screenshots and the logo.

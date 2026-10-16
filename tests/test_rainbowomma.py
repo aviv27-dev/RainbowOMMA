@@ -554,7 +554,7 @@ r = subprocess.run(["bash", installer, "--with-sweep"], capture_output=True, tex
 ib = fake_home / "bin"
 plist = fake_home / "Library" / "LaunchAgents" / "com.rainbowomma.agent-office-sweep.plist"
 check("install: the tools land together in ~/bin, executable, with the message catalog",
-      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "office-owner", "agent-office", "kill-chrome.sh"))
+      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "office-owner", "agent-office", "kill-chrome.sh", "rainbowomma-guard", "cua-color-proxy"))
       and (ib / "rainbow_i18n.py").exists(), r.stdout + r.stderr)
 check("install: browsers.json is created from the example", json.loads((ib / "browsers.json").read_text())["agents"].keys() >= {"alpha"})
 check("install: the state folders exist", all((fake_home / ".rainbowomma" / d).is_dir() for d in ("logs", "state", "word-convert")))
@@ -572,27 +572,79 @@ check("install --dry-run changes nothing", r.returncode == 0 and not any(dry_hom
 r = subprocess.run(["bash", installer], capture_output=True, text=True, env=dict(ienv, RAINBOW_INSTALL_ANY_OS="0"))
 check("install: refuses to run anywhere but macOS", sys.platform == "darwin" or (r.returncode == 1 and "macOS" in r.stderr), r.stderr)
 
-# ── the Claude Code guard (a PreToolUse hook; fed JSON on stdin like Claude Code does) ──
-guard = str(HERE.parent / "adapters" / "claude-code" / "rainbowomma-guard.py")
+# ── the shared guard (bin/rainbowomma-guard.py), fed each agent framework's hook payload on stdin ──
+guard = str(HERE / "rainbowomma-guard.py")
+def run_guard(ev, *args):
+    r = subprocess.run([sys.executable, "-I", guard, *args], input=json.dumps(ev), capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr
 def hook(cmd, tool="Bash"):
-    ev = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": cmd}}
-    r = subprocess.run([sys.executable, "-I", guard], input=json.dumps(ev), capture_output=True, text=True)
-    return r.returncode, r.stderr
+    code, _, err = run_guard({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {"command": cmd}})
+    return code, err
 blocked_cmds = ["pkill -f 'Google Chrome'", "cd /tmp && pkill -f chrome", "sudo killall 'Google Chrome'", "kill -9 $(pgrep -f remote-debugging)",
                 "kill `pgrep Chrome`", "pgrep -f Chrome | xargs kill", "osascript -e 'tell application \"Google Chrome\" to quit'",
                 "osascript -e 'quit app \"Google Chrome\"'",
                 "'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --remote-debugging-port=9222 --user-data-dir=/tmp/x"]
 res = [hook(c) for c in blocked_cmds]
-check("Claude Code guard blocks every way around the owner (exit 2, a reason for Claude on stderr)",
+check("guard blocks every way around the owner (exit 2, a reason for the agent on stderr)",
       all(code == 2 and "browser-owner" in err for code, err in res), [c for c, (code, _) in zip(blocked_cmds, res) if code != 2])
 allowed = ["~/bin/browser-owner start alpha --by alpha", "~/bin/office-owner pdf --agent alpha a.docx", "kill 12345", "ls ~/pkill-notes",
            "echo skill", "osascript -e 'tell application \"Google Chrome\" to get URL of active tab of front window'"]
 res = [hook(c) for c in allowed]
 check("…and lets the owner and ordinary commands through", all(code == 0 for code, _ in res), [c for c, (code, _) in zip(allowed, res) if code])
-check("…and ignores tools other than Bash", hook("pkill x", tool="Read")[0] == 0)
-cc = json.loads((HERE.parent / "adapters" / "claude-code" / "settings.json").read_text())
-check("the Claude Code settings example wires the guard on Bash", cc["hooks"]["PreToolUse"][0]["matcher"] == "Bash"
-      and "rainbowomma-guard.py" in cc["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+check("…and lets through a payload that carries no command (e.g. a file read)",
+      run_guard({"tool_name": "Read", "tool_input": {"file_path": "/tmp/pkill-notes"}})[0] == 0)
+check("…and lets through anything it can't parse", subprocess.run([sys.executable, "-I", guard], input="not json", capture_output=True, text=True).returncode == 0)
+BAD = "pkill -f 'Google Chrome'"
+shapes = {
+    "Claude Code / Codex / Gemini / Qwen / Factory / Hermes / Goose / Copilot PreToolUse": {"tool_name": "run_shell_command", "tool_input": {"command": BAD}},
+    "Cursor beforeShellExecution": {"hook_event_name": "beforeShellExecution", "command": BAD, "cwd": "/tmp"},
+    "Windsurf pre_run_command": {"agent_action_name": "pre_run_command", "tool_info": {"command_line": BAD, "cwd": "/tmp"}},
+    "Copilot CLI preToolUse (toolArgs as JSON text)": {"toolName": "bash", "toolArgs": json.dumps({"command": BAD})},
+    "Cline CLI": {"tool_call": {"name": "run_commands", "input": {"commands": ["ls", BAD]}}},
+    "Cline extension": {"preToolUse": {"toolName": "execute_command", "parameters": {"command": BAD}}},
+    "Cline extension (stringified parameters)": {"preToolUse": {"toolName": "execute_command", "parameters": json.dumps({"command": BAD})}},
+}
+missed = [name for name, ev in shapes.items() if run_guard(ev)[0] != 2]
+check("guard finds the command in every framework's payload shape", not missed, missed)
+code, out, _ = run_guard(shapes["Cline CLI"], "--format", "cline")
+check("guard --format cline answers Cline's way: {cancel: true, errorMessage}", code == 0 and json.loads(out)["cancel"] is True and "browser-owner" in json.loads(out)["errorMessage"], out)
+
+# ── the adapters: every file parses, and every hook points at the shared guard ──
+AD = HERE.parent / "adapters"
+bad_json = []
+for f in AD.rglob("*.json"):
+    try:
+        json.loads(f.read_text(encoding="utf-8"))
+    except ValueError:
+        bad_json.append(str(f.relative_to(AD)))
+check("every adapter JSON file parses", not bad_json, bad_json)
+try:
+    import tomllib
+    pol = tomllib.loads((AD / "gemini-cli" / "policies" / "rainbowomma.toml").read_text(encoding="utf-8"))
+    rx = [r["commandRegex"] for r in pol["rule"] if "commandRegex" in r][0]
+    check("Gemini policy: a hard deny for pkill/killall, and its regex catches AppleScript quitting Chrome",
+          pol["rule"][0]["decision"] == "deny" and set(pol["rule"][0]["commandPrefix"]) == {"pkill", "killall"}
+          and re.search(rx, '{"command":"osascript -e \'tell application \\"Google Chrome\\" to quit\'"') and not re.search(rx, '{"command":"ls"'))
+except ImportError:
+    pass
+zed = json.loads((AD / "zed" / "settings.json").read_text())["agent"]["tool_permissions"]["tools"]["terminal"]["always_deny"]
+check("Zed always_deny regexes catch what the guard catches", all(any(re.search(p["pattern"], c.lower()) for p in zed) for c in blocked_cmds)
+      and not any(re.search(p["pattern"], c.lower()) for p in zed for c in allowed))
+hooks_files = ["claude-code/settings.json", "codex/hooks.json", "gemini-cli/settings.json", "qwen-code/settings.json", "factory-droid/hooks.json",
+               "goose/rainbowomma/hooks/hooks.json", "copilot/copilot-cli.json", "copilot/vscode.json", "cursor/hooks.json", "windsurf/hooks.json",
+               "hermes/hooks.yaml", "cline/PreToolUse"]
+check("every hook adapter runs the shared guard", all("rainbowomma-guard" in (AD / f).read_text(encoding="utf-8") for f in hooks_files),
+      [f for f in hooks_files if "rainbowomma-guard" not in (AD / f).read_text(encoding="utf-8")])
+check("the Cline hook asks the guard for Cline's answer format", "--format cline" in (AD / "cline" / "PreToolUse").read_text())
+check("Codex exec policy forbids pkill and killall", 'decision = "forbidden"' in (AD / "codex" / "rainbowomma.rules").read_text()
+      and "pkill" in (AD / "codex" / "rainbowomma.rules").read_text())
+oc = json.loads((AD / "opencode" / "opencode.json").read_text())["permission"]["bash"]
+check("OpenCode: pkill/killall denied after the catch-all (the last match wins)", list(oc)[0] == "*" and oc["pkill *"] == "deny" and oc["killall *"] == "deny")
+check("the OpenCode and Kilo plugins are the same file", (AD / "opencode" / "plugins" / "rainbowomma.js").read_text() == (AD / "kilo-code" / "plugins" / "rainbowomma.js").read_text())
+agents_md = (HERE.parent / "docs" / "AGENTS.md").read_text(encoding="utf-8")
+linked = set(re.findall(r"\(\.\./(adapters/[^)]+)\)", agents_md))
+check("docs/AGENTS.md links only to adapter files that exist", linked and all((HERE.parent / l.rstrip("/")).exists() for l in linked),
+      [l for l in linked if not (HERE.parent / l.rstrip("/")).exists()])
 
 # ── cua-color-proxy: a fake `cua-driver mcp` (MCP over stdio) — never the real driver in a test ──
 FAKE_DRIVER = r"""

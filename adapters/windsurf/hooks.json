@@ -1,0 +1,5 @@
+{
+  "hooks": {
+    "pre_run_command": [{ "command": "/Users/you/bin/rainbowomma-guard", "show_output": true }]
+  }
+}

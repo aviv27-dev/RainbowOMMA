@@ -1,0 +1,4 @@
+#!/bin/bash
+# Cline hook. VS Code extension: save as ~/Documents/Cline/Hooks/PreToolUse (no extension) and turn on "Enable Hooks".
+# Cline CLI: save as ~/.cline/hooks/PreToolUse.sh. Cline cancels the whole task run on a refusal.
+exec "$HOME/bin/rainbowomma-guard" --format cline

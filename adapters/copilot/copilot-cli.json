@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [{ "type": "command", "bash": "/Users/you/bin/rainbowomma-guard", "timeoutSec": 10 }]
+  }
+}

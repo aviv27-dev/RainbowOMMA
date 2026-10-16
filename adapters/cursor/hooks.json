@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [{ "command": "/Users/you/bin/rainbowomma-guard" }]
+  }
+}
