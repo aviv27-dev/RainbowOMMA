@@ -5,7 +5,15 @@ PATTERN='(Google Chrome|Chromium|Google Chrome Helper|Google Chrome for Testing)
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 I18N="$DIR/rainbow_i18n.py"
-msg() { /usr/bin/python3 -I "$I18N" "$@"; }
+py() {   # the first python3 that works — never macOS's stub, which only asks to install the developer tools
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ -x "$p" ] || continue
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    "$p" "$@"; return
+  done
+  return 127
+}
+msg() { py -I "$I18N" "$@" 2>/dev/null || echo "$1"; }
 
 KILL_CDP="${KILL_CDP:-0}"
 [ "${1:-}" = "--all" ] && KILL_CDP=1

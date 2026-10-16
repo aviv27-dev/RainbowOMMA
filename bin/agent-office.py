@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """agent-office / office-owner — the ONE owner of the shared Office/PDF apps an AI agent touches.
 
-    office-owner open|close|renew --agent NAME <file> · office-owner pdf --agent NAME <file.docx> [--out file.pdf]
+    office-owner open|close|renew --agent NAME <file> · office-owner pdf --agent NAME <file.docx> [--out file.pdf] [--force]
     office-owner sweep [--max-age-h 3] [--dry-run] · office-owner list · office-owner apps
 
 A document is closed only if the agent leased it, nobody had it open before, and the app says it is saved (checked in the
@@ -187,13 +187,14 @@ def cmd_open(agent, path, app=None):
     app = app or EXT_APP.get(p.suffix.lower())
     if app not in APPS:
         return 1, {"status": "failed", "why": t("ao.bad_app")}
-    note_use(app, "office-owner/" + agent)
+    was = app_pid(app)                       # running before we open → the human's; recorded only once the open worked
     before = open_paths(app)
     shared = before is None or any(x in before for x in forms(path))
     if not RUN:
         r = subprocess.run(["open", "-g", "-a", APPS[app][0], str(p)], capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
             return 1, {"status": "failed", "why": (r.stderr or "open failed").strip()[:200]}
+    note_use(app, "office-owner/" + agent, was)
     lease = {"id": uuid.uuid4().hex[:12], "agent": agent, "app": app, "path": str(p), "paths": forms(path), "name": p.name,
              "openedAt": time.time(), "shared": shared}
     write_lease(lease)
@@ -221,8 +222,9 @@ def cmd_close(agent, path):
     ds = mine(agent, path)
     if not ds:
         return 1, {"status": "failed", "why": t("ao.no_lease")}
-    res = [_close_lease(d, "by agent") for d in ds][-1]
-    return (0 if res in ("closed", "gone") else 3), {"status": res}
+    results = [_close_lease(d, "by agent") for d in ds]
+    res = next((r for r in results if r not in ("closed", "gone")), results[-1])     # one left open → say so
+    return (0 if res in ("closed", "gone") else 3), {"status": res, **({"results": results} if len(results) > 1 else {})}
 
 
 def cmd_renew(agent, path):
@@ -286,12 +288,17 @@ def save_apps_state(st):
     os.replace(tmp, APPS_STATE)
 
 
-def note_use(app, by):
+_UNSET = object()
+CLAIM_S = 300      # a record with no pid may adopt the app's pid only this soon after the owner's own launch
+
+
+def note_use(app, by, was=_UNSET):
+    """was: the app's pid before the owner launched anything (None = not running) — by default, read now"""
     st = apps_state()
     rec = st.get(app) or {}
     pid = app_pid(app)
-    if pid is None:
-        rec = {"launchedBy": by, "launchedAt": time.time(), "pid": None}
+    if (pid if was is _UNSET else was) is None:
+        rec = {"launchedBy": by, "launchedAt": time.time(), "pid": pid}
     elif not rec or (rec.get("pid") and rec["pid"] != pid):
         rec = {"launchedBy": "human", "seenAt": time.time(), "pid": pid}
     rec["lastActivity"] = time.time()
@@ -300,13 +307,17 @@ def note_use(app, by):
     return rec
 
 
+def claimable(rec):
+    return time.time() - float(rec.get("launchedAt") or 0) < CLAIM_S
+
+
 def touch(app):
     st = apps_state()
     rec = st.get(app)
     if rec is None:
         return
     rec["lastActivity"] = time.time()
-    if rec.get("pid") is None and rec.get("launchedBy") != "human":
+    if rec.get("pid") is None and rec.get("launchedBy") != "human" and claimable(rec):
         rec["pid"] = app_pid(app)
     st[app] = rec
     save_apps_state(st)
@@ -346,7 +357,7 @@ def inflight_for(app):
     return n
 
 
-def cmd_pdf(agent, src, out=None):
+def cmd_pdf(agent, src, out=None, force=False):
     p = Path(norm(src))
     if not p.exists():
         return 1, {"status": "failed", "why": t("ao.no_file", path=p)}
@@ -356,6 +367,8 @@ def cmd_pdf(agent, src, out=None):
     dest = Path(norm(out)) if out else p.with_suffix(".pdf")
     if dest.suffix.lower() != ".pdf" or dest.resolve() == p.resolve():
         return 1, {"status": "failed", "why": t("ao.pdf_out")}
+    if dest.exists() and not force:          # never silently replace a PDF someone already has
+        return 1, {"status": "failed", "why": t("ao.pdf_exists", path=dest)}
     WORD_DIR.mkdir(parents=True, exist_ok=True)
     base = "ofc-pdf-" + uuid.uuid4().hex[:12]
     tmp, tmp_pdf = WORD_DIR / (base + ext), WORD_DIR / (base + ".pdf")
@@ -407,6 +420,9 @@ def idle_quit(dry=False):
                 st[app] = {"launchedBy": "human", "seenAt": time.time(), "pid": pid}
             continue
         if rec.get("pid") is None:
+            if not claimable(rec):                 # no pid of ours was ever seen: whoever runs it now, it is not ours
+                st[app] = {"launchedBy": "human", "seenAt": time.time(), "pid": pid}
+                continue
             rec["pid"] = pid
         if time.time() - float(rec.get("lastActivity") or 0) < IDLE_QUIT_S:
             continue
@@ -462,12 +478,12 @@ def main(argv=None):
     r = sub.add_parser("renew"); r.add_argument("--agent", required=True); r.add_argument("file")
     s = sub.add_parser("sweep"); s.add_argument("--max-age-h", type=float, default=3.0); s.add_argument("--dry-run", action="store_true")
     sub.add_parser("list")
-    pd = sub.add_parser("pdf"); pd.add_argument("--agent", required=True); pd.add_argument("--out"); pd.add_argument("file")
+    pd = sub.add_parser("pdf"); pd.add_argument("--agent", required=True); pd.add_argument("--out"); pd.add_argument("--force", action="store_true"); pd.add_argument("file")
     sub.add_parser("apps")
     a = ap.parse_args(argv)
     if a.cmd == "pdf":                      # NOT under the leases lock: conversions run in parallel (each its own copy)
         try:
-            code, out = cmd_pdf(a.agent.strip().lower(), a.file, a.out)
+            code, out = cmd_pdf(a.agent.strip().lower(), a.file, a.out, a.force)
         except Exception as exc:
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
         print(json.dumps(out, ensure_ascii=False))

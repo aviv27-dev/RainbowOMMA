@@ -255,12 +255,15 @@ def quit_by_person(a, now=None, st=None):
     if b is None or m < b or now - m > CLEAN_QUIT_HOLD:
         return False
     # a close the OWNER made (stop / idle-stop / a theme install) also leaves "Normal" — that is not a person's ⌘Q
-    ls = (st or load(a)).get("lastStop") or {}
-    try:
-        stopped = time.mktime(time.strptime(str(ls.get("at", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
-    except ValueError:
-        stopped = 0
-    return not (stopped and -5 <= m - stopped <= 180)
+    st = st or load(a)
+    for rec in (st.get("lastStop"), st.get("lastThemeInstall")):
+        try:
+            stopped = time.mktime(time.strptime(str((rec or {}).get("at", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            continue
+        if -5 <= m - stopped <= 180:
+            return False
+    return True
 
 
 def chrome_color(hex_rgb):
@@ -377,8 +380,10 @@ def theme_saved(a):
 def install_theme(a, folder, timeout=25.0):
     """Chrome with NO window on the agent's profile, a DevTools pipe, Extensions.loadUnpacked → the theme's id, then that instance
     (our own child, nothing else) is closed. → (ok, id_or_reason)"""
-    r1, w1 = os.pipe(); r2, w2 = os.pipe()
-    r1, w1, r2, w2 = [os.dup(x) for x in (r1, w1, r2, w2)]    # above 3/4, so the dup2 below cannot clobber them
+    raw = os.pipe() + os.pipe()
+    r1, w1, r2, w2 = [os.dup(x) for x in raw]    # above 3/4, so the dup2 below cannot clobber them
+    for x in raw:
+        os.close(x)                              # else our copy of Chrome's write end is never closed: no EOF if it dies
 
     def child():
         os.dup2(r1, 3); os.dup2(w2, 4); os.setsid()
@@ -439,7 +444,7 @@ def ensure_theme(a, st):
         ok, res = install_theme(a, build_theme(a))
     except Exception as exc:
         ok, res = False, f"{type(exc).__name__}: {exc}"[:160]
-    st["lastStop"] = {"at": now_iso(), "by": "theme-install", "pids": 1}
+    st["lastThemeInstall"] = {"at": now_iso()}      # its windowless Chrome quit cleanly too — never a person's ⌘Q (lastStop stays the real one)
     if ok:
         st.update({"theme": theme_key(a), "themeId": res, "themeAt": now_iso()})
         st.pop("themeError", None)
@@ -612,14 +617,26 @@ def do_stop(a, by, allow_reopen=False):
     return 0, {"status": "stopped", "processes": len(tree), "killed": len(left)}
 
 
+def started_ago(st):
+    try:
+        return time.time() - time.mktime(time.strptime(str((st.get("lastStart") or {}).get("at", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
 def do_idle_stop(a, by):
     if not a.get("idleMinutes"):
         return 2, {"status": "refused", "why": t("bo.no_idle", label=a["label"])}
+    if by in a.get("peers", ()) and by != a["name"]:          # one agent never closes another agent's browser
+        return 2, {"status": "refused", "why": t("bo.idle_not_yours", by=by, label=a["label"])}
     rows = processes()
     roots, tree = tree_of(a, rows)
     if not tree:
         return 0, {"status": "not-running"}
     st = load(a)
+    ago = started_ago(st)
+    if ago is not None and 0 <= ago < a["idleMinutes"] * 60:   # opened more recently than its idle time — cannot be idle yet
+        return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=int(ago // 60), idle=a["idleMinutes"])}
     st["lastStop"] = {"at": now_iso(), "by": by, "pids": len(tree), "idle": True}
     save(a, st)
     left = terminate_tree(tree)
@@ -702,6 +719,7 @@ def main(argv=None):
     if ag.get("managedBy"):
         print(json.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
         return 2
+    ag["peers"] = list(reg)
     Path(ag["lock"]).parent.mkdir(parents=True, exist_ok=True)
     with open(ag["lock"], "w") as lk:
         try:
