@@ -16,4 +16,4 @@ jobs:
       - name: Run the test suite (fakes only — no real browser or app)
         run: python3 tests/test_rainbowomma.py
       - name: Shell syntax
-        run: for f in bin/*.sh install.sh install/*.sh examples/agent-launcher.sh; do bash -n "$f"; done
+        run: for f in bin/*.sh install.sh install/*.sh examples/agent-launcher.sh; do bash -n "$f"; done && for f in bin/browser-owner bin/office-owner bin/agent-office bin/cua-color-proxy examples/agent-shortcut; do bash -n "$f"; done

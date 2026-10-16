@@ -20,7 +20,7 @@ M = {
     # ── browser-owner ──
     "bo.display_name": {"en": "{label} — agent · do not touch", "he": "{label} — סוכן · לא לגעת"},
     "bo.theme_title": {"en": "Agent: {label}", "he": "סוכן: {label}"},
-    "bo.frame_text": {"en": "{label} · AGENT · do not touch", "he": "{label} · סוכן · לא לגעת"},
+    "bo.frame_text": {"en": "{label} · AI Agent · Do not touch", "he": "{label} · סוכן · לא לגעת"},
     "bo.human_label": {"en": "Human", "he": "האדם"},
     "bo.human_text": {"en": "HUMAN · free to use", "he": "האדם · HUMAN · ניתן להשתמש"},
     "bo.human_title": {"en": "HUMAN", "he": "האדם · HUMAN"},
@@ -54,6 +54,8 @@ M = {
                         "he": "התהליכים השתנו בזמן הבדיקה ({before} → {after}) — לא סוגרים; לנסות שוב"},
     "bo.unknown_agent": {"en": "unknown agent: {agent} — registered: {names}", "he": "סוכן לא רשום: {agent} — רשומים: {names}"},
     "bo.managed": {"en": "{label}'s browser is managed by {by} — report only here", "he": "הדפדפן של {label} מנוהל על ידי {by} — כאן רק דיווח"},
+    "bo.no_registry": {"en": "no browsers.json at {path} — run install.sh, or copy examples/browsers.example.json there",
+                       "he": "אין browsers.json ב-{path} — להריץ את install.sh, או להעתיק לשם את examples/browsers.example.json"},
     "bo.busy": {"en": "another action on this browser is running right now", "he": "פעולה אחרת על הדפדפן הזה רצה עכשיו"},
     # ── office-owner / agent-office ──
     "ao.no_file": {"en": "no such file: {path}", "he": "אין קובץ: {path}"},
@@ -66,9 +68,6 @@ M = {
     "ao.pdf_failed": {"en": "Word produced no PDF — {detail}", "he": "Word לא הפיק PDF — {detail}"},
     # ── desktop icons (desk-browser.sh, make-desktop-apps.sh) ──
     "desk.name.human": {"en": "Human", "he": "האדם"},
-    "desk.name.alpha": {"en": "Alpha", "he": "אלפא"},
-    "desk.name.bravo": {"en": "Bravo", "he": "בראבו"},
-    "desk.name.charlie": {"en": "Charlie", "he": "צ׳רלי"},
     "desk.name.all": {"en": "All", "he": "הכל"},
     "desk.human_open": {"en": "The human's Chrome is open", "he": "Chrome של האדם פתוח"},
     "desk.human_open_failed": {"en": "Could not open the human's Chrome", "he": "לא הצלחתי לפתוח את Chrome של האדם"},
@@ -81,8 +80,8 @@ M = {
     "desk.closed_word": {"en": "closed", "he": "נסגר"},
     "desk.owner_silent": {"en": "browser-owner did not answer", "he": "browser-owner לא ענה"},
     "desk.all_closed_tail": {"en": "they will not open by themselves until they are opened by hand", "he": "לא ייפתחו לבד עד לפתיחה ידנית"},
-    "desk.usage": {"en": "usage: desk-browser.sh open|close alpha|bravo|charlie|human|agents",
-                   "he": "שימוש: desk-browser.sh open|close alpha|bravo|charlie|human|agents"},
+    "desk.usage": {"en": "usage: desk-browser.sh open|close <agent in browsers.json>|human  ·  desk-browser.sh close agents",
+                   "he": "שימוש: desk-browser.sh open|close <סוכן מ-browsers.json>|human  ·  desk-browser.sh close agents"},
     "desk.app.open_human": {"en": "Human — open Chrome", "he": "האדם — פתח Chrome"},
     "desk.app.open_agent": {"en": "{name} — open browser", "he": "{name} — פתח דפדפן"},
     "desk.app.close_human": {"en": "Human — close Chrome (not the agents')", "he": "האדם — סגור Chrome (לא סוכנות)"},

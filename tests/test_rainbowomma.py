@@ -56,9 +56,9 @@ for bad, why in ((dict(port=9222), "duplicate port"), (dict(port=8080), "port ou
     except ValueError:
         ok_ = True
     check(f"registry refuses a broken row ({why})", ok_)
-check("the real registry loads: alpha 9222, bravo 9223, charlie 9224",
+check("the example registry loads: alpha 9222, bravo 9223, charlie 9224",
       (lambda r: r["alpha"]["port"] == 9222 and r["bravo"]["port"] == 9223 and not r["bravo"].get("managedBy")
-       and r["bravo"]["idleMinutes"] == 60 and r["charlie"]["port"] == 9224)(bo.registry()))
+       and r["bravo"]["idleMinutes"] == 60 and r["charlie"]["port"] == 9224)(bo.registry(HERE.parent / "examples" / "browsers.example.json")))
 killed = []
 bo.terminate_tree = lambda t, grace=8.0: killed.append(set(t)) or []
 code, out = bo.do_stop(ALPHA_A, "alpha")
@@ -472,17 +472,17 @@ ao.RUN = osa
 import subprocess
 sys.path.insert(0, str(HERE))
 import rainbow_i18n as i18n
-check("every message has an English and a Hebrew text", all(set(v) >= {"en", "he"} and all(v.values()) for v in i18n.M.values()),
-      [k for k, v in i18n.M.items() if set(v) < {"en", "he"}])
+check("every message has a text in every language", all(set(v) >= set(i18n.LANGS) and all(v.values()) for v in i18n.M.values()),
+      [k for k, v in i18n.M.items() if not set(v) >= set(i18n.LANGS)])
 used = set()
 for f in [*HERE.glob("*.sh"), HERE.parent / "examples" / "agent-launcher.sh", HERE.parent / "install" / "make-desktop-apps.sh"]:
     used |= set(re.findall(r"msg ([a-z]+\.[a-z_.]+)", f.read_text(encoding="utf-8")))
-used |= {f"desk.name.{n}" for n in ("alpha", "bravo", "charlie", "human")}
+used |= {"desk.name.human", "desk.name.all"}
 check("every message a shell script asks for exists in the catalog", used and used <= set(i18n.M), sorted(used - set(i18n.M)))
 for f in [*HERE.glob("*.py"), *HERE.glob("*.sh"), HERE.parent / "examples" / "agent-launcher.sh", HERE.parent / "install" / "make-desktop-apps.sh"]:
     if f.name == "rainbow_i18n.py":
         continue
-    heb = [ln for ln in f.read_text(encoding="utf-8").splitlines() if re.search("[\u0590-\u05FF]", ln) and "*דפדפן*.app" not in ln]
+    heb = [ln for ln in f.read_text(encoding="utf-8").splitlines() if re.search("[\u0590-\u05FF]", ln)]
     check(f"no Hebrew left in code outside the catalog: {f.name}", not heb, heb[:2])
 
 os.environ["RAINBOW_LANG"] = "en"
@@ -498,7 +498,7 @@ check("Hebrew: the same refusal in Hebrew", code == 2 and out["why"].startswith(
 
 check("RTL keeps the theme key it always had (no rebuild for existing Hebrew installs)", bo.theme_key(CHARLIE_A) == f"{bo.THEME_VERSION}:#F4511E:צ׳רלי")
 os.environ["RAINBOW_LANG"] = "en"
-check("LTR has its own theme key, so switching language rebuilds the frame once", bo.theme_key(CHARLIE_A).endswith(":ltr"))
+check("LTR has its own theme key, so switching language rebuilds the frame once", bo.theme_key(CHARLIE_A).endswith(":ltr2"))
 bo_fresh = load("browser-owner.py")
 bo_fresh.THEMES = tmp / "themes-i18n"
 seen = []
@@ -510,8 +510,8 @@ try:
         bo_fresh.build_theme({"name": "zed", "label": "Zed", "color": "#8E24AA"})
 finally:
     bo_fresh.subprocess.run = _run
-check("frame text and side follow the language: LTR → 'Zed · AGENT · do not touch' drawn on the right",
-      seen[0][5] == "Zed · AGENT · do not touch" and seen[0][-1] == "ltr", seen[0][4:])
+check("frame text and side follow the language: LTR → 'Zed · AI Agent · Do not touch' drawn on the right",
+      seen[0][5] == "Zed · AI Agent · Do not touch" and seen[0][-1] == "ltr", seen[0][4:])
 check("…RTL → the Hebrew text on the left", seen[1][5] == "Zed · סוכן · לא לגעת" and seen[1][-1] == "rtl", seen[1][4:])
 check("the theme's name follows the language", json.loads((tmp / "themes-i18n" / "zed" / "manifest.json").read_text())["name"] == "סוכן: Zed")
 
@@ -659,6 +659,26 @@ r = subprocess.run([sys.executable, "-I", proxy, "--agent", "alpha", "--driver",
                    env=dict(os.environ, PATH="/nonexistent", CUA_DRIVER=""))
 check("proxy: no cua-driver → a clear error on stderr, nothing on stdout (stdout belongs to the MCP client)",
       sys.platform == "darwin" or (r.returncode == 1 and not r.stdout and "cua-driver not found" in r.stderr), (r.stdout, r.stderr))
+
+# ── the review's findings stay fixed ──
+ROOT_DIR = HERE.parent
+mk = (ROOT_DIR / "install" / "make-desktop-apps.sh").read_text(encoding="utf-8")
+check("desktop icons come from browsers.json, not from hard-coded agents", not re.search(r"\b(alpha|bravo|charlie)\b", mk) and "browser-owner\" list" in mk)
+desk = (HERE / "desk-browser.sh").read_text(encoding="utf-8")
+check("desk-browser.sh accepts any registered agent", not re.search(r"\b(alpha|bravo|charlie)\b", desk) and "names" in desk)
+launcher = (ROOT_DIR / "examples" / "agent-launcher.sh").read_text(encoding="utf-8")
+check("the example launcher never claims to be the human", "--by human" not in launcher and 'LAUNCH_BY="${LAUNCH_BY:-alpha}"' in launcher)
+check("the example launcher stops recursing when browser-owner calls it (BROWSER_OWNER_LAUNCH)", "BROWSER_OWNER_LAUNCH" in launcher)
+check("the example launcher allows exact CDP origins, never *", "--remote-allow-origins=*" not in launcher and "127.0.0.1:9222" in launcher)
+check("shell tools find each other beside themselves, so install.sh --bin works",
+      all("$HOME/bin" not in (HERE / f).read_text(encoding="utf-8") for f in ("desk-browser.sh", "kill-chrome.sh", "human-chrome.sh")))
+_reg = bo.REGISTRY
+bo.REGISTRY = tmp / "nowhere" / "browsers.json"
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    rc = bo.main(["list"])
+bo.REGISTRY = _reg
+check("no browsers.json → one JSON answer that says how to create it", rc == 1 and "install.sh" in json.loads(buf.getvalue())["why"], buf.getvalue())
 
 
 print(f"\n{sum(results)}/{len(results)} passed")
