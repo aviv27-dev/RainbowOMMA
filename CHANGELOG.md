@@ -8,6 +8,26 @@ exit codes are an API and change only in a major version.
 ### Added
 - `cua-color-proxy`: an MCP proxy in front of `cua-driver mcp` that gives every session of any MCP agent (Claude Code,
   OpenClaw, OpenCode, Codex CLI, Cursor, …) that agent's colored cursor, with no change to the agent.
+- `CONTRIBUTING.md`, `SECURITY.md`, issue and pull request templates.
+- A logo, real screenshots, and a branded social preview.
+
+### Changed
+- Desktop icons (`make-desktop-apps.sh`, `desk-browser.sh`) are made for every agent in `browsers.json`, in its own
+  color, instead of three fixed agents. Every "close" icon asks for confirmation. `make-desktop-apps.sh --bin DIR`.
+- The example registry uses orange, blue and green, like the screenshots and the logo.
+- The English frame text reads "<label> · AI Agent · Do not touch". Existing English themes are rebuilt once.
+- `bin/browsers.json` is no longer tracked: `install.sh` creates it from `examples/browsers.example.json`, and a missing
+  registry gets a clear answer instead of a traceback.
+
+### Fixed
+- The example launcher no longer claims to be the human (`LAUNCH_BY`, default the agent), stops when browser-owner
+  calls it (`BROWSER_OWNER_LAUNCH`), and allows only its own CDP origins instead of `*`.
+- The shell tools find each other beside themselves, so `install.sh --bin DIR` works.
+- Icon text shrinks to fit the circle.
+
+### Known limitations
+- `cua-color-proxy` is tested against a fake driver only; the left-to-right frame placement is not yet measured on a
+  real Mac.
 
 ## [0.1.0] — 2026-10-14
 

@@ -22,7 +22,7 @@ you're typing in.
 
 ![One Mac, three agents: Alpha, Bravo and Charlie each work in their own Chrome, in their own color with their name across the frame, and each moves its own colored cursor](docs/images/rainbow-desktop.png)
 
-<sub>The browser and terminal screenshots are real captures from one Mac, with Chrome in a right-to-left language, showing a local demo page and terminal. Before publishing, agent names were replaced with placeholders, personal details were removed, and the cursors were drawn from Cua Driver's own cursor theme, recolored the way RainbowOMMA does it. The terminal shows command output with names replaced and some fields trimmed (`…`). The desktop icons further down are a rendering of what `make-desktop-apps.sh` creates.</sub>
+<sub>Real screenshots from one Mac (its Chrome happens to run in a right-to-left language). Agent names are placeholders, personal details were removed, the cursors were drawn from Cua Driver's own cursor theme, and terminal output is trimmed where marked `…`.</sub>
 
 ---
 
@@ -41,9 +41,55 @@ RainbowOMMA has one rule: **one owner per resource; everyone else asks it.**
 
 | Resource | Owner | What it guarantees |
 |---|---|---|
-| Each agent's Chrome (its CDP port + profile) | `browser-owner` | One lock per agent. Starting twice never opens a second Chrome. Agents can't close each other's browser. |
+| Each agent's Chrome (its own profile and DevTools/CDP port) | `browser-owner` | One lock per agent. Starting twice never opens a second Chrome. Agents can't close each other's browser. |
 | Documents agents open in Word / Excel / Acrobat / Preview | `office-owner` | Per-document leases. A document is closed only if *that agent* opened it and it's saved. Word → PDF through the real Word, without touching your documents. An app is quit only if `office-owner` launched it itself. |
 | Your own Chrome | **you** | Nothing here ever touches it. |
+
+## Quick start
+
+```bash
+git clone https://github.com/aviv27-dev/RainbowOMMA.git && cd RainbowOMMA
+./install.sh                                   # tools into ~/bin; add --with-sweep for the launchd document sweep
+$EDITOR ~/bin/browsers.json                    # one row per agent: port, profile, color, label
+
+~/bin/browser-owner start alpha --by alpha     # paints Alpha's browser and opens it in the background
+~/bin/browser-owner list                       # who's up, blocked, hung, or closed by the human
+~/bin/browser-owner stop alpha --by human      # only the human closes an agent's browser
+install/make-desktop-apps.sh                   # optional: colored open/close icons on the desktop
+```
+
+The first time an agent's window opens, macOS asks once whether Terminal (or your agent) may control **System Events**.
+Allow it: that is how RainbowOMMA hands the focus back to you. If you don't, everything else still works.
+
+A row in `browsers.json`:
+
+```json
+"alpha": { "label": "Alpha", "port": 9222, "profile": "~/agents/alpha-profile", "color": "#FB8C00" }
+```
+
+Then tell each agent, in its prompt, skill or rules, to open its browser **only** through
+`browser-owner start <name> --by <name>`, and to stop when the answer is `refused`, `closed-by-person`, `blocked`
+or `profile-busy`. [Works with your agent](#works-with-your-agent) has a ready-made guardrail for each agent framework, so
+an agent can't go around this with its own `pkill`.
+
+Documents work the same way. Tell agents to open Word, Excel and Acrobat documents only through `office-owner`:
+
+```bash
+~/bin/office-owner open  --agent alpha --app word ~/Reports/draft.docx
+~/bin/office-owner close --agent alpha ~/Reports/draft.docx    # only if Alpha opened it and it's saved
+~/bin/office-owner pdf   --agent alpha ~/Reports/draft.docx    # Word → PDF through the real Word
+~/bin/office-owner apps                                        # which Office apps run, and who launched them
+```
+
+`pdf` converts a uniquely named copy in one fixed work folder (`~/.rainbowomma/word-convert`, or set `OFFICE_WORD_DIR`).
+Word's sandbox asks permission once per folder, so **the first conversion on a new Mac shows a Word permission prompt**.
+Allow it once and later conversions run without asking.
+
+![office-owner: a lease on a demo document, which apps are running and who launched them, and Word to PDF](docs/images/office-owner.png)
+
+---
+
+## Features
 
 ### 🎨 A color for every agent
 Each agent's browser wears a **real Chrome theme**: the whole frame is painted in the agent's color, with its name
@@ -53,12 +99,12 @@ written across it. One look at the screen tells you whose window is in front, an
 ![Three agent browsers side by side, each with its own color, its own page and its own colored cursor](docs/images/three-agents.png)
 
 ### 🧑 The human comes first
-- Only the human closes an agent's browser for good. After you close it, agent and keepalive restarts are `refused` until you reopen it.
+- Only the human closes an agent's browser for good. After you close it, restarts by the agent, or by any keep-alive script it runs, are `refused` until you reopen it.
 - If you quit an agent's Chrome with ⌘Q, the tool remembers that and doesn't relaunch it behind your back (`closed-by-person`).
 - A new agent window that takes focus hands it straight back to whatever you were using.
 - An app you launched is never quit. `office-owner` quits only the apps it launched itself, after 10 idle minutes with no documents open. An app that isn't running is never launched just to check on it.
 
-![The human closes Bravo's browser; Bravo and the keepalive are refused; only the human reopens it](docs/images/owner-refusal.png)
+![The human closes Bravo's browser; Bravo and its keep-alive script are refused; only the human reopens it](docs/images/owner-refusal.png)
 
 ### 🛑 If in doubt, do nothing
 A port that answers but isn't the agent's own browser is reported as `blocked`, not "up". A profile open somewhere
@@ -66,12 +112,25 @@ else is `profile-busy`. If the process table changes during a check, nothing is 
 browser, the tool probes it three times over 30 seconds or more, so a Mac deep in swap doesn't lose a logged-in session.
 
 ### 🤖 Made for agents to call
-Every command prints **one JSON answer** with stable status words and exit codes (`browser-owner`: `0` ok · `2` refused · `1` failure;
-`office-owner`: `0` done · `3` left open · `1` failure), so an agent can branch on the result instead of guessing.
+Every command prints **one JSON answer** with stable status words, so an agent can branch on the result instead of
+guessing. Exit codes: `browser-owner` `0` ok · `2` refused (don't retry) · `1` failed or blocked (the `status` word says
+why); `office-owner` `0` done · `3` left open · `1` failure.
+
+| Command | What it does |
+|---|---|
+| `browser-owner list` · `status <agent>` | who is up, `blocked`, `profile-busy`, `hung`, `down`, or closed by the human |
+| `browser-owner start <agent> --by <who>` | paints and opens the agent's browser in the background; `already-up` if it runs |
+| `browser-owner stop <agent> --by human [--allow-reopen]` | only the human closes it; it stays closed unless `--allow-reopen` |
+| `browser-owner recover <agent> --by <who>` | restarts a hung browser after three probes; never one the human closed |
+| `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json` |
+| `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
+| `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
+| `office-owner pdf --agent <a> <file.docx>` · `apps` · `list` · `sweep` | Word → PDF · which apps run and who launched them · the leases · drop stale leases and quit idle apps it launched |
 
 ### 🖱️ A cursor in the same color
 When an agent drives the Mac through [Cua Driver](https://github.com/trycua/cua) computer use, its on-screen cursor
-wears the agent's color too, so you can see which agent is clicking.
+wears the agent's color too, so you can see which agent is clicking. Build and install one cursor theme per agent, then
+connect your agent as shown in [Works with your agent](#works-with-your-agent).
 
 ![The Cua cursor in each agent's color, with its session badge](docs/images/cua-cursors.png)
 
@@ -80,7 +139,30 @@ python3 tools/cursor-themes/build_cursor_themes.py --registry ~/bin/browsers.jso
 cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
 ```
 
-**Any MCP agent:** register `cua-color-proxy` wherever your agent would run `cua-driver mcp`. The proxy sits between the
+### 🌍 Left-to-right and right-to-left
+Every message a person sees comes from one catalog: the `why` in each answer, notifications, desktop icon names and the
+text on the frame. It ships with English (left-to-right) and Hebrew (right-to-left) and follows your Mac's preferred
+language, or `RAINBOW_LANG`. The frame follows the reading direction: in a left-to-right Chrome the tabs grow from the
+left, so the agent's name runs along the right part of the frame; in a right-to-left Chrome it sits on the left.
+Status words and exit codes never change with the language, because agents parse them.
+
+### 🖥️ One-click desktop controls
+`install/make-desktop-apps.sh` puts colored open/close icons on the desktop for every agent in your `browsers.json`,
+one pair for your own Chrome, and a "close all agents" button. Closing an agent's browser asks for confirmation first.
+If you installed the tools somewhere other than `~/bin`, pass `--bin <folder>`.
+
+![Colored desktop icons for opening and closing each agent's browser, the human's Chrome, and all agents](docs/images/desktop-icons.png)
+
+---
+
+## Works with your agent
+
+RainbowOMMA itself doesn't care which agent framework calls it. Two optional pieces plug into the framework:
+
+- a **guardrail**, so the agent can't go around the owner with its own `pkill`, `killall` or AppleScript `quit`;
+- the **colored cursor**, for agents that do computer use through Cua Driver over MCP.
+
+**Colored cursor, any MCP agent:** register `cua-color-proxy` wherever your agent would run `cua-driver mcp`. The proxy sits between the
 agent and Cua Driver, passes everything through unchanged, and gives every session the agent starts its color before the
 first click. The agent's code and prompt stay as they are, so this works for Claude Code, OpenClaw, OpenCode, Codex CLI,
 Cursor and any other MCP client:
@@ -105,64 +187,10 @@ the full path, because `~` is not expanded there. The agent name is its row in `
 - Tested with Cua Driver **0.21.0**, the version Hermes pins. Don't `cua-driver update` past the version your agent framework pins: a mismatched driver breaks computer use.
 - With reduced motion on, `cua-driver serve` measured 0.0% CPU after sessions with the cursor shown.
 - Claude's built-in computer use has no cursor color to set, so Claude Code gets a colored cursor only when it works through Cua Driver, as above.
+- The first action of a new session may take a moment longer: the proxy gives the session its color first.
+- *Known limitation:* `cua-color-proxy` is tested against a fake driver; it hasn't run against a real Cua Driver yet.
 
-### 🌍 Left-to-right and right-to-left
-Every message a person sees comes from one catalog: the `why` in each answer, notifications, desktop icon names and the
-text on the frame. It ships with English (left-to-right) and Hebrew (right-to-left). To add a language, add its
-texts and its code to `LANGS` (and to `RTL` if it reads right to left) in `bin/rainbow_i18n.py`. The language follows your Mac's preferred language, or set `RAINBOW_LANG`. The frame follows
-the reading direction. In a left-to-right Chrome the tabs grow from the left, so the agent's name runs along the right
-part of the frame. In a right-to-left Chrome the tabs grow from the right, so the name sits on the left.
-Status words and exit codes never change with the language, because agents parse them.
-
-### 🖥️ One-click desktop controls
-`install/make-desktop-apps.sh` puts colored open/close icons on the desktop: one pair per agent, one for your own
-Chrome, and a "close all agents" button that asks for confirmation first.
-
-![Colored desktop icons for opening and closing each agent's browser, the human's Chrome, and all agents](docs/images/desktop-icons.png)
-
----
-
-## Quick start
-
-```bash
-git clone https://github.com/aviv27-dev/RainbowOMMA.git && cd RainbowOMMA
-./install.sh                                   # tools into ~/bin; add --with-sweep for the launchd document sweep
-$EDITOR ~/bin/browsers.json                    # one row per agent: port, profile, color, label
-
-~/bin/browser-owner start alpha --by alpha     # paints Alpha's browser and opens it in the background
-~/bin/browser-owner list                       # who's up, blocked, hung, or closed by the human
-~/bin/browser-owner stop alpha --by human      # only the human closes an agent's browser
-install/make-desktop-apps.sh                   # optional: colored open/close icons on the desktop
-```
-
-A row in `browsers.json`:
-
-```json
-"alpha": { "label": "Alpha", "port": 9222, "profile": "~/agents/alpha-profile", "color": "#8E24AA" }
-```
-
-Then tell each agent, in its prompt, skill or rules, to open its browser **only** through
-`browser-owner start <name> --by <name>`, and to stop when the answer is `refused`, `closed-by-person`, `blocked`
-or `profile-busy`.
-
-Documents work the same way. Tell agents to open Word, Excel and Acrobat documents only through `office-owner`:
-
-```bash
-~/bin/office-owner open  --agent alpha --app word ~/Reports/draft.docx
-~/bin/office-owner close --agent alpha ~/Reports/draft.docx    # only if Alpha opened it and it's saved
-~/bin/office-owner pdf   --agent alpha ~/Reports/draft.docx    # Word → PDF through the real Word
-~/bin/office-owner apps                                        # which Office apps run, and who launched them
-```
-
-`pdf` converts a uniquely named copy in one fixed work folder (`~/.rainbowomma/word-convert`, or set `OFFICE_WORD_DIR`).
-Word's sandbox asks permission once per folder, so **the first conversion on a new Mac shows a Word permission prompt**.
-Allow it once and later conversions run without asking.
-
-![office-owner: a lease on a demo document, which apps are running and who launched them, and Word to PDF](docs/images/office-owner.png)
-
-## Guardrails for your agent framework
-
-A guardrail stops an agent from going around the owner with its own `pkill`, `killall` or AppleScript `quit`:
+**Guardrails:**
 
 - **Hermes Agent:** a ready-made deny list in [`adapters/hermes-approvals-deny.yaml`](adapters/hermes-approvals-deny.yaml).
 - **Claude Code:** a ready-made PreToolUse hook in [`adapters/claude-code/`](adapters/claude-code/). Install it like this:
@@ -201,7 +229,7 @@ Building cursor themes needs a real `cua-driver`, so it's not part of the tests.
 
 ## Design
 
-[`docs/DESIGN.md`](docs/DESIGN.md) covers the principles, every status word, and the Chrome behaviour the tools rely
+[`docs/DESIGN.md`](docs/DESIGN.md) covers the principles, every status word, and the Chrome behavior the tools rely
 on, which was measured rather than guessed: how ⌘Q is told apart from a reboot, why `open -g` isn't enough to keep
 focus, and how a theme is installed through the DevTools pipe on Chrome 137+.
 
@@ -210,6 +238,11 @@ focus, and how a theme is installed through the DevTools pipe on Chrome 137+.
 - A ready-made Codex CLI guardrail and cursor adapter
 - A human-activity gate that waits while you're typing
 - Per-agent tab claims, an auth/login lease, and a separate Chrome channel per agent
+
+## Contributing and security
+
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Every behavior change comes with a
+test that uses fakes only. To report a security problem privately, see [SECURITY.md](SECURITY.md).
 
 ## License
 

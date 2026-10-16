@@ -3,7 +3,8 @@ set -u
 
 PATTERN='(Google Chrome|Chromium|Google Chrome Helper|Google Chrome for Testing)( \([^)]*\))?\.app/Contents/MacOS/'
 
-I18N="$(cd "$(dirname "$0")" && pwd)/rainbow_i18n.py"
+DIR="$(cd "$(dirname "$0")" && pwd)"
+I18N="$DIR/rainbow_i18n.py"
 msg() { /usr/bin/python3 -I "$I18N" "$@"; }
 
 KILL_CDP="${KILL_CDP:-0}"
@@ -15,8 +16,8 @@ OWNER_NOTE=""
 KEEP_PORTS=""
 if [ "$KILL_CDP" = "1" ]; then
   NAMES=""
-  if [ -x "$HOME/bin/browser-owner" ]; then
-    NAMES=$("$HOME/bin/browser-owner" names 2>/dev/null) || NAMES=""
+  if [ -x "$DIR/browser-owner" ]; then
+    NAMES=$("$DIR/browser-owner" names 2>/dev/null) || NAMES=""
   fi
   if [ -z "$NAMES" ]; then
     OWNER_NOTE="
@@ -26,14 +27,14 @@ $(msg kc.owner_silent)"
   for NAME in $NAMES; do
     RC=1
     for _ in 1 2 3 4 5 6 7; do
-      OWNER_OUT=$("$HOME/bin/browser-owner" stop "$NAME" --by human 2>&1); RC=$?
+      OWNER_OUT=$("$DIR/browser-owner" stop "$NAME" --by human 2>&1); RC=$?
       case "$OWNER_OUT" in *'"busy"'*) sleep 10 ;; *) break ;; esac
     done
     if [ "$RC" -eq 0 ]; then
       case "$OWNER_OUT" in *'"processes": 0'*) ;; *) OWNER_NOTE="$OWNER_NOTE
 $(msg kc.agent_closed name="$NAME")" ;; esac
     else
-      PORT=$("$HOME/bin/browser-owner" status "$NAME" 2>/dev/null | sed -n 's/.*"port": \([0-9]*\).*/\1/p')
+      PORT=$("$DIR/browser-owner" status "$NAME" 2>/dev/null | sed -n 's/.*"port": \([0-9]*\).*/\1/p')
       [ -n "$PORT" ] && KEEP_PORTS="$KEEP_PORTS $PORT"
       OWNER_NOTE="$OWNER_NOTE
 $(msg kc.agent_kept name="$NAME" out="$OWNER_OUT")"

@@ -1,15 +1,21 @@
 #!/bin/bash
+# Colored open/close icons on the desktop: one pair per agent in browsers.json, the human's own Chrome, and
+# "close all agents". Each icon runs desk-browser.sh from the folder the tools were installed into.
+#
+#   install/make-desktop-apps.sh [--bin DIR]      DIR: where install.sh put the tools (default ~/bin)
 set -eu
+BIN="$HOME/bin"
+[ "${1:-}" = "--bin" ] && BIN="${2:?--bin needs a folder}"
 DESK="$HOME/Desktop"
 ARCH="$DESK/Archive/browser-shortcuts-$(date +%Y%m%d-%H%M)"
 WORK="$(mktemp -d)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-I18N="$HERE/../bin/rainbow_i18n.py"; [ -f "$I18N" ] || I18N="$HOME/bin/rainbow_i18n.py"
+I18N="$BIN/rainbow_i18n.py"; [ -f "$I18N" ] || I18N="$HERE/../bin/rainbow_i18n.py"
 msg() { /usr/bin/python3 -I "$I18N" "$@"; }
 CANCEL="$(msg desk.btn_cancel)"; CLOSE="$(msg desk.btn_close)"; ERR="$(msg desk.error)"
 
 mkdir -p "$ARCH"
-for f in "$DESK"/*Chrome*.app "$DESK"/*דפדפן*.app "$DESK"/[1-9]\ ·\ *.app; do
+for f in "$DESK"/[0-9]\ ·\ *.app "$DESK"/[0-9][0-9]\ ·\ *.app; do
   [ -e "$f" ] && mv "$f" "$ARCH/"
 done
 
@@ -54,13 +60,13 @@ JS
 app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
   local name="$1" hex="$2" txt="$3" act="$4" who="$5" confirm="${6:-}" src="$WORK/a.applescript" out="$DESK/$1.app"
   {
-    echo "-- $name — made by RainbowOMMA/make-desktop-apps.sh; the work is ~/bin/desk-browser.sh $act $who"
+    echo "-- $name — made by RainbowOMMA/make-desktop-apps.sh; the work is $BIN/desk-browser.sh $act $who"
     echo "on run"
     if [ -n "$confirm" ]; then
       echo "  display dialog \"$confirm\" with title \"$name\" buttons {\"$CANCEL\", \"$CLOSE\"} default button \"$CANCEL\" cancel button \"$CANCEL\" with icon caution"
     fi
     echo "  try"
-    echo "    set r to do shell script quoted form of ((POSIX path of (path to home folder)) & \"bin/desk-browser.sh\") & \" $act $who\""
+    echo "    set r to do shell script quoted form of \"$BIN/desk-browser.sh\" & \" $act $who\""
     echo "  on error e"
     echo "    set r to \"$ERR\" & e"
     echo "  end try"
@@ -77,15 +83,27 @@ app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
   touch "$out"
 }
 
-H="$(msg desk.name.human)"; A="$(msg desk.name.alpha)"; B="$(msg desk.name.bravo)"; C="$(msg desk.name.charlie)"
-app "1 · ⚪ $(msg desk.app.open_human)"            "#B0BEC5" "$H"   open  human
-app "2 · 🟣 $(msg desk.app.open_agent name="$A")"  "#8E24AA" "$A"   open  alpha
-app "3 · 🟢 $(msg desk.app.open_agent name="$B")"  "#00897B" "$B"   open  bravo
-app "4 · 🟠 $(msg desk.app.open_agent name="$C")"  "#F4511E" "$C"   open  charlie
-app "5 · ✖ $(msg desk.app.close_human)"            "#B0BEC5" "✖ $H" close human
-app "6 · ✖ $(msg desk.app.close_agent name="$A")"  "#8E24AA" "✖ $A" close alpha "$(msg desk.confirm_one name="$A")"
-app "7 · ✖ $(msg desk.app.close_agent name="$B")"  "#00897B" "✖ $B" close bravo
-app "8 · ✖ $(msg desk.app.close_agent name="$C")"  "#F4511E" "✖ $C" close charlie
-app "9 · ✖ $(msg desk.app.close_all)"              "#757575" "✖ $(msg desk.name.all)" close agents "$(msg desk.confirm_all names="$A, $B, $C")"
+# the agents this owner may stop, with their label and color, from browsers.json
+AGENTS=$("$BIN/browser-owner" list 2>/dev/null | /usr/bin/python3 -I -c '
+import json, sys
+names = set(sys.argv[1].split())
+for a in json.load(sys.stdin).get("agents", []):
+    if a["agent"] in names:
+        print("\t".join((a["agent"], a["label"], a["color"])))' "$("$BIN/browser-owner" names 2>/dev/null)") || AGENTS=""
+[ -n "$AGENTS" ] || { echo "no agents: is $BIN/browser-owner installed and browsers.json filled in?" >&2; exit 1; }
+
+H="$(msg desk.name.human)"
+n=1
+app "$n · $(msg desk.app.open_human)" "#B0BEC5" "$H" open human; n=$((n + 1))
+while IFS=$'\t' read -r who label hex; do
+  app "$n · $(msg desk.app.open_agent name="$label")" "$hex" "$label" open "$who"; n=$((n + 1))
+done <<< "$AGENTS"
+app "$n · ✖ $(msg desk.app.close_human)" "#B0BEC5" "✖ $H" close human; n=$((n + 1))
+LABELS=""
+while IFS=$'\t' read -r who label hex; do
+  app "$n · ✖ $(msg desk.app.close_agent name="$label")" "$hex" "✖ $label" close "$who" "$(msg desk.confirm_one name="$label")"; n=$((n + 1))
+  LABELS="${LABELS:+$LABELS, }$label"
+done <<< "$AGENTS"
+app "$n · ✖ $(msg desk.app.close_all)" "#757575" "✖ $(msg desk.name.all)" close agents "$(msg desk.confirm_all names="$LABELS")"
 rm -rf "$WORK"
-echo "ok — 9 icons on the desktop; the old ones in $ARCH"
+echo "ok — $n icons on the desktop; the old ones in $ARCH"

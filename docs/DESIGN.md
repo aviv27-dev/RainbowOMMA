@@ -15,7 +15,7 @@
 | Path | What |
 |---|---|
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · human-theme`, `--by WHO` |
-| `bin/browsers.json` | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme` |
+| `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme` |
 | `bin/theme-frame.js` | draws the agent's name onto the theme's frame image (AppKit via JXA — no image library) |
 | `bin/office-owner` = `bin/agent-office(.py)` | document leases in Word/Excel/Acrobat/Preview, real-Word → PDF, quitting only the apps it launched: `open · close · renew · pdf · sweep · list · apps` |
 | `bin/kill-chrome.sh` | the human's broom: closes their Chrome + headless leftovers, spares every agent browser; `--all` goes through the owner |
@@ -27,9 +27,15 @@
 | `bin/rainbow_i18n.py` | the message catalog (English + Hebrew) and the language choice — §7 |
 | `install.sh` | copies the tools, creates `browsers.json` from the example (never overwrites), the state folders, and with `--with-sweep` the launchd job with absolute paths |
 | `adapters/claude-code/` | Claude Code guard: a PreToolUse hook + a settings example |
+| `bin/human-chrome.sh` | opens (or brings to front) the human's own Chrome, never an agent's |
+| `bin/desk-browser.sh` | what the desktop icons run: `open\|close <agent>`, `open\|close human`, `close agents` |
+| `tools/cursor-themes/build_cursor_themes.py`, `cua.default.lottie` | one Cua cursor theme per agent in its color — §6 |
+| `adapters/hermes-cua-cursor-theme.patch`, `adapters/hermes-cursor-config.yaml` | Hermes Agent: select the agent's cursor theme per session — §6 |
+| `install/com.rainbowomma.agent-office-sweep.plist` | the launchd sweep template; `install.sh --with-sweep` writes it with absolute paths |
+| `.github/workflows/tests.yml`, `release.yml` | tests on macOS for every push and PR · a release from a `v*` tag or by hand from the Actions tab |
 | `tests/test_rainbowomma.py` | fake process table, fake osascript, fake Chrome — never touches a real browser |
 
-## 3. browser-owner — behaviour that was measured, not guessed
+## 3. browser-owner — behavior that was measured, not guessed
 - **Identity.** An agent's browser = a root Chrome process with BOTH `--remote-debugging-port=<its port>` and
   `--user-data-dir=<its profile>` as whole argument values (`=92220` or `…-personal` are not it). Kills reach only that
   root and its descendants, re-validated right before the signal.
@@ -117,6 +123,8 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   call it (`rainbow_i18n.py KEY name=value`). The language is `RAINBOW_LANG`, else the Mac's first preferred language
   (`defaults read -g AppleLanguages`, checked before `LANG`, which the launchd job sets to `en_US`), else the locale, else
   English. Status words, exit codes and JSON keys are never translated.
+- **Adding a language:** add its text to every entry in `M`, its code to `LANGS`, and to `RTL` if it reads right to
+  left. A test checks that every message has every language.
 - **Direction on the frame:** Chrome lays the frame image from the window's left edge. In RTL the tab strip grows from the
   right, so the name is drawn twice on the free left part. In LTR the tabs grow from the left, so the name repeats along
   the rest of the 3000 px image, and the right part of any window width carries it. The RTL theme key is unchanged, so

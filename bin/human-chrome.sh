@@ -15,7 +15,7 @@ mine() {
       *) continue ;;
     esac
     case "$cmd" in
-      *alpha-profile*|*remote-debugging-port*|*--headless*|*--type=*) continue ;;
+      *remote-debugging-port*|*--headless*|*--type=*) continue ;;
     esac
     echo "$pid"
   done | head -1

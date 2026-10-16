@@ -5,20 +5,20 @@
    "label": "Alpha",
    "port": 9222,
    "profile": "~/agents/alpha-profile",
-   "color": "#8E24AA"
+   "color": "#FB8C00"
   },
   "bravo": {
    "label": "Bravo",
    "port": 9223,
    "profile": "~/agents/bravo-profile",
-   "color": "#00897B",
+   "color": "#1E88E5",
    "idleMinutes": 60
   },
   "charlie": {
    "label": "Charlie",
    "port": 9224,
    "profile": "~/agents/charlie-profile",
-   "color": "#F4511E"
+   "color": "#43A047"
   }
  }
 }

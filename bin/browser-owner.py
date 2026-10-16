@@ -332,7 +332,7 @@ def rgb(hex_rgb):
 
 def theme_key(a):
     # an RTL theme keeps the key it always had; an LTR one (the name on the other side of the frame) gets its own
-    return f"{THEME_VERSION}:{a['color'].upper()}:{a['label']}" + ("" if direction() == "rtl" else ":ltr")
+    return f"{THEME_VERSION}:{a['color'].upper()}:{a['label']}" + ("" if direction() == "rtl" else ":ltr2")   # ltr2: the English frame text changed
 
 
 def build_theme(a, text=None, title=None):
@@ -669,6 +669,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         reg = registry()
+    except FileNotFoundError:
+        print(json.dumps({"status": "failed", "why": t("bo.no_registry", path=REGISTRY)}, ensure_ascii=False))
+        return 1
     except Exception as exc:
         print(json.dumps({"status": "failed", "why": f"registry: {type(exc).__name__}: {exc}"[:300]}, ensure_ascii=False))
         return 1
