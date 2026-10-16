@@ -22,7 +22,7 @@ you're typing in.
 
 ![One Mac, three agents: Alpha, Bravo and Charlie each work in their own Chrome, in their own color with their name across the frame, and each moves its own colored cursor](docs/images/rainbow-desktop.png)
 
-<sub>The browser and terminal screenshots are real captures from one Mac, with Chrome in Hebrew (RTL), showing a local demo page and terminal. Before publishing, agent names were replaced with placeholders, personal details were removed, and the cursors were drawn from Cua Driver's own cursor theme, recolored the way RainbowOMMA does it. The terminal shows command output with names replaced and some fields trimmed (`…`). The desktop icons further down are an illustration.</sub>
+<sub>The browser and terminal screenshots are real captures from one Mac, with Chrome in a right-to-left language, showing a local demo page and terminal. Before publishing, agent names were replaced with placeholders, personal details were removed, and the cursors were drawn from Cua Driver's own cursor theme, recolored the way RainbowOMMA does it. The terminal shows command output with names replaced and some fields trimmed (`…`). The desktop icons further down are a rendering of what `make-desktop-apps.sh` creates.</sub>
 
 ---
 
@@ -106,12 +106,13 @@ the full path, because `~` is not expanded there. The agent name is its row in `
 - With reduced motion on, `cua-driver serve` measured 0.0% CPU after sessions with the cursor shown.
 - Claude's built-in computer use has no cursor color to set, so Claude Code gets a colored cursor only when it works through Cua Driver, as above.
 
-### 🌍 English and Hebrew
-Every message a person sees comes in English or Hebrew: the `why` in each answer, notifications, desktop icon names and
-the text on the frame. The language follows your Mac's preferred language; set `RAINBOW_LANG=en` or `RAINBOW_LANG=he` to
-choose. The frame follows the direction too. In Hebrew (RTL) the tabs grow from the right, so the agent's name sits on the
-left. In English (LTR) the tabs grow from the left, so the name runs along the right part of the frame.
-Status words and exit codes stay the same in both languages, because agents parse them.
+### 🌍 Left-to-right and right-to-left
+Every message a person sees comes from one catalog: the `why` in each answer, notifications, desktop icon names and the
+text on the frame. It ships with English (left-to-right) and Hebrew (right-to-left). To add a language, add its
+texts and its code to `LANGS` (and to `RTL` if it reads right to left) in `bin/rainbow_i18n.py`. The language follows your Mac's preferred language, or set `RAINBOW_LANG`. The frame follows
+the reading direction. In a left-to-right Chrome the tabs grow from the left, so the agent's name runs along the right
+part of the frame. In a right-to-left Chrome the tabs grow from the right, so the name sits on the left.
+Status words and exit codes never change with the language, because agents parse them.
 
 ### 🖥️ One-click desktop controls
 `install/make-desktop-apps.sh` puts colored open/close icons on the desktop: one pair per agent, one for your own

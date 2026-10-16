@@ -28,10 +28,15 @@ function run(argv) {
   $.NSColor.colorWithDeviceRedGreenBlueAlpha(r, g, b, 1).setFill;
   $.NSBezierPath.bezierPathWithOvalInRect($.NSMakeRect(64, 64, S - 128, S - 128)).fill;
   const attrs = $.NSMutableDictionary.alloc.init;
-  attrs.setObjectForKey($.NSFont.boldSystemFontOfSize(text.length > 7 ? 150 : text.length > 4 ? 200 : 260), $.NSFontAttributeName);
   attrs.setObjectForKey(light ? $.NSColor.colorWithDeviceRedGreenBlueAlpha(0.15, 0.12, 0, 1) : $.NSColor.whiteColor, $.NSForegroundColorAttributeName);
   const s = $.NSString.alloc.initWithUTF8String(text);
-  const sz = s.sizeWithAttributes(attrs);
+  // the largest bold size whose text fits inside the circle — English names are longer than Hebrew ones
+  let size = 260, sz;
+  do {
+    attrs.setObjectForKey($.NSFont.boldSystemFontOfSize(size), $.NSFontAttributeName);
+    sz = s.sizeWithAttributes(attrs);
+    size -= 10;
+  } while (sz.width > (S - 128) * 0.74 && size >= 80);
   s.drawAtPointWithAttributes($.NSMakePoint((S - sz.width) / 2, (S - sz.height) / 2), attrs);
   $.NSGraphicsContext.restoreGraphicsState;
   rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $()).writeToFileAtomically(out, true);
