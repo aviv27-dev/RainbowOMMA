@@ -554,7 +554,7 @@ r = subprocess.run(["bash", installer, "--with-sweep"], capture_output=True, tex
 ib = fake_home / "bin"
 plist = fake_home / "Library" / "LaunchAgents" / "com.rainbowomma.agent-office-sweep.plist"
 check("install: the tools land together in ~/bin, executable, with the message catalog",
-      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "office-owner", "agent-office", "kill-chrome.sh", "rainbowomma-guard", "cua-color-proxy"))
+      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "port-owner", "office-owner", "agent-office", "kill-chrome.sh", "rainbowomma-guard", "cua-color-proxy"))
       and (ib / "rainbow_i18n.py").exists(), r.stdout + r.stderr)
 check("install: browsers.json is created from the example", json.loads((ib / "browsers.json").read_text())["agents"].keys() >= {"alpha"})
 check("install: the state folders exist", all((fake_home / ".rainbowomma" / d).is_dir() for d in ("logs", "state", "word-convert")))
@@ -741,11 +741,11 @@ bypasses = ["/usr/bin/pkill -f Chrome", "/usr/bin/killall 'Google Chrome'", "\\p
             "open -na 'Google Chrome' --args --remote-debugging-port=9223 --user-data-dir=/tmp/x",
             "~/bin/browser-owner stop bravo --by human", "browser-owner start bravo --by=HUMAN", "python3 -I ~/bin/browser-owner.py stop bravo --by human",
             "~/bin/office-owner close --agent bravo x.docx --by human", "~/bin/desk-browser.sh close agents", "bash ~/bin/kill-chrome.sh --all",
-            "LAUNCH_BY=human ~/bin/agent-launcher.sh", "export LAUNCH_BY=human; ~/bin/agent-launcher.sh"]
+            "LAUNCH_BY=human ~/bin/agent-launcher.sh", "export LAUNCH_BY=human; ~/bin/agent-launcher.sh", "lsof -ti :3000 | xargs kill"]
 res = [hook(c) for c in bypasses]
 check("guard: no way around it by path, backslash, wrapper, sh -c, eval, a new line, ps/lsof | xargs kill, open -a, or posing as the human",
       all(code == 2 for code, _ in res), [c for c, (code, _) in zip(bypasses, res) if code != 2])
-harmless = ["git commit -m 'stop using killall and pkill'", "echo \"don't pkill please\"", "grep -rn pkill bin/", "lsof -ti :3000 | xargs kill",
+harmless = ["git commit -m 'stop using killall and pkill'", "echo \"don't pkill please\"", "grep -rn pkill bin/",
             "cat > notes.md <<'EOF'\nnever run pkill or killall\nEOF", "~/bin/browser-owner stop alpha --by alpha", "~/bin/browser-owner idle-stop bravo --by bravo",
             "echo \"unbalanced", "npm run build && npm test", "python3 -c 'print(1)'"]
 res = [hook(c) for c in harmless]
@@ -836,6 +836,75 @@ check("shell tools and wrappers skip the python3 stub when the developer tools a
 r = subprocess.run(["bash", str(HERE / "desk-browser.sh"), "nonsense"], capture_output=True, text=True, env=dict(os.environ, RAINBOW_LANG="en"))
 check("…and still print their messages", r.returncode == 2 and "usage" in r.stdout, (r.stdout, r.stderr))
 check("desktop icons: a label is escaped inside the AppleScript strings", 'asq "$name"' in mk and '\\"$name\\"' not in mk)
+
+# ── port-owner: a range of ports per agent, leases inside it, the usual ports left to the human ──
+check("ports: an agent without \"ports\" gets 100 of its own, from its CDP port (9222 → 41000-41099, 9224 → 41200-41299)",
+      reg["alpha"]["ports"] == (41000, 41099) and reg["charlie"]["ports"] == (41200, 41299), (reg["alpha"]["ports"], reg["charlie"]["ports"]))
+for bad, why in (({"ports": "41000-41150"}, "overlaps another agent's range"), ({"ports": "80-90"}, "below 1024"), ({"ports": "lots"}, "not a range")):
+    r = json.loads(REG.read_text()); r["agents"]["zed"] = dict({"label": "z", "port": 9230, "profile": str(tmp / "zp"), "color": "#000000"}, **bad)
+    bp = tmp / "bad-ports.json"; bp.write_text(json.dumps(r))
+    try:
+        bo.registry(bp); ok_ = False
+    except ValueError:
+        ok_ = True
+    check(f"ports: the registry refuses a range that is {why}", ok_)
+os.environ["RAINBOW_HOME"] = str(tmp / "po-home")
+po = load("port-owner.py")
+os.environ.pop("RAINBOW_HOME")
+po.REGISTRY = REG
+listening = {}
+po.LISTENERS = lambda: dict(listening)
+po.BINDABLE = lambda port: port not in listening
+code, out = po.cmd_lease("alpha")
+check("lease: Alpha gets the first port of its own range", code == 0 and out["status"] == "leased" and out["port"] == 41000, out)
+code, out = po.cmd_lease("alpha")
+check("lease: asking again for the same name gives the same port back", out["port"] == 41000 and out.get("existing"), out)
+listening[41001] = "node (pid 4242)"
+code, out = po.cmd_lease("alpha", "web")
+check("lease: a second name skips a port something already listens on", out["port"] == 41002, out)
+code, out = po.cmd_lease("bravo")
+check("lease: Bravo gets its own range, never Alpha's", out["port"] == 41100, out)
+code, out = po.cmd_lease("alpha", "api", prefer=3000)
+check("lease --prefer 3000: refused — the usual dev ports stay the human's", code == 2 and out["status"] == "refused" and "3000" in out["why"], out)
+code, out = po.cmd_lease("alpha", "api", prefer=41150)
+check("lease --prefer: a port in Bravo's range is refused for Alpha", code == 2 and "41000-41099" in out["why"], out)
+code, out = po.cmd_lease("alpha", "api", prefer=41001)
+check("lease --prefer: a port something listens on is refused, and says who", code == 2 and "node (pid 4242)" in out["why"], out)
+code, out = po.cmd_lease("ghost")
+check("lease: an unknown agent is a failure that names the registered ones", code == 1 and "alpha" in out["why"], out)
+w = [po.cmd_who(p)[1] for p in (3000, 41100, 41150, 41001, 12345)]
+check("who: 3000 the human's (reserved) · 41100 Bravo's lease · 41150 Bravo's range · 41001 Alpha's range, with its listener · 12345 the human's",
+      [(x["owner"], x["why"]) for x in w] == [("human", "reserved"), ("bravo", "lease"), ("bravo", "range"), ("alpha", "range"), ("human", "unassigned")]
+      and w[3]["listening"] == "node (pid 4242)", w)
+st = json.loads(po.STATE.read_text()); st["leases"][0]["at"] = time.time() - 3600; po.STATE.write_text(json.dumps(st))
+code, out = po.cmd_list("alpha")
+check("a lease nobody listens on is dropped after 10 minutes", [x["name"] for x in out["leases"]] == ["web"] and out["ranges"] == {"alpha": "41000-41099"}, out)
+code, out = po.cmd_release("alpha", every=True)
+check("release --all gives back every lease of that agent, and only its", out["count"] == 1 and [x["agent"] for x in po.leases_of()] == ["bravo"], (out, po.leases_of()))
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    rc = po.main(["env", "alpha", "--name", "web", "--var", "vite_port"])
+check("env: shell words for eval — PORT and any other variable set to the same leased port", rc == 0 and buf.getvalue().strip() == "PORT=41000 VITE_PORT=41000", buf.getvalue())
+# the guard, with each agent's ranges and leases
+po.cmd_lease("bravo", "web")
+genv = dict(os.environ, BROWSER_OWNER_REGISTRY=str(REG), RAINBOW_HOME=str(tmp / "po-home"))
+def as_agent(cmd, agent=None):
+    e = dict(genv, **({"RAINBOW_AGENT": agent} if agent else {}))
+    r = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": cmd}}), capture_output=True, text=True, env=e)
+    return r.returncode
+alpha_blocked = ["npm run dev -- --port 3000", "PORT=8080 npm start", "PORT=41100 npm start", "python3 -m http.server 8000",
+                 "docker run -p 3000:80 nginx", "PORT=3000 bash -c 'npm start'", "export VITE_PORT=5173; npm run dev"]
+alpha_allowed = ["PORT=41000 npm run dev", "npm run dev -- --port=41050", "docker run -p 127.0.0.1:41005:80 nginx", "git commit -m 'serve on PORT=3000'",
+                 "eval \"$(port-owner env alpha) npm run dev\"", "npm test"]
+check("guard as Alpha: no port outside Alpha's own — the human's 3000/8080/5173 and Bravo's range are refused",
+      all(as_agent(c, "alpha") == 2 for c in alpha_blocked), [c for c in alpha_blocked if as_agent(c, "alpha") != 2])
+check("guard as Alpha: its own ports, a commit message and the port-owner way are let through",
+      all(as_agent(c, "alpha") == 0 for c in alpha_allowed), [c for c in alpha_allowed if as_agent(c, "alpha")])
+check("guard without RAINBOW_AGENT: only another agent's port is refused (its range or lease); 3000 is let through",
+      as_agent("npm run dev -- --port 3000") == 0 and as_agent("npm run dev -- --port 41150") == 2 and as_agent("PORT=41100 npm start") == 2)
+port_killers = ["npx kill-port 3000", "kill-port 41100", "fuser -k 3000/tcp", "lsof -ti :41100 | xargs kill -9"]
+check("guard: freeing a port by killing whoever holds it is refused (kill-port, fuser -k, lsof | xargs kill)",
+      all(as_agent(c, "alpha") == 2 for c in port_killers), [c for c in port_killers if as_agent(c, "alpha") != 2])
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

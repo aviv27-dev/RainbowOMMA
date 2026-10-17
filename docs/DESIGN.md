@@ -15,7 +15,8 @@
 | Path | What |
 |---|---|
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · human-theme`, `--by WHO` |
-| `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme` |
+| `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`); top-level `humanPorts` |
+| `bin/port-owner(.py)` | every agent's ports: a range per agent (`ports` in the registry, default 41000 + 100 × (CDP port − 9222)), leases inside it, `humanPorts` never leased: `lease · env · who · release · list` — §8 |
 | `bin/theme-frame.js` | draws the agent's name onto the theme's frame image (AppKit via JXA — no image library) |
 | `bin/office-owner` = `bin/agent-office(.py)` | document leases in Word/Excel/Acrobat/Preview, real-Word → PDF, quitting only the apps it launched: `open · close · renew · pdf · sweep · list · apps` |
 | `bin/kill-chrome.sh` | the human's broom: closes their Chrome + headless leftovers, spares every agent browser; `--all` goes through the owner |
@@ -141,4 +142,16 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   existing Hebrew installs are not rebuilt. LTR has its own key, so switching language rebuilds the theme once. *The LTR
   placement is not yet measured on a real Mac.*
 - **One root:** `RAINBOW_HOME` (default `~/.rainbowomma`) holds logs, state, themes and the Word work folder.
+
+## 8. port-owner — ports have owners too
+- **Ranges, not a free-for-all.** Each agent owns a contiguous range (default 100 ports from 41000 + 100 × (CDP port − 9222),
+  all below macOS's ephemeral 49152+; overlapping ranges are refused by the registry). The human owns everything else;
+  `humanPorts` (default 3000, 3001, 4200, 5000, 5173, 5432, 6379, 8000, 8080, 8888, 9000, 27017) is never leased.
+- **A lease is a promise, checked twice.** `lease` picks the first port in the range that is not kept for the human, not
+  leased, not listened on (`lsof`) and binds on every interface. A lease nobody listens on is dropped after 10 minutes,
+  so a crashed agent's ports come back. One lock file serializes every change.
+- **The guard.** `kill-port`, `fkill`, `fuser -k` and `kill` with `ps`/`lsof`/`pgrep` are refused for every agent. With
+  `RAINBOW_AGENT=<name>` in the agent's environment, `--port N`, `--port=N`, `VAR_PORT=N`, `docker -p HOST:…` and
+  `python -m http.server N` must name a port in that agent's range (or leased to it); without it, only ports another
+  agent owns or holds are refused. A port that appears only in text (a commit message, an `echo`) is not a claim.
 

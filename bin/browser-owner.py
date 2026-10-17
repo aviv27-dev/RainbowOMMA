@@ -33,6 +33,8 @@ CHROME_APP = "/Applications/Google Chrome.app"
 CHROME_BIN = "Google Chrome.app/Contents/MacOS/Google Chrome"
 STALE_FLAG_AFTER = 120
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+PORTS_BASE, PORTS_SIZE = 41000, 100    # an agent's default ports: 41000 + 100 × (CDP port − 9222) — below macOS's ephemeral 49152+
+HUMAN_PORTS = [3000, 3001, 4200, 5000, 5173, 5432, 6379, 8000, 8080, 8888, 9000, 27017]   # the well-known ones stay the human's
 
 
 def now_iso():
@@ -51,9 +53,29 @@ def canon(p):
     return os.path.realpath(expand(p))
 
 
+def port_range(spec, cdp_port):
+    """ "41000-41099" → (41000, 41099); none → the default range derived from the CDP port"""
+    if not spec:
+        lo = PORTS_BASE + PORTS_SIZE * (cdp_port - 9222)
+        return lo, lo + PORTS_SIZE - 1
+    m = re.fullmatch(r"\s*(\d{4,5})\s*-\s*(\d{4,5})\s*", str(spec))
+    if not m or not 1024 <= int(m.group(1)) <= int(m.group(2)) <= 65535:
+        raise ValueError(f"ports must look like 41000-41099 (1024–65535), not {spec!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def human_ports(path=None):
+    """the ports kept for the human: "humanPorts" at the top of browsers.json, else the usual dev-server ports"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("humanPorts")
+    except (OSError, ValueError):
+        got = None
+    return sorted({int(p) for p in got}) if isinstance(got, list) else list(HUMAN_PORTS)
+
+
 def registry(path=None):
     raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))["agents"]
-    out, ports, profiles, states = {}, {}, {}, {}
+    out, ports, profiles, states, ranges = {}, {}, {}, {}, {}
     for name, r in raw.items():
         if not NAME_RE.match(name):
             raise ValueError(f"bad agent name: {name!r}")
@@ -88,6 +110,12 @@ def registry(path=None):
             a["managedBy"] = expand(r["managedBy"])
         if r.get("idleMinutes") is not None:
             a["idleMinutes"] = int(r["idleMinutes"])
+        lo, hi = port_range(r.get("ports"), port)
+        for other, (olo, ohi) in ranges.items():
+            if lo <= ohi and olo <= hi:
+                raise ValueError(f"{name}: ports {lo}-{hi} overlap {other}'s {olo}-{ohi}")
+        ranges[name] = (lo, hi)
+        a["ports"] = (lo, hi)
         a["port_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
         a["dir_re"] = re.compile(r"(?:^|\s)--user-data-dir=" + re.escape(a["profile"]) + r"(?:\s|$)")
         out[name] = a
