@@ -61,6 +61,12 @@ M = {
     "bo.idle_too_soon": {"en": "{label}'s browser was started {mins} min ago — not idle yet (idleMinutes = {idle})",
                          "he": "הדפדפן של {label} נפתח לפני {mins} דק׳ — עוד לא בחוסר פעילות (idleMinutes = {idle})"},
     "bo.busy": {"en": "another action on this browser is running right now", "he": "פעולה אחרת על הדפדפן הזה רצה עכשיו"},
+    # ── port-owner ──
+    "po.human_port": {"en": "port {port} is kept for the human (humanPorts) — take one of your own: port-owner lease {agent}",
+                      "he": "פורט {port} שמור לאדם (humanPorts) — לקחת פורט משלך: port-owner lease {agent}"},
+    "po.not_yours": {"en": "port {port} is outside {agent}'s range {range}", "he": "פורט {port} מחוץ לטווח של {agent}‏ ({range})"},
+    "po.taken": {"en": "port {port} is taken ({who})", "he": "פורט {port} תפוס ({who})"},
+    "po.full": {"en": "no free port left in {agent}'s range {range}", "he": "לא נשאר פורט פנוי בטווח של {agent}‏ ({range})"},
     # ── office-owner / agent-office ──
     "ao.no_file": {"en": "no such file: {path}", "he": "אין קובץ: {path}"},
     "ao.bad_app": {"en": "unsupported app — word / excel / acrobat / preview", "he": "אפליקציה לא נתמכת — word / excel / acrobat / preview"},

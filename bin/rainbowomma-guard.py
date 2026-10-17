@@ -29,12 +29,14 @@ WHY = {
     "pkill": "pkill matches processes by pattern and can hit another agent's browser",
     "killall": "killall stops every process of that name, other agents' too",
     "search-kill": "killing what a process search found (pgrep / ps / lsof) is pkill by another name",
+    "port-kill": "freeing a port by killing whatever holds it (kill-port, fkill, fuser -k) can hit another agent's or the human's server",
     "osascript": "quitting Chrome through AppleScript closes every Chrome window, the human's too",
     "debug-port": "an agent's Chrome is started only by browser-owner",
     "human": "only the human acts as the human: --by human (and the desktop controls) are the person's, never an agent's",
 }
 HELP = ("Use the owner instead: `browser-owner start|recover <agent> --by <agent>` for your browser "
-        "(stop when it answers refused / closed-by-person / blocked / profile-busy), `office-owner` for Word/Excel/Acrobat.")
+        "(stop when it answers refused / closed-by-person / blocked / profile-busy), `office-owner` for Word/Excel/Acrobat, "
+        "`port-owner lease <agent>` for a port of your own (`port-owner who <port>` says whose a port is).")
 
 SEP = set(";&|()<>`")
 WRAPPERS = {"sudo": {"-u", "-g", "-h", "-p", "-c", "-r", "-t", "-d"}, "env": {"-u", "-s", "-c", "-p"}, "command": set(), "exec": {"-a"},
@@ -46,7 +48,9 @@ HUMAN_TOOLS = {"desk-browser.sh", "kill-chrome.sh", "human-chrome.sh"}
 CHROMES = {"google chrome", "chromium", "google chrome for testing", "google chrome canary", "google chrome beta"}
 ASSIGN = re.compile(r"^[a-z_][a-z0-9_]*=")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([a-z_][a-z0-9_]*)\1")
-CHROME_HINT = re.compile(r"chrom|\b92(2[2-9]|[3-9][0-9])\b")
+ASSIGNED_PORT = re.compile(r"(?:[a-z0-9_]*_)?port=(\d{2,5})")
+CONTAINERS = {"docker", "podman", "nerdctl"}
+PORT_KILLERS = {"kill-port", "fkill", "fkill-cli"}
 
 
 def _drop_heredocs(text):
@@ -91,7 +95,9 @@ def _simple_commands(text, depth=0):
 
 def _one(words, depth):
     words = [w for w in words if w != "$"]
+    assigns = []
     while words and ASSIGN.match(words[0]):
+        assigns.append(words[0])
         words = words[1:]
     found = []
     while words:
@@ -101,23 +107,28 @@ def _one(words, depth):
             if name == "xargs":
                 found.append(("xargs", list(words)))
             while words and (words[0].startswith("-") or ASSIGN.match(words[0])):
+                if ASSIGN.match(words[0]):
+                    assigns.append(words[0])
                 words = words[2:] if words[0] in takes else words[1:]
             continue
         if (name in SHELLS or name.startswith("python")) and len(words) > 1:
             rest = words[1:]
             for i, w in enumerate(rest):
                 if name in SHELLS and w.startswith("-") and "c" in w[1:] and not w.startswith("--") and i + 1 < len(rest) and depth < 4:
-                    return found + _simple_commands(rest[i + 1], depth + 1)
+                    return found + [("=", assigns)] * bool(assigns) + _simple_commands(rest[i + 1], depth + 1)
             i = next((i for i, w in enumerate(rest) if not w.startswith("-")), None)
             if i is not None and (rest[i].endswith((".sh", ".py")) or os.path.basename(rest[i]) in OWNER_TOOLS | HUMAN_TOOLS):
                 words = rest[i:]
                 name = os.path.basename(words[0])
             else:
+                found.append((name, words[1:]))       # python3 -m http.server 8000, bash with no script: judged as itself
                 break
         if name == "eval" and depth < 4:
-            return found + _simple_commands(" ".join(words[1:]), depth + 1)
+            return found + [("=", assigns)] * bool(assigns) + _simple_commands(" ".join(words[1:]), depth + 1)
         found.append((name, words[1:]))
         break
+    if assigns:
+        found.append(("=", assigns))                 # VAR=value before a command (or alone): the environment it gets
     return found
 
 
@@ -144,8 +155,63 @@ def verdict(command):
     if re.search(r"\blaunch_by=['\"]?human\b", low):          # export LAUNCH_BY=human; ./agent-launcher.sh
         return WHY["human"]
     killing = "kill" in names or any(n == "xargs" and "kill" in a for n, a in cmds)
-    if killing and (names & {"pgrep", "pidof"} or (names & {"ps", "lsof"} and CHROME_HINT.search(low))):
+    if killing and names & {"pgrep", "pidof", "ps", "lsof"}:
         return WHY["search-kill"]
+    if names & PORT_KILLERS or any(a and a[0] in PORT_KILLERS for n, a in cmds if n in ("npx", "pnpx", "bunx", "pnpm", "yarn")) \
+            or any(n == "fuser" and any(x.startswith("-") and "k" in x for x in a) for n, a in cmds):
+        return WHY["port-kill"]
+    return port_verdict(claimed_ports(low, cmds))
+
+
+def claimed_ports(low, cmds):
+    """the ports a command line asks to listen on: --port N, PORT=N (any *_PORT=N), docker -p HOST:…, http.server N"""
+    got = set()
+    for name, args in cmds:
+        if name in ("=", "export"):
+            got |= {m.group(1) for m in map(ASSIGNED_PORT.fullmatch, args) if m}
+            continue
+        for i, a in enumerate(args):
+            nxt = args[i + 1] if i + 1 < len(args) else ""
+            if a.startswith("--port="):
+                got.add(a.split("=", 1)[1])
+            elif a == "--port" and nxt.isdigit():
+                got.add(nxt)
+            elif name in CONTAINERS and a in ("-p", "--publish") and ":" in nxt:
+                parts = nxt.split(":")
+                got.add(parts[-2])                                   # [ip:]host:container → host
+            elif name.startswith("python") and a == "http.server" and nxt.isdigit():
+                got.add(nxt)
+    return sorted({int(p) for p in got if str(p).isdigit() and 1 <= int(p) <= 65535})
+
+
+def _port_owner():
+    import importlib.machinery
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "port-owner.py")
+    loader = importlib.machinery.SourceFileLoader("rainbow_port_owner", path)
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def port_verdict(ports):
+    """with RAINBOW_AGENT set: only that agent's ports. Without it: never a port another agent holds or owns"""
+    if not ports:
+        return None
+    try:
+        po = _port_owner()
+        reg, leases, humans = po.registry(), po.leases_of(), set(po.human_ports())
+    except Exception:
+        return None                                   # no registry here → nothing to compare against
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    for p in ports:
+        owner, why = po.owner_of(p, reg, leases, humans)
+        if me and owner != me:
+            whose = "kept for the human" if why == "reserved" else f"{owner}'s ({why})" if owner != "human" else "not in your range"
+            return f"port {p} is not {me}'s — it is {whose}. Take one of yours: `port-owner lease {me}`"
+        if not me and owner != "human":
+            return f"port {p} belongs to agent {owner} ({why})"
     return None
 
 

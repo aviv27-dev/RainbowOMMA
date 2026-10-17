@@ -6,6 +6,10 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `port-owner`: a port range per agent (`"ports"` in `browsers.json`, by default 100 ports from 41000), leases inside
+  it (`lease`, `env` for `eval`, `who`, `release`, `list`), and the usual dev ports kept for the human (`humanPorts`).
+  The guardrail refuses `kill-port`, `fuser -k` and `lsof`/`ps` piped into `kill`, and holds an agent started with
+  `RAINBOW_AGENT=<name>` to its own ports (`--port`, `PORT=`, `docker -p`, `http.server`).
 - Guardrail plug-ins for 17 agent frameworks (`docs/AGENTS.md`): Claude Code, Codex CLI, Gemini CLI, OpenCode, Kilo
   Code, Qwen Code, Factory Droid, Hermes Agent, Goose, Zed, GitHub Copilot (CLI and VS Code), Cursor, Cline, Continue,
   and drafts for Windsurf, Amp and OpenClaw. They share one hook, `bin/rainbowomma-guard`, which reads each

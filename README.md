@@ -107,6 +107,19 @@ written across it. One look at the screen tells you whose window is in front, an
 
 ![The human closes Bravo's browser; Bravo and its keep-alive script are refused; only the human reopens it](docs/images/owner-refusal.png)
 
+### 🔌 A port range for every agent
+The pain reported most often when several agents share one machine isn't the browser: it's two dev servers fighting
+over port 3000, and an agent that frees "its" port by killing whatever holds it. `port-owner` gives every agent its own
+range (by default 100 ports from 41000 up, set per agent with `"ports"`), leases a free one on request, and keeps the
+usual ports (3000, 5173, 8000, 8080…) for the human. The guardrail refuses `kill-port`, `fuser -k` and
+`lsof … | xargs kill`, and, for an agent started with `RAINBOW_AGENT=<name>`, any `--port`, `PORT=` or `docker -p` outside
+its own range.
+
+```bash
+eval "$(~/bin/port-owner env alpha --name web) npm run dev"   # PORT=41000 npm run dev
+~/bin/port-owner who 3000                                       # {"owner": "human", "why": "reserved", "listening": …}
+```
+
 ### 🛑 If in doubt, do nothing
 A port that answers but isn't the agent's own browser is reported as `blocked`, not "up". A profile open somewhere
 else is `profile-busy`. If the process table changes during a check, nothing is killed. Before recovering a hung
@@ -115,7 +128,7 @@ browser, the tool probes it three times over 30 seconds or more, so a Mac deep i
 ### 🤖 Made for agents to call
 Every command prints **one JSON answer** with stable status words, so an agent can branch on the result instead of
 guessing. Exit codes: `browser-owner` `0` ok · `2` refused (don't retry) · `1` failed or blocked (the `status` word says
-why); `office-owner` `0` done · `3` left open · `1` failure.
+why); `port-owner` `0` ok · `2` refused · `1` failed; `office-owner` `0` done · `3` left open · `1` failure.
 
 | Command | What it does |
 |---|---|
@@ -125,6 +138,7 @@ why); `office-owner` `0` done · `3` left open · `1` failure.
 | `browser-owner recover <agent> --by <who>` | restarts a hung browser after three probes; never one the human closed |
 | `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
+| `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
 | `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
 | `office-owner pdf --agent <a> <file.docx> [--force]` · `apps` · `list` · `sweep` | Word → PDF (never over an existing PDF without `--force`) · which apps run and who launched them · the leases · drop stale leases and quit idle apps it launched |
 
@@ -206,6 +220,7 @@ Optional: Microsoft Word for `office-owner pdf`, and Cua Driver for the colored 
 | `RAINBOW_HOME` | `~/.rainbowomma` | where logs, state and themes live (`install.sh --with-sweep` hands it to the sweep job) |
 | `OFFICE_WORD_DIR` | `$RAINBOW_HOME/word-convert` | the one folder Word converts in |
 | `BROWSER_OWNER_REGISTRY` | `browsers.json` next to the tools | the agent registry |
+| `RAINBOW_AGENT` | (unset) | set in an agent's environment: the guardrail then holds it to its own ports |
 
 ## Tests
 

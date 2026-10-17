@@ -1,5 +1,5 @@
 {
- "_doc": "One row per agent browser on the shared Mac. port = its CDP port (unique, 9222–9299) · profile = its own Chrome user-data-dir (no spaces) · color = #RRGGBB (the theme's frame) · label = the name written on the frame. Optional: state, log, launcher (+ launcherEnv), managedBy (another program owns it — report only), idleMinutes (its reaper may idle-stop it), noTheme.",
+ "_doc": "One row per agent browser on the shared Mac. port = its CDP port (unique, 9222–9299) · profile = its own Chrome user-data-dir (no spaces) · color = #RRGGBB (the theme's frame) · label = the name written on the frame. Optional: state, log, launcher (+ launcherEnv), managedBy (another program owns it — report only), idleMinutes (its reaper may idle-stop it), noTheme, ports (\"41000-41099\": its own port range for port-owner; default 100 ports from 41000 + 100 × (CDP port − 9222)). Top level: humanPorts — ports no agent may lease (default: 3000, 5173, 8000, 8080 and the other usual ones).",
  "agents": {
   "alpha": {
    "label": "Alpha",
