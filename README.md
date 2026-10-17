@@ -120,6 +120,17 @@ eval "$(~/bin/port-owner env alpha --name web) npm run dev"   # PORT=41000 npm r
 ~/bin/port-owner who 3000                                       # {"owner": "human", "why": "reserved", "listening": …}
 ```
 
+### 🧾 Every process has an owner
+Start an agent with `~/bin/as-agent alpha claude` (or set `RAINBOW_AGENT=alpha` in its settings) and every process it
+starts carries its name. `proc-owner whose <pid>` says whose a process is: an agent's (by that mark, an ancestor that
+carries it, or its Chrome), or yours. An agent stops only its own: `proc-owner kill <pid> --by alpha`, and the
+guardrail refuses a plain `kill` of another agent's or your process. When the session ends, `proc-owner reap` stops
+the servers it left behind and gives its ports back, but never its browser and never another session's servers.
+
+### 🔧 One MCP server for all of it
+`~/bin/rainbowomma-mcp --agent alpha` gives any MCP agent the same owners as tools: `lease_port`, `who_port`,
+`whose_process`, `stop_process`, `my_processes`, `browser_status`, `start_my_browser`, `recover_my_browser`.
+
 ### 🛑 If in doubt, do nothing
 A port that answers but isn't the agent's own browser is reported as `blocked`, not "up". A profile open somewhere
 else is `profile-busy`. If the process table changes during a check, nothing is killed. Before recovering a hung
@@ -128,7 +139,7 @@ browser, the tool probes it three times over 30 seconds or more, so a Mac deep i
 ### 🤖 Made for agents to call
 Every command prints **one JSON answer** with stable status words, so an agent can branch on the result instead of
 guessing. Exit codes: `browser-owner` `0` ok · `2` refused (don't retry) · `1` failed or blocked (the `status` word says
-why); `port-owner` `0` ok · `2` refused · `1` failed; `office-owner` `0` done · `3` left open · `1` failure.
+why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office-owner` `0` done · `3` left open · `1` failure.
 
 | Command | What it does |
 |---|---|
@@ -139,6 +150,8 @@ why); `port-owner` `0` ok · `2` refused · `1` failed; `office-owner` `0` done 
 | `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
+| `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back |
+| `as-agent <agent> <command…>` · `rainbowomma-mcp --agent <agent>` | run any agent as that agent (`RAINBOW_AGENT` + a session id; reaps on exit) · the owners as MCP tools |
 | `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
 | `office-owner pdf --agent <a> <file.docx> [--force]` · `apps` · `list` · `sweep` | Word → PDF (never over an existing PDF without `--force`) · which apps run and who launched them · the leases · drop stale leases and quit idle apps it launched |
 
@@ -220,7 +233,8 @@ Optional: Microsoft Word for `office-owner pdf`, and Cua Driver for the colored 
 | `RAINBOW_HOME` | `~/.rainbowomma` | where logs, state and themes live (`install.sh --with-sweep` hands it to the sweep job) |
 | `OFFICE_WORD_DIR` | `$RAINBOW_HOME/word-convert` | the one folder Word converts in |
 | `BROWSER_OWNER_REGISTRY` | `browsers.json` next to the tools | the agent registry |
-| `RAINBOW_AGENT` | (unset) | set in an agent's environment: the guardrail then holds it to its own ports |
+| `RAINBOW_AGENT` | (unset) | set in an agent's environment (`as-agent` does it): every process it starts is that agent's; the guardrail holds it to its own ports and processes |
+| `RAINBOW_SESSION` | (set by `as-agent`) | one session's id: `proc-owner reap --session` stops only that session's leftovers |
 
 ## Tests
 

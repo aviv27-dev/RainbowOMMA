@@ -1,7 +1,27 @@
 {
   "hooks": {
     "BeforeTool": [
-      { "matcher": "run_shell_command", "hooks": [{ "name": "rainbowomma", "type": "command", "command": "/Users/you/bin/rainbowomma-guard" }] }
+      {
+        "matcher": "run_shell_command",
+        "hooks": [
+          {
+            "name": "rainbowomma",
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-guard"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "name": "rainbowomma-reap",
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-session-end"
+          }
+        ]
+      }
     ]
   }
 }

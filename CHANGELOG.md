@@ -10,6 +10,15 @@ exit codes are an API and change only in a major version.
   it (`lease`, `env` for `eval`, `who`, `release`, `list`), and the usual dev ports kept for the human (`humanPorts`).
   The guardrail refuses `kill-port`, `fuser -k` and `lsof`/`ps` piped into `kill`, and holds an agent started with
   `RAINBOW_AGENT=<name>` to its own ports (`--port`, `PORT=`, `docker -p`, `http.server`).
+- `proc-owner`: whose a process is (`RAINBOW_AGENT` in its environment, an ancestor, or the agent's Chrome; else the
+  human's), `kill --by` that stops only your own, `list`, and `reap`, which stops a session's leftover servers and
+  returns its idle port leases. The guardrail refuses a plain `kill <pid>` of another agent's (or, for a named agent,
+  the human's) process.
+- `as-agent NAME COMMAND`: runs any agent as NAME (`RAINBOW_AGENT`, `RAINBOW_SESSION`) and reaps when it exits;
+  `rainbowomma-session-end`, the session-end hook for Claude Code, Gemini CLI, Factory Droid and Copilot CLI. The
+  Claude Code adapter names its agent (`"env": {"RAINBOW_AGENT": "alpha"}`).
+- `rainbowomma-mcp`: the owners as MCP tools (`lease_port`, `who_port`, `whose_process`, `stop_process`,
+  `my_processes`, `browser_status`, `start_my_browser`, `recover_my_browser`), standard library only.
 - Guardrail plug-ins for 17 agent frameworks (`docs/AGENTS.md`): Claude Code, Codex CLI, Gemini CLI, OpenCode, Kilo
   Code, Qwen Code, Factory Droid, Hermes Agent, Goose, Zed, GitHub Copilot (CLI and VS Code), Cursor, Cline, Continue,
   and drafts for Windsurf, Amp and OpenClaw. They share one hook, `bin/rainbowomma-guard`, which reads each
@@ -54,6 +63,8 @@ exit codes are an API and change only in a major version.
 - Icon text shrinks to fit the circle.
 
 ### Known limitations
+- `proc-owner` reads a process's environment with `ps -E` on macOS; that, `as-agent` and the session-end hooks are
+  tested with fakes and on Linux, not yet with each real agent.
 - `cua-color-proxy` is tested against a fake driver only; the left-to-right frame placement is not yet measured on a
   real Mac.
 

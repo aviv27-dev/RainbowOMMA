@@ -67,6 +67,10 @@ M = {
     "po.not_yours": {"en": "port {port} is outside {agent}'s range {range}", "he": "פורט {port} מחוץ לטווח של {agent}‏ ({range})"},
     "po.taken": {"en": "port {port} is taken ({who})", "he": "פורט {port} תפוס ({who})"},
     "po.full": {"en": "no free port left in {agent}'s range {range}", "he": "לא נשאר פורט פנוי בטווח של {agent}‏ ({range})"},
+    # ── proc-owner ──
+    "pc.no_process": {"en": "no process {pid}", "he": "אין תהליך {pid}"},
+    "pc.protected": {"en": "process {pid} is never stopped from here", "he": "את תהליך {pid} לא עוצרים מכאן"},
+    "pc.not_yours": {"en": "process {pid} is {owner}'s (by {via}) — {by} may stop only its own", "he": "תהליך {pid} שייך ל-{owner} (לפי {via}) — {by} עוצר רק את שלו"},
     # ── office-owner / agent-office ──
     "ao.no_file": {"en": "no such file: {path}", "he": "אין קובץ: {path}"},
     "ao.bad_app": {"en": "unsupported app — word / excel / acrobat / preview", "he": "אפליקציה לא נתמכת — word / excel / acrobat / preview"},

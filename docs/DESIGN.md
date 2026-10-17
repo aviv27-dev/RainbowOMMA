@@ -17,6 +17,9 @@
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · human-theme`, `--by WHO` |
 | `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`); top-level `humanPorts` |
 | `bin/port-owner(.py)` | every agent's ports: a range per agent (`ports` in the registry, default 41000 + 100 × (CDP port − 9222)), leases inside it, `humanPorts` never leased: `lease · env · who · release · list` — §8 |
+| `bin/proc-owner(.py)` | whose a process is (`RAINBOW_AGENT` in its environment, an ancestor that carries it, or the agent's Chrome tree; else the human's): `whose · kill --by · list · reap` — §9 |
+| `bin/as-agent`, `bin/rainbowomma-session-end` | run any agent as a named agent (`RAINBOW_AGENT` + `RAINBOW_SESSION`, reap on exit) · the session-end hook adapters run — §9 |
+| `bin/rainbowomma-mcp(.py)` | the owners as MCP tools for any MCP agent (stdio, standard library only) — §10 |
 | `bin/theme-frame.js` | draws the agent's name onto the theme's frame image (AppKit via JXA — no image library) |
 | `bin/office-owner` = `bin/agent-office(.py)` | document leases in Word/Excel/Acrobat/Preview, real-Word → PDF, quitting only the apps it launched: `open · close · renew · pdf · sweep · list · apps` |
 | `bin/kill-chrome.sh` | the human's broom: closes their Chrome + headless leftovers, spares every agent browser; `--all` goes through the owner |
@@ -154,4 +157,26 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   `RAINBOW_AGENT=<name>` in the agent's environment, `--port N`, `--port=N`, `VAR_PORT=N`, `docker -p HOST:…` and
   `python -m http.server N` must name a port in that agent's range (or leased to it); without it, only ports another
   agent owns or holds are refused. A port that appears only in text (a commit message, an `echo`) is not a claim.
+
+## 9. proc-owner — every process has an owner
+- **Who.** `RAINBOW_AGENT=<name>` in a process's environment (Linux: `/proc/<pid>/environ`; macOS: `ps -E`, same user
+  only) makes it that agent's, and so does an ancestor that carries it (a child whose environment was cleared) or being
+  in the agent's Chrome tree (browser-owner's). Everything else is the human's. Set the name where the agent starts:
+  `as-agent alpha claude`, or the framework's own env setting (Claude Code `"env"`).
+- **Stop only your own.** `kill PID --by AGENT` sends TERM (`--force`: KILL after 5 s) only when the process is that
+  agent's; `--by human` may stop any; pid 1 and the caller itself never. The guard applies the same rule to a plain
+  `kill <pid>`: with `RAINBOW_AGENT` set, only the agent's own; without it, never another agent's. `kill $VAR` and
+  `kill %1` can't be resolved from the text and are let through.
+- **After a session.** `reap AGENT` stops the agent's servers that outlived their session: processes of that agent,
+  re-parented to launchd (ppid 1) and listening on a port. Never its Chrome, never the caller or its ancestors (the
+  agent running the hook), and with `--session ID` only that session's (`RAINBOW_SESSION`, set by `as-agent`). Then
+  the agent's leases nobody listens on go back. `as-agent` reaps on exit; frameworks with a session-end hook run
+  `rainbowomma-session-end`, which does nothing without `RAINBOW_AGENT`.
+
+## 10. rainbowomma-mcp — the owners as MCP tools
+- One stdio MCP server per agent (`--agent NAME` or `RAINBOW_AGENT`), standard library only, newline-delimited JSON-RPC:
+  `initialize` (answers the client's protocol version), `tools/list`, `tools/call`, `ping`.
+- Each tool runs the same command-line owner as the agent (`RAINBOW_AGENT` set) and returns its one JSON answer as
+  `structuredContent` and text; a non-zero exit (refused or failed) is `isError`. Acting tools need the agent name;
+  `who_port` and `whose_process` work without it.
 

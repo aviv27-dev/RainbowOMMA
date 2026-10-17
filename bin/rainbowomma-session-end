@@ -1,0 +1,8 @@
+#!/bin/bash
+# The session-end hook every adapter can run: the agent's servers left behind stop, its unused port leases go back
+# (proc-owner reap). Does nothing for an agent started without RAINBOW_AGENT. Never blocks the agent: always exit 0.
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cat >/dev/null 2>&1 || true                      # the framework's hook payload — not needed
+[ -n "${RAINBOW_AGENT:-}" ] || exit 0
+"$DIR/proc-owner" reap "$RAINBOW_AGENT" ${RAINBOW_SESSION:+--session "$RAINBOW_SESSION"} >/dev/null 2>&1
+exit 0

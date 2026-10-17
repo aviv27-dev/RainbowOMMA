@@ -1,0 +1,19 @@
+#!/bin/bash
+# as-agent NAME COMMAND [ARGS…] — start any agent (or any command) as agent NAME: RAINBOW_AGENT=NAME and a fresh
+# RAINBOW_SESSION in its environment, which every process it starts inherits. The guardrail then holds it to its own
+# ports and processes, and when it exits, the servers it left behind stop and its port leases go back (proc-owner reap).
+#   as-agent alpha claude          as-agent bravo codex          as-agent charlie hermes
+set -u
+DIR="$(cd "$(dirname "$0")" && pwd)"
+NAME="${1:-}"; shift || true
+if [ -z "$NAME" ] || [ $# -eq 0 ]; then echo "usage: as-agent NAME COMMAND [ARGS…]" >&2; exit 2; fi
+case " $("$DIR/browser-owner" names 2>/dev/null) " in
+  *" $NAME "*) ;;
+  *) echo "as-agent: $NAME is not an agent in browsers.json" >&2; exit 2 ;;
+esac
+export RAINBOW_AGENT="$NAME"
+export RAINBOW_SESSION="${NAME}-$(date +%s)-$$"
+"$@"
+RC=$?
+"$DIR/proc-owner" reap "$NAME" --session "$RAINBOW_SESSION" >/dev/null 2>&1
+exit $RC

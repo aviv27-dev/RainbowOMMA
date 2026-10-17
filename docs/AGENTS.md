@@ -45,7 +45,7 @@ shape; please report anything that doesn't work on your version.
 
 ## Before you start
 
-`install.sh` puts `rainbowomma-guard` and `cua-color-proxy` in `~/bin`. The adapter files use the placeholder path
+`install.sh` puts `rainbowomma-guard`, `cua-color-proxy`, `as-agent`, `rainbowomma-session-end` and `rainbowomma-mcp` in `~/bin`. The adapter files use the placeholder path
 `/Users/you/bin/…`; copy them with your own home folder filled in, for example:
 
 ```bash
@@ -55,6 +55,24 @@ sed "s|/Users/you|$HOME|g" adapters/codex/hooks.json > ~/.codex/hooks.json
 If the target file already exists, merge the keys into it instead of overwriting it.
 
 Every MCP snippet below registers the colored cursor for agent `alpha`; use the agent's name from `browsers.json`.
+
+## Name the agent, give it the owners as tools, clean up after it
+
+These three work for every agent, whatever its framework:
+
+- **Name it.** Start the agent as a named agent, e.g. `~/bin/as-agent alpha claude`, `~/bin/as-agent bravo codex`.
+  Every process it starts then carries `RAINBOW_AGENT=alpha`. The guardrail holds it to its own ports (`port-owner`)
+  and its own processes (`proc-owner`), and when it exits, the servers it left behind stop and its ports go back.
+  Without `as-agent`, set `RAINBOW_AGENT` in the framework's environment where it has one (Claude Code: `"env"` in
+  `settings.json`, as in the adapter; Codex: `[shell_environment_policy] set = { RAINBOW_AGENT = "alpha" }` in
+  `config.toml`).
+- **Clean up at session end.** Claude Code, Gemini CLI, Factory Droid and Copilot CLI adapters run
+  `~/bin/rainbowomma-session-end` from their session-end hook (it does nothing for an agent without `RAINBOW_AGENT`).
+  For the others, `as-agent` does the same when the agent exits.
+- **The owners as MCP tools** (`lease_port`, `who_port`, `whose_process`, `stop_process`, `my_processes`,
+  `browser_status`, `start_my_browser`, `recover_my_browser`): register `~/bin/rainbowomma-mcp --agent alpha` the
+  same way as the cursor proxy below, e.g.
+  `claude mcp add-json --scope user rainbowomma "{\"command\":\"$HOME/bin/rainbowomma-mcp\",\"args\":[\"--agent\",\"alpha\"]}"`.
 
 ## Claude Code
 - Guardrail: merge [`adapters/claude-code/settings.json`](../adapters/claude-code/settings.json) into
