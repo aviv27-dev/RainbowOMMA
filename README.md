@@ -6,6 +6,7 @@
 </p>
 
 <h1 align="center">One Mac, Many Agents</h1>
+<p align="center"><b>RainbowOMMA</b> · <b>OMMA</b> = <b>O</b>ne <b>M</b>ac, <b>M</b>any <b>A</b>gents</p>
 
 <p align="center">
   <a href="https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/aviv27-dev/RainbowOMMA/actions/workflows/tests.yml/badge.svg"></a>
