@@ -554,7 +554,7 @@ r = subprocess.run(["bash", installer, "--with-sweep"], capture_output=True, tex
 ib = fake_home / "bin"
 plist = fake_home / "Library" / "LaunchAgents" / "com.rainbowomma.agent-office-sweep.plist"
 check("install: the tools land together in ~/bin, executable, with the message catalog",
-      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "port-owner", "office-owner", "agent-office", "kill-chrome.sh", "rainbowomma-guard", "cua-color-proxy"))
+      r.returncode == 0 and all(os.access(ib / n, os.X_OK) for n in ("browser-owner", "port-owner", "proc-owner", "as-agent", "rainbowomma-mcp", "rainbowomma-session-end", "office-owner", "agent-office", "kill-chrome.sh", "rainbowomma-guard", "cua-color-proxy"))
       and (ib / "rainbow_i18n.py").exists(), r.stdout + r.stderr)
 check("install: browsers.json is created from the example", json.loads((ib / "browsers.json").read_text())["agents"].keys() >= {"alpha"})
 check("install: the state folders exist", all((fake_home / ".rainbowomma" / d).is_dir() for d in ("logs", "state", "word-convert")))
@@ -905,6 +905,129 @@ check("guard without RAINBOW_AGENT: only another agent's port is refused (its ra
 port_killers = ["npx kill-port 3000", "kill-port 41100", "fuser -k 3000/tcp", "lsof -ti :41100 | xargs kill -9"]
 check("guard: freeing a port by killing whoever holds it is refused (kill-port, fuser -k, lsof | xargs kill)",
       all(as_agent(c, "alpha") == 2 for c in port_killers), [c for c in port_killers if as_agent(c, "alpha") != 2])
+
+# ── proc-owner: whose process this is, and stopping only your own ──
+os.environ["RAINBOW_HOME"] = str(tmp / "po-home")
+pc = load("proc-owner.py")
+os.environ.pop("RAINBOW_HOME")
+pc.PO.REGISTRY = REG
+listening.clear()
+pc.PO.LISTENERS = lambda: dict(listening)
+pc.PO.BINDABLE = lambda port: port not in listening
+ALPHA_CHROME = f"{CH} --user-data-dir={reg['alpha']['profile']} --remote-debugging-port=9222"
+prows = [(1, 0, "launchd"), (500, 1, "/bin/zsh"), (510, 500, "claude"), (511, 510, "npm run dev"), (512, 511, "node server.js"),
+         (520, 1, "node orphan.js"), (530, 1, "node bravo-api.js"), (540, 500, "vim notes.txt"), (100, 1, ALPHA_CHROME), (101, 100, HELPER),
+         (550, 1, "python3 -m http.server 41003"), (560, 1, "tail -f log")]
+pc.PROCESSES = lambda: list(prows)
+pc.MARKERS = lambda: {510: "alpha", 520: "alpha", 530: "bravo", 550: "alpha", 560: "alpha"}
+sent = []
+pc.KILL = lambda pid, sig: sent.append((pid, sig))
+pc.ALIVE = lambda pid: False
+w = {p: pc.cmd_whose(p)[1] for p in (510, 512, 101, 530, 540)}
+check("whose: by RAINBOW_AGENT (env) · by an ancestor that carries it · by the agent's Chrome tree · another agent · the human's",
+      [(w[p]["agent"], w[p]["via"]) for p in (510, 512, 101, 530, 540)]
+      == [("alpha", "env"), ("alpha", "ancestor"), ("alpha", "browser"), ("bravo", "env"), ("human", "none")], w)
+check("whose: no such process → a clear failure", pc.cmd_whose(99999)[0] == 1)
+code, out = pc.cmd_kill(530, "alpha")
+check("kill: Alpha may not stop Bravo's server", code == 2 and out["status"] == "refused" and not sent, out)
+code, out = pc.cmd_kill(540, "alpha")
+check("kill: …nor the human's editor", code == 2 and not sent, out)
+code, out = pc.cmd_kill(512, "alpha")
+check("kill: Alpha stops its own (a child of its session)", code == 0 and out["status"] == "stopped" and sent == [(512, 15)], out)
+sent.clear()
+code, out = pc.cmd_kill(530, "human")
+check("kill --by human: the human may stop any process", code == 0 and sent == [(530, 15)], out)
+sent.clear()
+check("kill: pid 1 is never stopped from here", pc.cmd_kill(1, "human")[0] == 2 and not sent)
+listening.update({41001: "node (pid 520)", 41003: "Python (pid 550)", 41101: "node (pid 530)"})
+code, out = pc.cmd_list("alpha")
+check("list: Alpha's processes, with the ports they listen on",
+      {x["pid"] for x in out["processes"]} == {510, 511, 512, 520, 550, 560, 100, 101}
+      and next(x for x in out["processes"] if x["pid"] == 520)["ports"] == [41001], out)
+pc.PO.cmd_release("alpha", every=True)
+pc.PO.cmd_lease("alpha", "web", prefer=41007)
+code, out = pc.cmd_reap("alpha", dry=True)
+check("reap --dry-run: names Alpha's orphaned servers (520, 550) and its idle lease, stops nothing",
+      out["status"] == "would-reap" and sorted(out["processes"]) == [520, 550] and out["leases"] == [41007] and not sent, out)
+code, out = pc.cmd_reap("alpha")
+check("reap: stops only Alpha's orphaned servers — never its live session (511/512), its Chrome, a non-server (560) or Bravo's (530)",
+      code == 0 and sorted(p for p, _ in sent) == [520, 550] and out["released"] == [41007]
+      and not any(x["agent"] == "alpha" for x in pc.PO.leases_of()), (out, sent))
+sent.clear()
+_gp = os.getpid
+prows.append((os.getpid(), 1, "proc-owner reap"))
+pc.MARKERS = lambda: {510: "alpha", 520: "alpha", 530: "bravo", 550: "alpha", 560: "alpha", os.getpid(): "alpha"}
+listening[41009] = f"Python (pid {os.getpid()})"
+code, out = pc.cmd_reap("alpha", dry=True)
+check("reap: never the process running it, nor its ancestors (the agent's own session-end hook)", os.getpid() not in out["processes"], out)
+listening.clear()
+# the guard's `kill <pid>` check, against real processes (RAINBOW_AGENT in their environment)
+kids = {who: subprocess.Popen(["sleep", "60"], env=dict(os.environ, **({"RAINBOW_AGENT": who} if who != "human" else {})))
+        for who in ("alpha", "bravo", "human")}
+os.environ.pop("RAINBOW_AGENT", None)
+try:
+    time.sleep(0.3)
+    got = {(me, who): as_agent(f"kill {kids[who].pid}", me) for me in ("alpha", None) for who in ("alpha", "bravo", "human")}
+finally:
+    for k in kids.values():
+        k.kill()
+check("guard as Alpha: `kill <pid>` only for Alpha's own process — Bravo's and the human's are refused",
+      got[("alpha", "alpha")] == 0 and got[("alpha", "bravo")] == 2 and got[("alpha", "human")] == 2, got)
+check("guard without RAINBOW_AGENT: another agent's process is refused, the rest is let through",
+      got[(None, "bravo")] == 2 and got[(None, "alpha")] == 2 and got[(None, "human")] == 0, got)
+
+# ── after a session: reap, the session-end hook, as-agent ──
+listening.clear(); listening.update({41001: "node (pid 520)", 41003: "Python (pid 550)"})
+pc.MARKERS = lambda: {510: "alpha", 520: "alpha", 530: "bravo", 550: "alpha", 560: "alpha"}
+pc.SESSIONS = lambda: {520: "alpha-1", 550: "alpha-2"}
+sent.clear()
+code, out = pc.cmd_reap("alpha", session="alpha-1")
+check("reap --session: only the servers that session left behind — another live Alpha session's server stays",
+      code == 0 and [p for p, _ in sent] == [520], (out, sent))
+listening.clear(); sent.clear()
+senv = dict(genv, BROWSER_OWNER_REGISTRY=str(REG))
+senv.pop("RAINBOW_AGENT", None)
+r = subprocess.run(["bash", str(HERE / "rainbowomma-session-end")], input="{}", capture_output=True, text=True, env=senv)
+check("session-end hook: an agent without RAINBOW_AGENT → nothing to do, never in the way (exit 0, silent)", r.returncode == 0 and not r.stdout, r)
+r = subprocess.run(["bash", str(HERE / "as-agent"), "alpha", "bash", "-c", 'echo "$RAINBOW_AGENT $RAINBOW_SESSION"; exit 3'],
+                   capture_output=True, text=True, env=senv)
+check("as-agent: the command runs as alpha with its own session id, and its exit code comes back",
+      r.returncode == 3 and re.fullmatch(r"alpha alpha-\d+-\d+", r.stdout.strip()), (r.returncode, r.stdout, r.stderr))
+r = subprocess.run(["bash", str(HERE / "as-agent"), "ghost", "true"], capture_output=True, text=True, env=senv)
+check("as-agent: an agent that is not in browsers.json is refused", r.returncode == 2 and "not an agent" in r.stderr, r.stderr)
+ends = {"claude-code/settings.json": "SessionEnd", "gemini-cli/settings.json": "SessionEnd", "factory-droid/hooks.json": "SessionEnd",
+        "copilot/copilot-cli.json": "sessionEnd"}
+check("adapters: Claude Code, Gemini CLI, Factory Droid and Copilot CLI run the session-end hook",
+      all("rainbowomma-session-end" in json.dumps(json.loads((AD / f).read_text())["hooks"][k]) for f, k in ends.items()))
+check("adapters: the Claude Code adapter names the agent (RAINBOW_AGENT) for the guard and the reaper",
+      json.loads((AD / "claude-code" / "settings.json").read_text())["env"]["RAINBOW_AGENT"] == "alpha")
+
+# ── rainbowomma-mcp: the owners as MCP tools ──
+def mcp(msgs, *args, env=None):
+    r = subprocess.run(["bash", str(HERE / "rainbowomma-mcp"), *args], input="".join(json.dumps(m) + "\n" for m in msgs),
+                       capture_output=True, text=True, timeout=60, env=env or senv)
+    return [json.loads(x) for x in r.stdout.splitlines() if x.strip()]
+init = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}
+got = mcp([init, {"jsonrpc": "2.0", "method": "notifications/initialized"}, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+           {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "lease_port", "arguments": {"name": "mcp-web"}}},
+           {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "who_port", "arguments": {"port": 3000}}},
+           {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "lease_port", "arguments": {"prefer": 8080}}},
+           {"jsonrpc": "2.0", "id": 5, "method": "nope"}], "--agent", "alpha")
+names = [x["name"] for x in got[1]["result"]["tools"]]
+check("mcp: initialize answers the client's protocol version; the notification gets no reply",
+      [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == "2025-06-18", got[:1])
+check("mcp: the tools — ports, processes, the agent's own browser",
+      {"lease_port", "release_port", "who_port", "whose_process", "stop_process", "my_processes", "browser_status", "start_my_browser",
+       "recover_my_browser"} == set(names), names)
+lp = got[2]["result"]
+check("mcp lease_port: a port from Alpha's own range, as structured JSON", not lp["isError"] and 41000 <= lp["structuredContent"]["port"] <= 41099, lp)
+check("mcp who_port: 3000 is the human's", got[3]["result"]["structuredContent"]["owner"] == "human")
+check("mcp: a refusal comes back as isError with its status word and reason",
+      got[4]["result"]["isError"] and got[4]["result"]["structuredContent"]["status"] == "refused", got[4])
+check("mcp: an unknown method is a JSON-RPC error", got[5]["error"]["code"] == -32601)
+got = mcp([init, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "stop_process", "arguments": {"pid": 1}}}])
+check("mcp without an agent name: acting tools are refused (only the who/whose questions work)",
+      got[1]["result"]["isError"] and "agent name" in got[1]["result"]["structuredContent"]["why"], got)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

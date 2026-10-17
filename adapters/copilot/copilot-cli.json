@@ -1,6 +1,19 @@
 {
   "version": 1,
   "hooks": {
-    "preToolUse": [{ "type": "command", "bash": "/Users/you/bin/rainbowomma-guard", "timeoutSec": 10 }]
+    "preToolUse": [
+      {
+        "type": "command",
+        "bash": "/Users/you/bin/rainbowomma-guard",
+        "timeoutSec": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "/Users/you/bin/rainbowomma-session-end",
+        "timeoutSec": 30
+      }
+    ]
   }
 }

@@ -160,7 +160,7 @@ def verdict(command):
     if names & PORT_KILLERS or any(a and a[0] in PORT_KILLERS for n, a in cmds if n in ("npx", "pnpx", "bunx", "pnpm", "yarn")) \
             or any(n == "fuser" and any(x.startswith("-") and "k" in x for x in a) for n, a in cmds):
         return WHY["port-kill"]
-    return port_verdict(claimed_ports(low, cmds))
+    return port_verdict(claimed_ports(low, cmds)) or kill_verdict(cmds)
 
 
 def claimed_ports(low, cmds):
@@ -185,14 +185,56 @@ def claimed_ports(low, cmds):
 
 
 def _port_owner():
+    return _load_beside("rainbow_port_owner", "port-owner.py")
+
+
+def _load_beside(modname, file):
     import importlib.machinery
     import importlib.util
-    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "port-owner.py")
-    loader = importlib.machinery.SourceFileLoader("rainbow_port_owner", path)
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), file)
+    loader = importlib.machinery.SourceFileLoader(modname, path)
     spec = importlib.util.spec_from_loader(loader.name, loader)
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
+
+
+def killed_pids(cmds):
+    """the literal process ids a plain `kill` names (signals and $VARIABLES are skipped)"""
+    got, skip = [], False
+    for name, args in cmds:
+        if name != "kill":
+            continue
+        for a in args:
+            if skip:
+                skip = False
+            elif a in ("-s", "-n"):
+                skip = True
+            elif a.isdigit():
+                got.append(int(a))
+    return got
+
+
+def kill_verdict(cmds):
+    """with RAINBOW_AGENT set: only that agent's own processes. Without it: never another agent's"""
+    pids = killed_pids(cmds)
+    if not pids:
+        return None
+    try:
+        pc = _load_beside("rainbow_proc_owner", "proc-owner.py")
+        reg = pc.registry()
+        _, own = pc.ownership(reg)
+    except Exception:
+        return None
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    for pid in pids:
+        owner, via = own.get(pid, ("human", "none"))
+        if pid not in own:
+            continue                                  # no such process: kill fails on its own
+        if (me and owner != me) or (not me and owner != "human"):
+            hint = f"`proc-owner kill <pid> --by {me}` stops your own" if me else "`proc-owner whose <pid>` says whose a process is"
+            return f"process {pid} is {owner}'s (by {via}), not yours — {hint}"
+    return None
 
 
 def port_verdict(ports):

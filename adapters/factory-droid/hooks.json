@@ -1,7 +1,27 @@
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Execute", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard", "timeout": 10 }] }
+      {
+        "matcher": "Execute",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-guard",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-session-end",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }
