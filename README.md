@@ -146,6 +146,18 @@ browser is up), and per agent "open / bring to front" and "close". **Pause all a
 answers computer-use actions with an error, until you resume. Nothing is killed. The latest receipts are in the menu
 too.
 
+### 🖐 One screen, one driver — and you can take it back
+The keyboard, the mouse and the window in front are one resource. An agent that drives the foreground (AppleScript
+keystrokes, `cliclick`, a foreground computer-use tool) holds a short lease on the screen with every action, so two
+agents never type into each other's windows. Cua, which drives apps in the background, doesn't need it.
+`screen-owner takeover` (or "Take over the screen" in the menu bar) stops every agent's clicks and keystrokes,
+background ones too, until you hand it back.
+
+### ✋ Nothing irreversible without you
+Sending through Messages or Mail is refused until you approve it. The agent asks with `rainbowomma-approve ask` (or the
+MCP tool `ask_human_approval`): a dialog shows you exactly what will be sent, and "Allow once" lets that exact command
+run once within 5 minutes. While the dialog is up, no agent may click, so it can't approve itself.
+
 ### 🔒 Sensitive sites need you there
 List them as `"sensitiveSites": ["bank.example", "*.gov.example"]` at the top of `browsers.json`. An agent's browser tool
 (Chrome DevTools MCP, Playwright MCP, any `navigate`/`open` tool) may go there only while you're at the Mac: you used the
@@ -184,6 +196,8 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
 | `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back |
+| `screen-owner take <agent> [--minutes M] [--wait S]` · `release` · `takeover` · `handback` · `who` | the screen lease: an agent holds it to drive the foreground; the human takes it over and hands it back |
+| `rainbowomma-approve ask --agent A --why … -- <command>` · `list` | the human allows one exact irreversible command (Messages, Mail) once |
 | `rainbowomma-pause on\|off\|toggle\|status` | the stop button for all agents (also in the menu bar, ⌘⌥⌃P) |
 | `receipts [--agent A] [--tool T] [--since ISO] [-n N]` | what the owners did and refused, oldest first |
 | `as-agent <agent> <command…>` · `rainbowomma-mcp --agent <agent>` | run any agent as that agent (`RAINBOW_AGENT` + a session id; reaps on exit) · the owners as MCP tools |

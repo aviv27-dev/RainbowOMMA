@@ -1038,7 +1038,7 @@ check("mcp: initialize answers the client's protocol version; the notification g
       [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == "2025-06-18", got[:1])
 check("mcp: the tools — ports, processes, the agent's own browser",
       {"lease_port", "release_port", "who_port", "whose_process", "stop_process", "my_processes", "browser_status", "start_my_browser",
-       "recover_my_browser"} == set(names), names)
+       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval"} == set(names), names)
 lp = got[2]["result"]
 check("mcp lease_port: a port from Alpha's own range, as structured JSON", not lp["isError"] and 41000 <= lp["structuredContent"]["port"] <= 41099, lp)
 check("mcp who_port: 3000 is the human's", got[3]["result"]["structuredContent"]["owner"] == "human")
@@ -1427,6 +1427,59 @@ r = subprocess.run(["bash", installer, "--with-menubar"], capture_output=True, t
 plug = fake_home / ".rainbowomma" / "swiftbar" / "rainbowomma.10s.sh"
 check("install --with-menubar: the SwiftBar plugin, pointing at the installed menu-bar tool",
       r.returncode == 0 and plug.exists() and "rainbowomma-menubar" in plug.read_text() and os.access(plug, os.X_OK), r.stdout + r.stderr)
+
+# ── wave C: the screen lease, the human's takeover, approval before sending ──
+cenv = dict(genv, RAINBOW_HOME=str(tmp / "screen-home"))
+def so(*args, idle=60):
+    r = subprocess.run(["bash", str(HERE / "screen-owner"), *args], capture_output=True, text=True, env=dict(cenv, RAINBOW_TEST_IDLE_S=str(idle)))
+    return r.returncode, json.loads(r.stdout)
+def g(ev, agent=None, idle=60):
+    e = dict(cenv, RAINBOW_TEST_IDLE_S=str(idle), **({"RAINBOW_AGENT": agent} if agent else {}))
+    return subprocess.run([sys.executable, "-I", guard], input=json.dumps(ev), capture_output=True, text=True, env=e)
+check("screen: Alpha takes the screen; Bravo is refused while Alpha holds it; the same agent renews",
+      so("take", "alpha")[1]["status"] == "taken" and so("take", "bravo")[0] == 2 and so("take", "alpha")[0] == 0)
+check("screen: no agent takes the screen while the human is typing", so("release", "alpha")[1]["status"] == "released"
+      and so("take", "bravo", idle=1)[1]["why"].startswith("the human"))
+keys = {"tool_input": {"command": "osascript -e 'tell application \"System Events\" to keystroke \"x\"'"}}
+cua_click = {"tool_name": "mcp__cua__click", "tool_input": {}}
+fg_click = {"tool_name": "mcp__computer-use__left_click", "tool_input": {}}
+a1 = g(keys, "alpha"); b1 = g(fg_click, "bravo"); b2 = g(cua_click, "bravo")
+check("screen: a foreground action takes a short lease by itself — Bravo's foreground click waits, its Cua click (background) doesn't",
+      a1.returncode == 0 and b1.returncode == 2 and "alpha" in b1.stderr and b2.returncode == 0, (a1.stderr, b1.stderr, b2.stderr))
+check("screen: the human's takeover stops every agent's GUI action, background ones too; handback lets them go on",
+      so("takeover")[1]["status"] == "human" and g(cua_click, "bravo").returncode == 2 and g(keys, "alpha").returncode == 2
+      and "took over" in g(cua_click, "bravo").stderr and so("handback")[1]["status"] == "released" and g(cua_click, "bravo").returncode == 0)
+so("takeover")
+_root = pm.ROOT; pm.ROOT = tmp / "screen-home"
+held = pm.paused()
+so("handback"); free = pm.paused(); pm.ROOT = _root
+check("screen: the cursor proxy holds actions while the human has taken over", held and not free)
+# approval before sending
+send = "osascript -e 'tell application \"Messages\" to send \"on my way\" to buddy \"+15550100\"'"
+mail = "osascript -e 'tell application \"Mail\" to make new outgoing message with properties {subject:\"x\"}'"
+def appr(answer, *cmd):
+    r = subprocess.run(["bash", str(HERE / "rainbowomma-approve"), "ask", "--agent", "alpha", "--why", "tell the client", "--", *cmd],
+                       capture_output=True, text=True, env=dict(cenv, RAINBOW_TEST_APPROVE=answer))
+    return r.returncode, json.loads(r.stdout)
+gs = lambda c: g({"tool_input": {"command": c}}, "alpha").returncode
+check("send: Messages and Mail through AppleScript are refused without the human's approval", gs(send) == 2 and gs(mail) == 2)
+check("send: the human says no → refused (exit 2), and the command stays refused", appr("no", "osascript", "-e", 'tell application "Messages" to send "on my way" to buddy "+15550100"')[0] == 2
+      and gs(send) == 2)
+code, out = appr("yes", "osascript", "-e", 'tell application "Messages" to send "on my way" to buddy "+15550100"')
+check("send: the human allows it once → exactly that command runs once; the next time it needs a new approval",
+      code == 0 and out["status"] == "approved" and gs(send) == 0 and gs(send) == 2, out)
+code, out = appr("yes", "osascript", "-e", 'tell application "Messages" to send "on my way" to buddy "+15550100"')
+check("send: an approval covers only that exact command — another message or recipient is still refused",
+      gs(send.replace("on my way", "something else")) == 2)
+pend = tmp / "screen-home" / "state" / "approval-pending.json"; pend.write_text("{}")
+check("send: while an approval dialog is up, no agent clicks or types (it could click 'Allow' itself)",
+      g(cua_click, "bravo").returncode == 2 and "approval" in g(cua_click, "bravo").stderr)
+pend.unlink()
+os.environ["RAINBOW_LANG"] = "en"
+txt_h = mbm.menu(ag_rows, False, [], {"holder": "human"}); txt_a = mbm.menu(ag_rows, False, [], {"holder": "alpha"})
+os.environ["RAINBOW_LANG"] = "he"
+check("menu bar: take over the screen, or hand it back while you hold it; who holds it now",
+      "param1=handback" in txt_h and "param1=takeover" in txt_a and "screen: alpha" in txt_a, (txt_h[-300:], txt_a[-300:]))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

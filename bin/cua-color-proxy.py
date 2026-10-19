@@ -83,7 +83,19 @@ def wait_for_human(name, sleep=time.sleep):
 
 
 def paused():
-    return (ROOT / "state" / "paused.json").exists()
+    """the human paused all agents, took over the screen, or is answering an approval dialog"""
+    if (ROOT / "state" / "paused.json").exists():
+        return True
+    try:                                             # an approval dialog is up: the agent must not click it itself
+        if time.time() - (ROOT / "state" / "approval-pending.json").stat().st_mtime < 150:
+            return True
+    except OSError:
+        pass
+    try:
+        d = json.loads((ROOT / "state" / "screen.json").read_text(encoding="utf-8"))
+        return d.get("holder") == "human" and float(d.get("until") or 0) > time.time()
+    except (OSError, ValueError):
+        return False
 
 
 def held_by_pause(name, sleep=time.sleep):
@@ -222,7 +234,8 @@ class Proxy:
         if not held_by_pause(params.get("name")):
             return False
         reply = {"jsonrpc": "2.0", "id": msg["id"], "result": {"isError": True, "content": [
-            {"type": "text", "text": "The human paused all agents (RainbowOMMA). Nothing was done. Wait for them to resume, or ask them."}]}}
+            {"type": "text", "text": "The human paused all agents or took over the screen (RainbowOMMA). Nothing was done. "
+                                     "Wait for them to hand it back, or ask them."}]}}
         self.out.write((json.dumps(reply) + "\n").encode())
         self.out.flush()
         log(f"{self.agent}: {params.get('name')} refused — the human paused all agents")

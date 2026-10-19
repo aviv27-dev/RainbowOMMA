@@ -120,6 +120,18 @@ M = {
     "mb.resume_all": {"en": "Resume all agents", "he": "להמשיך את כל הסוכנים"},
     "mb.recent": {"en": "Latest receipts", "he": "הקבלות האחרונות"},
     "mb.doctor": {"en": "Check the setup (doctor)…", "he": "לבדוק את ההתקנה (doctor)…"},
+    # ── rainbowomma-approve ──
+    "ap.dialog": {"en": "{agent} wants to send something that can't be taken back.\n\nWhy: {why}\n\nExactly this:\n{command}",
+                  "he": "{agent} רוצה לשלוח משהו שאי אפשר להחזיר.\n\nלמה: {why}\n\nבדיוק את זה:\n{command}"},
+    "ap.allow": {"en": "Allow once", "he": "לאשר פעם אחת"},
+    "ap.deny": {"en": "Don't allow", "he": "לא לאשר"},
+    "ap.refused": {"en": "the human did not allow it (or did not answer in time) — don't send it; ask them what to do",
+                   "he": "האדם לא אישר (או לא ענה בזמן) — לא לשלוח; לשאול אותו מה לעשות"},
+    "ap.next": {"en": "run exactly the same command again within 5 minutes — it is allowed once",
+                "he": "להריץ שוב בדיוק את אותה פקודה תוך 5 דקות — היא מותרת פעם אחת"},
+    "mb.takeover": {"en": "Take over the screen", "he": "להשתלט על המסך"},
+    "mb.handback": {"en": "Hand the screen back", "he": "להחזיר את המסך לסוכנים"},
+    "mb.screen_held": {"en": "screen: {who}", "he": "המסך: {who}"},
     # ── office-owner / agent-office ──
     "ao.no_file": {"en": "no such file: {path}", "he": "אין קובץ: {path}"},
     "ao.bad_app": {"en": "unsupported app — word / excel / acrobat / preview", "he": "אפליקציה לא נתמכת — word / excel / acrobat / preview"},
