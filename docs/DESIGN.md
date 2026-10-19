@@ -102,6 +102,12 @@ idle ≥ 10 minutes, no lease or conversion is in flight on it, the SAME process
 makes it the human's), and — checked inside the quit AppleScript itself — it has no documents open. One window per agent
 working in parallel is fine; the app is shared, the documents are not.
 
+- **xlsx through Excel.** A workbook written by a script (openpyxl, pandas) carries formulas without computed values.
+  `office-owner xlsx` has the real Excel open a uniquely named copy, recalculate every sheet (by index — `repeat with sh
+  in (worksheets of wb)` fails with -50), save, optionally export the active sheet to PDF, and close that copy by name.
+  Only then does the copy replace the source (or go to `--out`). A workbook open in Excel — or when Excel can't say — is
+  never written under.
+
 ## 5. Agent adapters (the guardrails)
 - **One guard, many frameworks.** `bin/rainbowomma-guard.py` splits the shell line into simple commands (through pipes,
   `;`/`&&`, `$( )`, backticks, `sh -c`, `eval`, and wrappers like `sudo`/`env`/`xargs`; heredoc bodies are data) and
