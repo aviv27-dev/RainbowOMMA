@@ -28,6 +28,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder; the message catalog lives beside it
+import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
 
 LEASE_TTL_S = 600
@@ -233,6 +234,9 @@ def main(argv=None):
         code, out = 1, {"status": "failed", "why": t("bo.no_registry", path=REGISTRY or BO.REGISTRY)}
     except Exception as exc:   # one JSON answer, always
         code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+    if a.cmd in ("lease", "env", "release") and not out.get("existing"):
+        rainbow_receipts.write("port-owner", "release" if a.cmd == "release" else "lease", agent, agent, out.get("status"),
+                               port=out.get("port"), name=getattr(a, "name", None), why=out.get("why"))
     if a.cmd == "env":
         if code:
             print(json.dumps(out, ensure_ascii=False), file=sys.stderr)

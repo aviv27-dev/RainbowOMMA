@@ -193,3 +193,15 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   `structuredContent` and text; a non-zero exit (refused or failed) is `isError`. Acting tools need the agent name;
   `who_port` and `whose_process` work without it.
 
+## 11. Receipts and the human at the keyboard
+- **Receipts.** `bin/rainbow_receipts.py` appends one JSON line per acting command (start, stop, idle-stop, recover, front,
+  heal changes; lease and release; kill and reap; open, close, pdf and what the sweep closed or quit) and per guard
+  refusal to `$RAINBOW_HOME/logs/receipts.jsonl`, under a lock. Read-only commands leave none; a receipt that can't be
+  written never stops the tool. `bin/receipts` reads them back by agent, tool and time.
+- **Wait for the human.** macOS's `HIDIdleTime` (`ioreg -c IOHIDSystem`) says how long ago the keyboard or mouse was
+  used. Under `RAINBOW_HUMAN_IDLE_S` (5 s), the guard refuses GUI-driving commands (`osascript` to System Events with
+  keystroke/click, `cliclick`) and MCP computer-use actions (any tool named `…cua…`/`…computer…` except screenshots,
+  `get_*`, `list_*` and session calls), and the cursor proxy holds the action until the human pauses, at most
+  `RAINBOW_HUMAN_WAIT_S` (30 s). Unknown idle time (not macOS, no `ioreg`) never blocks.
+- **`rm -r` of home.** The guard refuses a recursive `rm` of `/`, `~`, `$HOME`, `/Users/<name>` or a system folder.
+

@@ -6,6 +6,12 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- Receipts: every acting command of every owner and every guard refusal leaves one JSON line in
+  `$RAINBOW_HOME/logs/receipts.jsonl`; `bin/receipts` reads them back.
+- The human at the keyboard comes first: GUI commands and MCP computer-use actions wait until the human has paused for
+  5 seconds (the guard refuses them; the cursor proxy holds them, at most 30 s). The Claude Code adapter runs the guard
+  before MCP computer-use actions too.
+- The guard refuses `rm -r` of the home folder, the whole disk or a system folder.
 - `port-owner`: a port range per agent (`"ports"` in `browsers.json`, by default 100 ports from 41000), leases inside
   it (`lease`, `env` for `eval`, `who`, `release`, `list`), and the usual dev ports kept for the human (`humanPorts`).
   The guardrail refuses `kill-port`, `fuser -k` and `lsof`/`ps` piped into `kill`, and holds an agent started with

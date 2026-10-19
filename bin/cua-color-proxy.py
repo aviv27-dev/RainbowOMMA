@@ -22,6 +22,7 @@ import argparse
 import itertools
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,9 @@ IMPLICIT = None                     # the key for the transport's implicit sessi
 REFRESH_AFTER_S = float(os.environ.get("RAINBOW_CUA_IDLE_S") or 240)    # the driver drops an idle implicit session at 300 s
 REPLY_TIMEOUT_S = 10.0
 NOT_ACTIONS = {"end_session", "list_sessions", "get_session", "get_session_state"}
+READ_ONLY = re.compile(r"(screenshot|^get_|^list_|_state$|^start_session$|^end_session$|^set_agent_cursor|^zoom$)")
+HUMAN_IDLE_S = float(os.environ.get("RAINBOW_HUMAN_IDLE_S") or 5)       # the human touched keyboard/mouse less than this ago → wait
+HUMAN_WAIT_S = float(os.environ.get("RAINBOW_HUMAN_WAIT_S") or 30)      # …but never longer than this: then the action goes through
 ROOT = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))
 
 
@@ -45,6 +49,36 @@ def log(msg):
             fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
     except OSError:
         pass
+
+
+def human_idle_s():
+    """seconds since the human last touched the keyboard or mouse (macOS HIDIdleTime), or None when unknown"""
+    if os.environ.get("RAINBOW_TEST_IDLE_S"):
+        return float(os.environ["RAINBOW_TEST_IDLE_S"])
+    if sys.platform != "darwin":
+        return None
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, timeout=3).stdout
+        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
+        return int(m.group(1)) / 1e9 if m else None
+    except Exception:
+        return None
+
+
+def wait_for_human(name, sleep=time.sleep):
+    """a click or keystroke while the human is typing lands in their window: hold it until they pause (at most HUMAN_WAIT_S).
+    → seconds waited"""
+    if not name or READ_ONLY.search(name):
+        return 0.0
+    waited = 0.0
+    while waited < HUMAN_WAIT_S:
+        idle = human_idle_s()
+        if idle is None or idle >= HUMAN_IDLE_S:
+            break
+        step = max(0.25, HUMAN_IDLE_S - idle)
+        sleep(step)
+        waited += step
+    return waited
 
 
 def driver_path(given=None):
@@ -133,6 +167,12 @@ class Proxy:
         if name == "start_session" and label is not IMPLICIT:
             self.ended.discard(label)                   # the agent revives it itself
             self.themed.pop(label, None)
+        try:
+            waited = wait_for_human(name)
+            if waited:
+                log(f"{self.agent}: {name} waited {waited:.1f}s for the human to pause")
+        except Exception:
+            pass
         if label in self.ended:
             return
         last = self.themed.get(label)

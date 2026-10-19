@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
+import rainbow_receipts  # noqa: E402
 from rainbow_i18n import direction, t  # noqa: E402
 
 HOME = Path.home()
@@ -907,7 +908,11 @@ def main(argv=None):
         return 0
     if a.cmd == "heal":
         try:
-            print(json.dumps(heal(reg), ensure_ascii=False))
+            res = heal(reg)
+            for x in res["agents"]:
+                if x["theme"] not in ("ok", "kept"):
+                    rainbow_receipts.write("browser-owner", "heal", x["agent"], "heal", x["theme"])
+            print(json.dumps(res, ensure_ascii=False))
             return 0
         except Exception as exc:   # one JSON answer, always
             print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
@@ -933,6 +938,7 @@ def main(argv=None):
         return 0
     if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
         code, out = do_front(ag)
+        rainbow_receipts.write("browser-owner", "front", ag["name"], "human", out.get("status"), restored=out.get("restored"))
         print(json.dumps(out, ensure_ascii=False))
         return code
     if ag.get("managedBy"):
@@ -951,6 +957,7 @@ def main(argv=None):
             code, out = fn(ag, a.by.strip().lower(), a.allow_reopen) if a.cmd == "stop" else fn(ag, a.by.strip().lower())
         except Exception as exc:   # one JSON answer, always
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+    rainbow_receipts.write("browser-owner", a.cmd, ag["name"], a.by.strip().lower(), out.get("status"), why=out.get("why"))
     print(json.dumps(out, ensure_ascii=False))
     return code
 

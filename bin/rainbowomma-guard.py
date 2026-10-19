@@ -23,7 +23,10 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # -I drops the script's folder; the receipts live beside it
 
 WHY = {
     "pkill": "pkill matches processes by pattern and can hit another agent's browser",
@@ -32,6 +35,8 @@ WHY = {
     "port-kill": "freeing a port by killing whatever holds it (kill-port, fkill, fuser -k) can hit another agent's or the human's server",
     "osascript": "quitting Chrome through AppleScript closes every Chrome window, the human's too",
     "debug-port": "an agent's Chrome is started only by browser-owner",
+    "rm-home": "rm -r of your home folder, the whole disk or a system folder can't be undone — name the exact folder inside your work",
+    "human-active": "the human is using the keyboard or mouse right now — wait a few seconds and try again (a GUI action now would land in their window)",
     "human": "only the human acts as the human: --by human (and the desktop controls) are the person's, never an agent's",
 }
 HELP = ("Use the owner instead: `browser-owner start|recover <agent> --by <agent>` for your browser "
@@ -152,6 +157,10 @@ def verdict(command):
             return WHY["human"]
         if name in HUMAN_TOOLS:
             return WHY["human"]
+        if name == "rm" and _recursive(args) and any(_protected(x) for x in args if not x.startswith("-")):
+            return WHY["rm-home"]
+        if _gui_command(name, args) and human_active():
+            return WHY["human-active"]
     if re.search(r"\blaunch_by=['\"]?human\b", low):          # export LAUNCH_BY=human; ./agent-launcher.sh
         return WHY["human"]
     killing = "kill" in names or any(n == "xargs" and "kill" in a for n, a in cmds)
@@ -197,6 +206,61 @@ def _load_beside(modname, file):
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
+
+
+PROTECTED = {"/", "/*", "~", "~/", "~/*", "$home", "$home/", "$home/*", "${home}", "${home}/", "${home}/*", "/users", "/users/*",
+             "/system", "/library", "/applications", "/usr", "/bin", "/sbin", "/etc", "/var", "/private", "/opt"}
+
+
+def _recursive(args):
+    return any(a in ("--recursive", "-r", "-R") or (a.startswith("-") and not a.startswith("--") and "r" in a.lower()) for a in args)
+
+
+def _protected(target):
+    t = target.strip().rstrip("/") + ("/" if target.strip().endswith("/") and target.strip() != "/" else "")
+    return t in PROTECTED or target.strip() in PROTECTED or bool(re.fullmatch(r"/users/[^/]+/?\*?", target.strip()))
+
+
+GUI_WORDS = ("keystroke", "key code", " click", "click at", "set frontmost")
+READ_ONLY_ACTIONS = re.compile(r"(screenshot|^get_|^list_|_state$|^start_session$|^end_session$|^zoom$|^wait$)")
+
+
+def _gui_command(name, args):
+    """a shell command that types or clicks into whatever window is in front"""
+    if name == "cliclick":
+        return True
+    text = " ".join(args)
+    return name == "osascript" and "system events" in text and any(w in text for w in GUI_WORDS)
+
+
+def human_idle_s():
+    """seconds since the human last touched the keyboard or mouse (macOS HIDIdleTime), or None when unknown"""
+    if os.environ.get("RAINBOW_TEST_IDLE_S"):
+        return float(os.environ["RAINBOW_TEST_IDLE_S"])
+    if sys.platform != "darwin":
+        return None
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, timeout=3).stdout
+        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
+        return int(m.group(1)) / 1e9 if m else None
+    except Exception:
+        return None
+
+
+def human_active():
+    idle = human_idle_s()
+    return idle is not None and idle < float(os.environ.get("RAINBOW_HUMAN_IDLE_S") or 5)
+
+
+def gui_tool_verdict(event):
+    """an MCP computer-use action (click, type, key, scroll …) while the human is at the keyboard or mouse"""
+    name = str(event.get("tool_name") or event.get("toolName") or "")
+    if not re.search(r"cua|computer", name, re.I):
+        return None
+    action = re.split(r"__|\.|/", name)[-1].lower()
+    if READ_ONLY_ACTIONS.search(action):
+        return None
+    return WHY["human-active"] if human_active() else None
 
 
 def killed_pids(cmds):
@@ -308,9 +372,16 @@ def main(argv=None):
         return 0
     if not isinstance(event, dict):
         return 0
-    for cmd in commands(event):
-        why = verdict(cmd)
+    for cmd in [None] + commands(event):
+        why = gui_tool_verdict(event) if cmd is None else verdict(cmd)
         if why:
+            try:
+                import rainbow_receipts
+                me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower() or None
+                rainbow_receipts.write("guard", "blocked", me, me, "blocked", why=why,
+                                       command=cmd or str(event.get("tool_name") or event.get("toolName") or ""))
+            except Exception:
+                pass
             msg = f"Blocked by RainbowOMMA: {why}. {HELP}"
             if fmt == "cline":
                 print(json.dumps({"cancel": True, "errorMessage": msg}))

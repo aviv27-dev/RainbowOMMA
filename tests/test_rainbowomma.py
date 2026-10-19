@@ -1218,5 +1218,50 @@ tray = (HERE.parent / "install" / "make-dock-tray.sh").read_text()
 check("Dock tray: the person's own Chrome closes the group (human.json color, or neutral grey)",
       "human-chrome.sh" in tray and "dock.human_name" in tray and "#B0BEC5" in tray)
 
+# ── wave A: receipts, rm -rf of home, the human at the keyboard ──
+import rainbow_receipts as rr
+rpath = rr.path()
+check("receipts live under RAINBOW_HOME (never the live install's during a test)", str(rpath).startswith(str(SAFE_HOME)), rpath)
+_reg0 = bo.REGISTRY; bo.REGISTRY = REG
+with contextlib.redirect_stdout(io.StringIO()):
+    bo.main(["stop", "charlie", "--by", "alpha"])
+bo.REGISTRY = _reg0
+last = rr.read(n=1)[0]
+check("a receipt for every acting command: who asked, for which agent, and the answer",
+      (last["tool"], last["action"], last["agent"], last["by"], last["status"]) == ("browser-owner", "stop", "charlie", "alpha", "refused"), last)
+rr.write("port-owner", "lease", "alpha", "alpha", "leased", port=41000)
+check("receipts: read back by agent and tool, oldest first", [r["action"] for r in rr.read(agent="alpha")][-1] == "lease"
+      and all(r["tool"] == "port-owner" for r in rr.read(tool="port-owner")))
+rm_blocked = ["rm -rf ~", "rm -rf ~/", "rm -rf $HOME", "rm -Rf \"$HOME\"/", "sudo rm -rf /", "rm -rf /Users/someone", "rm -fr ~/*", "rm --recursive /usr"]
+rm_allowed = ["rm -rf ~/projects/app/node_modules", "rm -rf build/", "rm ~/notes.txt", "rm -rf /tmp/scratch", "rm -rf \"$HOME/.cache/thing\""]
+check("guard: rm -r of the home folder, the whole disk or a system folder is refused",
+      all(hook(c)[0] == 2 for c in rm_blocked), [c for c in rm_blocked if hook(c)[0] != 2])
+check("guard: rm -r of a folder inside your work is let through", all(hook(c)[0] == 0 for c in rm_allowed), [c for c in rm_allowed if hook(c)[0]])
+def guard_idle(ev, idle):
+    r = subprocess.run([sys.executable, "-I", guard], input=json.dumps(ev), capture_output=True, text=True,
+                       env=dict(genv, RAINBOW_TEST_IDLE_S=str(idle), RAINBOW_AGENT="alpha"))
+    return r.returncode
+typing = {"tool_input": {"command": "osascript -e 'tell application \"System Events\" to keystroke \"hello\"'"}}
+click = {"tool_name": "mcp__cua-computer-use__click", "tool_input": {"x": 10, "y": 10}}
+shot = {"tool_name": "mcp__cua-computer-use__screenshot", "tool_input": {}}
+check("guard: a keystroke or click (osascript, cliclick, MCP computer use) waits while the human is at the keyboard",
+      guard_idle(typing, 1) == 2 and guard_idle(click, 1) == 2 and guard_idle({"tool_input": {"command": "cliclick c:10,10"}}, 2) == 2)
+check("guard: …goes through once the human paused, and a screenshot never waits",
+      guard_idle(typing, 60) == 0 and guard_idle(click, 60) == 0 and guard_idle(shot, 1) == 0)
+os.environ["RAINBOW_HOME"] = str(tmp / "po-home")
+blocked_receipt = rr.read(tool="guard", n=1)
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+check("guard: every refusal leaves a receipt with the agent and the reason",
+      blocked_receipt and blocked_receipt[0]["status"] == "blocked" and blocked_receipt[0]["agent"] == "alpha", blocked_receipt)
+check("the Claude Code adapter also runs the guard before MCP computer-use actions",
+      any("cua|computer" in h["matcher"] for h in json.loads((AD / "claude-code" / "settings.json").read_text())["hooks"]["PreToolUse"]))
+idles, slept = iter([1.0, 2.5, 6.0]), []
+pm.human_idle_s = lambda: next(idles)
+w = pm.wait_for_human("click", sleep=slept.append)
+check("cursor proxy: a click waits until the human pauses (5 s without input), then goes through", w > 0 and len(slept) == 2, (w, slept))
+pm.human_idle_s = lambda: 0.0; slept.clear()
+check("cursor proxy: …never longer than RAINBOW_HUMAN_WAIT_S (30 s), and a screenshot never waits",
+      pm.wait_for_human("type_text", sleep=slept.append) <= 30 + 5 and pm.wait_for_human("screenshot", sleep=slept.append) == 0)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
