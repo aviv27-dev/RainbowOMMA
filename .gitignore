@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .DS_Store
 bin/browsers.json
+
+# a maintainer's own Claude Code session settings — never part of the project
+.claude/
