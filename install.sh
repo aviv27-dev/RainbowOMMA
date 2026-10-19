@@ -2,23 +2,26 @@
 # RainbowOMMA installer — copies the tools into one folder, creates the registry from the example (never overwrites yours),
 # creates the state folders, and optionally loads the launchd sweep for office-owner with absolute paths.
 #
-#   ./install.sh [--bin DIR] [--with-sweep] [--dry-run]
+#   ./install.sh [--bin DIR] [--with-sweep] [--with-heal] [--dry-run]
 #
 #   --bin DIR      where the tools go (default: ~/bin). They look for each other in the same folder.
 #   --with-sweep   install + load the launchd job that sweeps stale document leases every 15 minutes
+#   --with-heal    install + load the launchd job that puts back agent colors Chrome Sync took (every 30 min, at login)
 #   --dry-run      print what would happen, change nothing
 #
-# RAINBOW_HOME (default ~/.rainbowomma) is where logs, state and themes live; the sweep job is given the same value.
+# RAINBOW_HOME (default ~/.rainbowomma) is where logs, state and themes live; the jobs are given the same value.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HOME/bin"
 SWEEP=0
+HEAL=0
 DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) BIN="${2:?--bin needs a folder}"; shift 2 ;;
     --with-sweep) SWEEP=1; shift ;;
+    --with-heal) HEAL=1; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
@@ -57,34 +60,32 @@ fi
 echo "→ state in $ROOT"
 run mkdir -p "$ROOT/logs" "$ROOT/state" "$ROOT/word-convert"
 
-if [ "$SWEEP" = 1 ]; then
-  PLIST="$AGENTS_DIR/$LABEL.plist"
-  echo "→ sweep job $PLIST (absolute paths — launchd does not expand ~)"
-  if [ "$DRY" = 1 ]; then
-    echo "would: write $PLIST and load it"
-  else
-    mkdir -p "$AGENTS_DIR"
-    TPL="$HERE/install/$LABEL.plist"
-    python3 -I - "$TPL" "$PLIST" "$BIN" "$ROOT" "$HOME" <<'PY'
+job() {   # job <label> <what> — write the launchd job from install/<label>.plist with absolute paths, and load it
+  local label="$1" what="$2" plist="$AGENTS_DIR/$1.plist"
+  echo "→ $what job $plist (absolute paths — launchd does not expand ~)"
+  if [ "$DRY" = 1 ]; then echo "would: write $plist and load it"; return; fi
+  mkdir -p "$AGENTS_DIR"
+  python3 -I - "$HERE/install/$label.plist" "$plist" "$BIN" "$ROOT" "$HOME" <<'PY'
 import sys, xml.sax.saxutils as x
 tpl, out, bin_dir, root, home = sys.argv[1:]
 s = open(tpl, encoding="utf-8").read()
-s = s.replace("~/bin/agent-office", x.escape(bin_dir + "/agent-office"))
+s = s.replace("~/bin/", x.escape(bin_dir + "/"))
 s = s.replace("~/.rainbowomma", x.escape(root))
 if root != home + "/.rainbowomma":
     s = s.replace("<key>LC_ALL</key><string>en_US.UTF-8</string>",
                   "<key>LC_ALL</key><string>en_US.UTF-8</string><key>RAINBOW_HOME</key><string>" + x.escape(root) + "</string>")
 if "~" in s:
-    sys.exit("a ~ path is left in the sweep job")
+    sys.exit("a ~ path is left in the job")
 open(out, "w", encoding="utf-8").write(s)
 PY
-    if [ "${RAINBOW_INSTALL_NO_LAUNCHCTL:-0}" != "1" ]; then
-      command -v plutil >/dev/null 2>&1 && plutil -lint "$PLIST" >/dev/null
-      launchctl bootout "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || true
-      launchctl bootstrap "gui/$(id -u)" "$PLIST"
-    fi
+  if [ "${RAINBOW_INSTALL_NO_LAUNCHCTL:-0}" != "1" ]; then
+    command -v plutil >/dev/null 2>&1 && plutil -lint "$plist" >/dev/null
+    launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$plist"
   fi
-fi
+}
+[ "$SWEEP" = 1 ] && job "$LABEL" sweep
+[ "$HEAL" = 1 ] && job com.rainbowomma.heal heal
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "note: $BIN is not on your PATH — call the tools by their full path, or add it." ;; esac
 cat <<EOF

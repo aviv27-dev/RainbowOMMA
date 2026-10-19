@@ -61,6 +61,11 @@ M = {
     "bo.idle_too_soon": {"en": "{label}'s browser was started {mins} min ago — not idle yet (idleMinutes = {idle})",
                          "he": "הדפדפן של {label} נפתח לפני {mins} דק׳ — עוד לא בחוסר פעילות (idleMinutes = {idle})"},
     "bo.front_down": {"en": "{label}'s browser is not running", "he": "הדפדפן של {label} לא רץ"},
+    "bo.heal_missing_open": {"en": "{label}'s colors are gone (Chrome Sync) — they come back the next time its browser starts",
+                             "he": "הצבעים של {label} ירדו (סנכרון Chrome) — הם יחזרו בהפעלה הבאה של הדפדפן שלו"},
+    "bo.heal_chrome_ok": {"en": "Chrome updated to {ver} — every agent's colors and Dock shortcut are in place",
+                          "he": "Chrome עודכן ל-{ver} — הצבעים וקיצורי ה-Dock של כל הסוכנים במקום"},
+    "bo.heal_chrome_check": {"en": "Chrome updated to {ver} — check: {names}", "he": "Chrome עודכן ל-{ver} — לבדוק: {names}"},
     "bo.busy": {"en": "another action on this browser is running right now", "he": "פעולה אחרת על הדפדפן הזה רצה עכשיו"},
     # ── port-owner ──
     "po.human_port": {"en": "port {port} is kept for the human (humanPorts) — take one of your own: port-owner lease {agent}",
@@ -113,6 +118,7 @@ M = {
                          "he": "לסגור את הדפדפנים של כל הסוכנים ({names})? ההתחברויות של הסוכנים יתנתקו, ואף אחד מהם לא ייפתח לבד "
                                "עד לפתיחה ידנית."},
     "dock.app_name": {"en": "{n} · {name} — agent browser", "he": "{n} · {name} — דפדפן סוכן"},
+    "dock.human_name": {"en": "{n} · {name} — my browser", "he": "{n} · {name} — הדפדפן שלי"},
     "desk.btn_cancel": {"en": "Cancel", "he": "ביטול"},
     "desk.btn_close": {"en": "Close", "he": "סגור"},
     "desk.error": {"en": "Error: ", "he": "שגיאה: "},
