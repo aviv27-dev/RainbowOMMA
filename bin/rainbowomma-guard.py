@@ -176,6 +176,9 @@ def verdict(command):
             why = sim_verdict(name, args, me_)
             if why:
                 return why
+        why = app_verdict(name, args)
+        if why:
+            return why
         if name == "osascript" and _sends(" ".join(args)) and not _approved(command):
             return WHY["send"]
         if _gui_command(name, args):
@@ -339,6 +342,43 @@ def gui_tool_verdict(event):
     if human_active():
         return WHY["human-active"]
     return screen_verdict(foreground=not re.search(r"cua", name, re.I))      # Cua drives apps in the background
+
+
+APP_REF = re.compile(r'(?:application|process|app) "([^"]+)"')
+APP_KEYS = ("app", "app_name", "application", "bundle_id", "bundle", "name", "process")
+
+
+def _denied():
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower() or None
+    try:
+        return set(_port_owner().BO.denied_apps(me))
+    except Exception:
+        return set()
+
+
+def app_verdict(name, args):
+    """AppleScript to, open -a of, an app the agent may not drive (terminals, System Settings, Keychain … — deniedApps)"""
+    apps = []
+    if name == "osascript":
+        apps = [m.group(1) for m in APP_REF.finditer(" ".join(args)) if m.group(1) != "system events"]
+    elif name == "open":
+        apps = [args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-a", "-b")]
+    if not apps:
+        return None
+    bad = _denied() & {a.strip().lower() for a in apps}
+    return f"an agent may not drive {sorted(bad)[0]} (deniedApps in browsers.json) — ask the human" if bad else None
+
+
+def app_tool_verdict(event):
+    """a computer-use action aimed at a denied app (its app / bundle / process argument)"""
+    name = str(event.get("tool_name") or event.get("toolName") or "")
+    if not re.search(r"cua|computer", name, re.I):
+        return None
+    ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    named = {str(v).strip().lower() for k, v in ti.items() if k.lower() in APP_KEYS and isinstance(v, str)}
+    named |= {n.rsplit(".", 1)[-1] for n in named if n.startswith("com.")}       # com.apple.Terminal → terminal
+    bad = _denied() & named if named else set()
+    return f"an agent may not drive {sorted(bad)[0]} (deniedApps in browsers.json) — ask the human" if bad else None
 
 
 UDID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -543,7 +583,7 @@ def main(argv=None):
     if not isinstance(event, dict):
         return 0
     for cmd in [None] + commands(event):
-        why = (gui_tool_verdict(event) or browser_tool_verdict(event)) if cmd is None else verdict(cmd)
+        why = (app_tool_verdict(event) or gui_tool_verdict(event) or browser_tool_verdict(event)) if cmd is None else verdict(cmd)
         if cmd is None and not why and is_paused() and (commands(event) or event.get("tool_name") or event.get("toolName")):
             why = WHY["paused"]
         if why:

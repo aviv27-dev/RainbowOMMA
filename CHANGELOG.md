@@ -6,6 +6,10 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `receipts --export-otlp`: receipts to an OpenTelemetry collector (OTLP/HTTP JSON logs, `gen_ai.agent.name`).
+- Apps an agent never drives: `deniedApps` (default: terminals, System Settings, Keychain Access, Passwords, Activity
+  Monitor) and per-agent `"apps"` allow/deny, for AppleScript, `open -a` and computer-use tools.
+- `docs/ISOLATION.md`: separate macOS users, VMs, containers, virtual displays, credentials, and standards to watch.
 - `sim-owner`: an iOS Simulator of each agent's own; the guard refuses `simctl … booted` and another agent's (or a
   shared) simulator. `rainbowomma-clip`: a clipboard of each agent's own; a named agent's `pbcopy`/`pbpaste` are refused.
 - CI runs the test suite on Linux too.

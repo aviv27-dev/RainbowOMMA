@@ -79,6 +79,25 @@ def human_ports(path=None):
     return sorted({int(p) for p in got}) if isinstance(got, list) else list(HUMAN_PORTS)
 
 
+DENIED_APPS = ["Terminal", "iTerm", "iTerm2", "System Settings", "System Preferences", "Keychain Access", "Passwords", "Activity Monitor"]
+
+
+def denied_apps(agent=None, path=None):
+    """the apps an agent may not drive (AppleScript, open -a, computer use): "deniedApps" at the top of browsers.json
+    (default: terminals, System Settings, Keychain Access, Passwords, Activity Monitor), then the agent's own "apps":
+    {"Notes": "deny", "Terminal": "allow"} on top. → lowercased names"""
+    try:
+        raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    base = raw.get("deniedApps") if isinstance(raw.get("deniedApps"), list) else DENIED_APPS
+    out = {str(x).strip().lower() for x in base if str(x).strip()}
+    own = ((raw.get("agents") or {}).get(agent) or {}).get("apps") if agent else None
+    for app, rule in (own or {}).items() if isinstance(own, dict) else []:
+        (out.add if str(rule).lower() == "deny" else out.discard)(str(app).strip().lower())
+    return sorted(out)
+
+
 def sensitive_sites(path=None):
     """domains an agent may open only while the human is at the Mac: "sensitiveSites" at the top of browsers.json"""
     try:

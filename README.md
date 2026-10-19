@@ -164,6 +164,19 @@ the guardrail refuses an agent's `simctl … booted`, another agent's simulator 
 -destination`. The system clipboard is yours: a named agent's `pbcopy`, `pbpaste` and AppleScript clipboard are refused,
 and `rainbowomma-clip copy|paste alpha` keeps a clipboard of its own.
 
+### 🚫 Apps an agent never drives
+By default no agent drives a terminal, System Settings, Keychain Access, Passwords or Activity Monitor, through
+AppleScript, `open -a` or a computer-use tool aimed at them. Change the list with `"deniedApps"` at the top of
+`browsers.json`, or per agent with `"apps": {"Notes": "deny", "Terminal": "allow"}`.
+
+### 📈 Receipts in your observability stack
+`receipts --export-otlp http://localhost:4318` sends every receipt not sent yet to an OpenTelemetry collector (OTLP/HTTP
+JSON logs, tagged `gen_ai.agent.name`), so Langfuse, Honeycomb or Grafana show what each agent did on your Mac.
+
+### 🧱 When one shared Mac isn't enough
+[docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
+virtual display of its own, and how to keep its credentials apart (1Password, Keychain).
+
 ### 🔒 Sensitive sites need you there
 List them as `"sensitiveSites": ["bank.example", "*.gov.example"]` at the top of `browsers.json`. An agent's browser tool
 (Chrome DevTools MCP, Playwright MCP, any `navigate`/`open` tool) may go there only while you're at the Mac: you used the
@@ -207,7 +220,7 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `sim-owner lease <agent> [--device "iPhone 16"]` · `who <udid>` · `release` · `list` | an iOS Simulator of the agent's own, and its UDID |
 | `rainbowomma-clip copy\|paste\|clear <agent> [--name N]` | a clipboard of the agent's own (stdin → file only its user can read → stdout) |
 | `rainbowomma-pause on\|off\|toggle\|status` | the stop button for all agents (also in the menu bar, ⌘⌥⌃P) |
-| `receipts [--agent A] [--tool T] [--since ISO] [-n N]` | what the owners did and refused, oldest first |
+| `receipts [--agent A] [--tool T] [--since ISO] [-n N]` · `--export-otlp [URL]` | what the owners did and refused, oldest first |
 | `as-agent <agent> <command…>` · `rainbowomma-mcp --agent <agent>` | run any agent as that agent (`RAINBOW_AGENT` + a session id; reaps on exit) · the owners as MCP tools |
 | `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
 | `office-owner xlsx --agent <a> <book.xlsx> [--out other.xlsx] [--pdf sheet.pdf] [--force]` | the real Excel recalculates every formula (a workbook a script wrote has no computed values) on its own copy; never under a workbook someone has open |

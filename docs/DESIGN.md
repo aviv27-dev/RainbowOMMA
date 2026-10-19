@@ -253,4 +253,13 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   (A computer-use paste with ⌘V can't be seen by a pre-tool hook.)
 - **Linux.** Ports, processes, the guard, receipts, the MCP server and the simulator lease have no macOS-only parts;
   CI runs the whole suite on Linux too, with the macOS parts faked as on macOS.
+- **Receipts to OpenTelemetry.** `receipts --export-otlp [URL]` (default `$OTEL_EXPORTER_OTLP_ENDPOINT`) posts the
+  receipts written since the last export as one OTLP/HTTP JSON logs request to `<URL>/v1/logs`: body `tool action →
+  status`, `gen_ai.agent.name`, every other field as `rainbowomma.*`, WARN for refusals and failures. A cursor beside
+  the receipts moves only after the collector accepted them.
+- **Apps an agent never drives.** `deniedApps` (top of `browsers.json`; default: terminals, System Settings/Preferences,
+  Keychain Access, Passwords, Activity Monitor) and per agent `"apps": {"<App>": "deny" | "allow"}`. The guard refuses
+  AppleScript to such an app or its process (System Events itself excluded), `open -a`/`-b` of it, and a computer-use
+  action whose `app`/`bundle_id`/`process` argument names it (`com.apple.Terminal` → `terminal`).
+- **Beyond one session.** Separate macOS users, VMs, containers, virtual displays and credentials: `docs/ISOLATION.md`.
 
