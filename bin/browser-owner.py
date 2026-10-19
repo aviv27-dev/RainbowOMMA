@@ -31,7 +31,10 @@ HERE = Path(__file__).resolve().parent
 REGISTRY = Path(os.environ.get("BROWSER_OWNER_REGISTRY") or HERE / "browsers.json")
 SHARED = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(HOME / ".rainbowomma")))   # logs, state, themes
 CHROME_APP = "/Applications/Google Chrome.app"
-CHROME_BIN = "Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_ANY = re.compile(r"\.app/Contents/MacOS/(?:Google Chrome(?: Beta| Canary| Dev| for Testing)?|Chromium)(?=\s--|\s*$)")   # any flavor's main binary
+CHANNELS = {"stable": "/Applications/Google Chrome.app", "beta": "/Applications/Google Chrome Beta.app",
+            "dev": "/Applications/Google Chrome Dev.app", "canary": "/Applications/Google Chrome Canary.app",
+            "cft": "/Applications/Google Chrome for Testing.app"}
 STALE_FLAG_AFTER = 120
 LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 127.0.0.1 is never asked through an http_proxy
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
@@ -106,6 +109,11 @@ def registry(path=None):
         states[a["state"]] = name
         a["log"] = expand(r.get("log") or SHARED / "logs" / "browser-owner.log")
         a["lock"] = str(Path(a["state"]).with_suffix(".lock"))
+        ch = str(r.get("chrome") or "stable").strip()
+        app = CHANNELS.get(ch.lower()) or (expand(ch) if ch.endswith(".app") else None)
+        if not app:
+            raise ValueError(f"{name}: chrome must be stable, beta, dev, canary, cft or a path to a Chrome .app, not {ch!r}")
+        a["chrome_app"] = app.rstrip("/")
         if r.get("launcher"):
             a["launcher"] = expand(r["launcher"])
         if r.get("managedBy"):
@@ -184,11 +192,11 @@ def processes():
 
 
 def is_root(a, cmd):
-    return CHROME_BIN in cmd and " --type=" not in cmd and bool(a["port_re"].search(cmd)) and bool(a["dir_re"].search(cmd))
+    return bool(CHROME_ANY.search(cmd)) and " --type=" not in cmd and bool(a["port_re"].search(cmd)) and bool(a["dir_re"].search(cmd))
 
 
 def profile_users(a, rows):
-    return [pid for pid, _, cmd in rows if CHROME_BIN in cmd and " --type=" not in cmd and a["dir_re"].search(cmd) and not a["port_re"].search(cmd)]
+    return [pid for pid, _, cmd in rows if CHROME_ANY.search(cmd) and " --type=" not in cmd and a["dir_re"].search(cmd) and not a["port_re"].search(cmd)]
 
 
 def listener(a):
@@ -204,7 +212,7 @@ def listener(a):
 
 def foreign_roots(a, rows):
     """Chromes on this agent's port with ANOTHER profile — someone launched a browser outside the owner"""
-    return [pid for pid, _, cmd in rows if CHROME_BIN in cmd and " --type=" not in cmd and a["port_re"].search(cmd) and not a["dir_re"].search(cmd)]
+    return [pid for pid, _, cmd in rows if CHROME_ANY.search(cmd) and " --type=" not in cmd and a["port_re"].search(cmd) and not a["dir_re"].search(cmd)]
 
 
 def tree_of(a, rows):
@@ -417,7 +425,8 @@ def install_theme(a, folder, timeout=25.0):
 
     def child():
         os.dup2(r1, 3); os.dup2(w2, 4); os.setsid()
-    chrome = str(Path(CHROME_APP) / "Contents" / "MacOS" / "Google Chrome")
+    app = Path(a.get("chrome_app") or CHROME_APP)
+    chrome = str(app / "Contents" / "MacOS" / app.name[:-4])
     p = subprocess.Popen([chrome, f"--user-data-dir={a['profile']}", "--remote-debugging-pipe", "--enable-unsafe-extension-debugging",
                           "--no-startup-window", "--no-first-run", "--no-default-browser-check"],
                          preexec_fn=child, close_fds=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -502,7 +511,10 @@ def launch(a):
         r = subprocess.run(["bash", a["launcher"]], capture_output=True, text=True, timeout=60, env=env, start_new_session=True)
         return r.returncode, (r.stdout or r.stderr or "").strip()
     Path(a["profile"]).mkdir(parents=True, exist_ok=True)
-    r = subprocess.run(["open", "-g", "-n", "-a", CHROME_APP, "--args", *chrome_args(a)], capture_output=True, text=True,
+    app = a.get("chrome_app") or CHROME_APP
+    if not Path(app).exists() and app != CHROME_APP:
+        return 1, t("bo.no_chrome_app", path=app)
+    r = subprocess.run(["open", "-g", "-n", "-a", app, "--args", *chrome_args(a)], capture_output=True, text=True,
                        timeout=30, start_new_session=True)
     if r.returncode != 0:
         return r.returncode, (r.stderr or "open failed").strip()

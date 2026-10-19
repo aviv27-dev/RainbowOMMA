@@ -12,7 +12,7 @@ case " $("$DIR/browser-owner" names 2>/dev/null) " in
   *) echo "as-agent: $NAME is not an agent in browsers.json" >&2; exit 2 ;;
 esac
 export RAINBOW_AGENT="$NAME"
-export RAINBOW_SESSION="${NAME}-$(date +%s)-$$"
+RAINBOW_SESSION="${NAME}-$(date +%s)-$$"; export RAINBOW_SESSION
 "$@"
 RC=$?
 "$DIR/proc-owner" reap "$NAME" --session "$RAINBOW_SESSION" >/dev/null 2>&1

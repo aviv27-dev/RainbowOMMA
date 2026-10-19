@@ -6,6 +6,12 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `rainbowomma-doctor`: what's in place, what's missing and how to fix it (`--json` for agents); changes nothing.
+- `uninstall.sh`, and `install.sh --adapter <framework>`: the adapter with your paths filled in, ready to merge.
+- CI lints Python (ruff, real errors only) and every shell script (shellcheck, warnings and up).
+- `"chrome"` per agent in `browsers.json` (`stable`, `beta`, `dev`, `canary`, `cft` or a path to a Chrome `.app`): the
+  agent's browser runs as a separate app, so the human's ⌘Q and Chrome updates can't reach it. Every Chrome flavor is
+  recognized as an agent's root process.
 - Receipts: every acting command of every owner and every guard refusal leaves one JSON line in
   `$RAINBOW_HOME/logs/receipts.jsonl`; `bin/receipts` reads them back.
 - The human at the keyboard comes first: GUI commands and MCP computer-use actions wait until the human has paused for

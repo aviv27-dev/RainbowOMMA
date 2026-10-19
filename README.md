@@ -50,14 +50,18 @@ RainbowOMMA has one rule: **one owner per resource; everyone else asks it.**
 
 ```bash
 git clone https://github.com/aviv27-dev/RainbowOMMA.git && cd RainbowOMMA
-./install.sh                                   # tools into ~/bin; add --with-sweep for the launchd document sweep
+./install.sh --with-heal --adapter claude-code  # tools into ~/bin, the color-keeping job, your agent's adapter filled in
 $EDITOR ~/bin/browsers.json                    # one row per agent: port, profile, color, label
+~/bin/rainbowomma-doctor                       # what's in place, what's missing, and how to fix it
 
 ~/bin/browser-owner start alpha --by alpha     # paints Alpha's browser and opens it in the background
 ~/bin/browser-owner list                       # who's up, blocked, hung, or closed by the human
 ~/bin/browser-owner stop alpha --by human      # only the human closes an agent's browser
 install/make-desktop-apps.sh                   # optional: colored open/close icons on the desktop
 ```
+
+`./uninstall.sh` takes out what `install.sh` put in (`--purge` also the registry and the state folder). It never touches
+the agents' Chrome profiles.
 
 The first time an agent's window opens, macOS asks once whether Terminal (or your agent) may control **System Events**.
 Allow it: that is how RainbowOMMA hands the focus back to you. If you don't, everything else still works.
@@ -138,6 +142,11 @@ home folder, the whole disk or a system folder.
 ### 🔧 One MCP server for all of it
 `~/bin/rainbowomma-mcp --agent alpha` gives any MCP agent the same owners as tools: `lease_port`, `who_port`,
 `whose_process`, `stop_process`, `my_processes`, `browser_status`, `start_my_browser`, `recover_my_browser`.
+
+### 🪟 A Chrome of its own
+Give an agent `"chrome": "canary"` (or `beta`, `dev`, `cft` for Chrome for Testing, or a path to any Chrome `.app`) in
+`browsers.json`, and its browser runs as a separate app, with its own Dock icon and its own menu. Your ⌘Q in your Chrome
+can't reach it, and an update to your Chrome never changes the agent's browser under it.
 
 ### 🛑 If in doubt, do nothing
 A port that answers but isn't the agent's own browser is reported as `blocked`, not "up". A profile open somewhere

@@ -15,7 +15,7 @@
 | Path | What |
 |---|---|
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · front · human-theme`, `--by WHO` |
-| `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`); top-level `humanPorts` |
+| `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`), `chrome` (`stable` · `beta` · `dev` · `canary` · `cft` · a path to a Chrome `.app`); top-level `humanPorts` |
 | `bin/port-owner(.py)` | every agent's ports: a range per agent (`ports` in the registry, default 41000 + 100 × (CDP port − 9222)), leases inside it, `humanPorts` never leased: `lease · env · who · release · list` — §8 |
 | `bin/proc-owner(.py)` | whose a process is (`RAINBOW_AGENT` in its environment, an ancestor that carries it, or the agent's Chrome tree; else the human's): `whose · kill --by · list · reap` — §9 |
 | `bin/as-agent`, `bin/rainbowomma-session-end` | run any agent as a named agent (`RAINBOW_AGENT` + `RAINBOW_SESSION`, reap on exit) · the session-end hook adapters run — §9 |
@@ -31,7 +31,9 @@
 | `adapters/<framework>/` | one folder per agent framework: hook wiring, native deny rules, plugins — see `docs/AGENTS.md` |
 | `bin/cua-color-proxy(.py)` | MCP stdio proxy in front of `cua-driver mcp`: every session of an MCP agent wears that agent's cursor theme — §6 |
 | `bin/rainbow_i18n.py` | the message catalog (English + Hebrew) and the language choice — §7 |
-| `install.sh` | copies the tools, creates `browsers.json` from the example (never overwrites), the state folders, and with `--with-sweep` the launchd job with absolute paths |
+| `bin/rainbowomma-doctor(.py)` | checks what's in place (python, registry, each agent's Chrome, state folder, tools, System Events permission; optional Word, Excel, Cua, jobs, guard) and how to fix what isn't; changes nothing |
+| `uninstall.sh` | takes out the tools and the launchd jobs; `--purge` also `browsers.json` and `$RAINBOW_HOME`; never the agents' profiles |
+| `install.sh` | copies the tools, creates `browsers.json` from the example (never overwrites), the state folders, `--with-sweep` / `--with-heal` the launchd jobs with absolute paths, and `--adapter <framework>` an adapter with the user's paths filled in under `$RAINBOW_HOME/adapters/` |
 | `bin/human-chrome.sh` | opens (or brings to front) the human's own Chrome, never an agent's |
 | `bin/desk-browser.sh` | what the desktop icons run: `open\|close <agent>`, `open\|close human`, `close agents` |
 | `tools/cursor-themes/build_cursor_themes.py`, `cua.default.lottie` | one Cua cursor theme per agent in its color — §6 |
