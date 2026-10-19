@@ -15,6 +15,8 @@ results = []
 def check(name, cond, info=""):
     results.append(bool(cond)); print(("✅ " if cond else "❌ ") + name + ("" if cond else f"  — {info}"))
 
+SAFE_HOME = Path(tempfile.mkdtemp(prefix="rainbow-home-"))
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)   # a test run never shares a live lock, lease or state file with the real one
 bo = load("browser-owner.py")
 tmp = Path(tempfile.mkdtemp(prefix="bo-"))
 REG = tmp / "reg.json"
@@ -27,7 +29,19 @@ REG.write_text(json.dumps({"agents": {
 reg = bo.registry(REG)
 ALPHA_A, CHARLIE_A = reg["alpha"], reg["charlie"]
 bo.time.sleep = lambda s: None                               # the 3-probe wait, instant in tests
-bo.install_theme = lambda a, folder, timeout=25.0: (True, "fakethemeid")   # never a real Chrome in a test
+def fake_install(a, folder=None, timeout=25.0, record=None):
+    """never a real Chrome in a test: record the theme in the profile the way Chrome does (extensions.theme.id)"""
+    prefs = Path(a["profile"]) / "Default" / "Preferences"; prefs.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        d = json.loads(prefs.read_text())
+    except (OSError, ValueError):
+        d = {}
+    d.setdefault("extensions", {})["theme"] = {"id": "a" * 32}
+    prefs.write_text(json.dumps(d))
+    if record is not None:
+        record.append(1)
+    return True, "fakethemeid"
+bo.install_theme = fake_install
 bo.build_theme = lambda a: tmp / ("theme-" + a["name"])
 bo.front_pid = lambda: 200
 bo.set_front = lambda pid: True
@@ -139,13 +153,19 @@ check("…the theme install closed its windowless Chrome — recorded apart from
       "at" in mst["lastThemeInstall"] and (mst.get("lastStop") or {}).get("by") != "theme-install")
 up[9224] = False
 inst = []
-_it = bo.install_theme; bo.install_theme = lambda a, folder, timeout=25.0: inst.append(1) or (True, "x")
+_it = bo.install_theme; bo.install_theme = lambda a, folder, timeout=25.0: fake_install(a, record=inst)
 code, out = bo.do_start(CHARLIE_A, "charlie")
 check("the next start keeps the installed theme — no second install", not inst and json.loads(Path(CHARLIE_A["state"]).read_text())["lastStart"]["theme"] == "kept")
 up[9224] = False
 CHARLIE_A["color"] = "#00897B"
 code, out = bo.do_start(CHARLIE_A, "charlie")
 check("its color changed in the registry → the theme is rebuilt", inst == [1])
+up[9224] = False
+pc_ = Path(CHARLIE_A["profile"], "Default", "Preferences"); d_ = json.loads(pc_.read_text()); d_["extensions"]["theme"]["id"] = ""
+pc_.write_text(json.dumps(d_))
+code, out = bo.do_start(CHARLIE_A, "charlie")
+check("Google Sync took the theme off the profile (extensions.theme.id empty) → the next start puts it back",
+      inst == [1, 1] and json.loads(Path(CHARLIE_A["state"]).read_text())["lastStart"]["theme"] == "installed", inst)
 CHARLIE_A["color"] = "#F4511E"
 up[9224] = False
 bo.install_theme = lambda a, folder, timeout=25.0: (False, "Extensions.loadUnpacked not allowed")
@@ -155,7 +175,7 @@ mp = json.loads(Path(CHARLIE_A["profile"], "Default", "Preferences").read_text()
 mst = json.loads(Path(CHARLIE_A["state"]).read_text())
 check("theme install fails → the start goes on with the profile color (fallback) and the reason is recorded",
       code == 0 and mst["lastStart"]["theme"] == "failed" and "loadUnpacked" in mst["themeError"] and mp["browser"]["theme"]["user_color2"] == agent_color, (out, mst))
-bo.install_theme = _it if False else (lambda a, folder, timeout=25.0: (True, "fakethemeid"))
+bo.install_theme = fake_install
 mp2 = {"profile": {}, "account_values": {"browser": {"theme": {"user_color2": -8497214}}}}
 pp = Path(tmp / "acct" / "Default"); pp.mkdir(parents=True, exist_ok=True); (pp / "Preferences").write_text(json.dumps(mp2))
 bo.paint(dict(CHARLIE_A, profile=str(tmp / "acct")))
@@ -539,7 +559,7 @@ os.environ["RAINBOW_LANG"] = "he"
 
 os.environ["RAINBOW_HOME"] = str(tmp / "root")
 bo_root, ao_root = load("browser-owner.py"), load("agent-office.py")
-os.environ.pop("RAINBOW_HOME")
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
 check("RAINBOW_HOME moves logs, state and themes in one place",
       bo_root.SHARED == tmp / "root" and bo_root.THEMES == tmp / "root" / "themes" and ao_root.LEASES == tmp / "root" / "state" / "doc_leases"
       and ao_root.LOG == tmp / "root" / "logs" / "agent-office.log" and ao_root.WORD_DIR == tmp / "root" / "word-convert",
@@ -850,7 +870,7 @@ for bad, why in (({"ports": "41000-41150"}, "overlaps another agent's range"), (
     check(f"ports: the registry refuses a range that is {why}", ok_)
 os.environ["RAINBOW_HOME"] = str(tmp / "po-home")
 po = load("port-owner.py")
-os.environ.pop("RAINBOW_HOME")
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
 po.REGISTRY = REG
 listening = {}
 po.LISTENERS = lambda: dict(listening)
@@ -909,7 +929,7 @@ check("guard: freeing a port by killing whoever holds it is refused (kill-port, 
 # ── proc-owner: whose process this is, and stopping only your own ──
 os.environ["RAINBOW_HOME"] = str(tmp / "po-home")
 pc = load("proc-owner.py")
-os.environ.pop("RAINBOW_HOME")
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
 pc.PO.REGISTRY = REG
 listening.clear()
 pc.PO.LISTENERS = lambda: dict(listening)
@@ -1028,6 +1048,128 @@ check("mcp: an unknown method is a JSON-RPC error", got[5]["error"]["code"] == -
 got = mcp([init, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "stop_process", "arguments": {"pid": 1}}}])
 check("mcp without an agent name: acting tools are refused (only the who/whose questions work)",
       got[1]["result"]["isError"] and "agent name" in got[1]["result"]["structuredContent"]["why"], got)
+
+# ── from the private installation (19.10): front un-minimizes, the Dock tray, ONLY=, office-owner's reasons ──
+import base64, hashlib, socket, struct, threading
+class FakeCDP:
+    """Chrome's DevTools endpoint, enough for restore_windows: /json/version, /json/list and the browser WebSocket"""
+    def __init__(self, windows):
+        self.windows, self.calls = windows, []                   # {targetId: (windowId, state)}
+        self.sock = socket.socket(); self.sock.bind(("127.0.0.1", 0)); self.sock.listen(8)
+        self.port = self.sock.getsockname()[1]
+        threading.Thread(target=self.serve, daemon=True).start()
+    def serve(self):
+        while True:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self.one, args=(c,), daemon=True).start()
+    def one(self, c):
+        req = b""
+        while b"\r\n\r\n" not in req:
+            req += c.recv(4096)
+        line = req.split(b"\r\n", 1)[0].decode()
+        if line.startswith("GET /json/version"):
+            body = json.dumps({"webSocketDebuggerUrl": f"ws://127.0.0.1:{self.port}/devtools/browser/fake"}).encode()
+        elif line.startswith("GET /json/list"):
+            body = json.dumps([{"id": t, "type": "page"} for t in self.windows]).encode()
+        else:
+            key = re.search(rb"Sec-WebSocket-Key: (\S+)", req).group(1)
+            acc = base64.b64encode(hashlib.sha1(key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+            c.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + acc + b"\r\n\r\n")
+            return self.ws(c)
+        c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n" % len(body) + body); c.close()
+    def ws(self, c):
+        def recv(n):
+            b = b""
+            while len(b) < n:
+                x = c.recv(n - len(b))
+                if not x:
+                    raise OSError
+                b += x
+            return b
+        def send(obj):
+            d = json.dumps(obj).encode()
+            c.sendall(bytes([0x81]) + (bytes([len(d)]) if len(d) < 126 else bytes([126]) + struct.pack(">H", len(d))) + d)
+        try:
+            while True:
+                b1, b2 = recv(2); n = b2 & 0x7F
+                n = struct.unpack(">H", recv(2))[0] if n == 126 else n
+                mask = recv(4); msg = json.loads(bytes(x ^ mask[i % 4] for i, x in enumerate(recv(n))))
+                self.calls.append((msg["method"], msg.get("params")))
+                send({"method": "Target.targetInfoChanged", "params": {}})                     # an event first: skipped
+                m, prm = msg["method"], msg.get("params") or {}
+                if m == "Target.getTargets":
+                    res = {"targetInfos": [{"targetId": t, "type": "page"} for t in self.windows] + [{"targetId": "sw", "type": "service_worker"}]}
+                elif m == "Browser.getWindowForTarget":
+                    w, state = self.windows[prm["targetId"]]; res = {"windowId": w, "bounds": {"windowState": state}}
+                else:
+                    res = {}
+                send({"id": msg["id"], "result": res})
+        except OSError:
+            c.close()
+cdp = FakeCDP({"t1": (1, "minimized"), "t2": (2, "normal")})
+check("CDP client (standard library WebSocket): calls in order, events skipped, results back",
+      bo._cdp_browser_calls(cdp.port, [("Target.getTargets", {})])[0]["targetInfos"][0]["targetId"] == "t1")
+cdp.calls.clear()
+n = bo.restore_windows({"port": cdp.port})
+check("front: only the minimized window goes back to normal, and the tab already shown is activated (never another)",
+      n == 1 and ("Browser.setWindowBounds", {"windowId": 1, "bounds": {"windowState": "normal"}}) in cdp.calls
+      and not any(c == ("Browser.setWindowBounds", {"windowId": 2, "bounds": {"windowState": "normal"}}) for c in cdp.calls)
+      and cdp.calls[-1] == ("Target.activateTarget", {"targetId": "t1"}), cdp.calls)
+check("front: no CDP answer → 0 restored, never an exception", bo.restore_windows({"port": 1}) == 0)
+bo.processes = lambda: [(100, 1, ALPHA)]
+_rw, _sf = bo.restore_windows, bo.set_front
+bo.restore_windows = lambda a: 1; bo.set_front = lambda pid: True
+code, out = bo.do_front(ALPHA_A)
+check("front: the agent's browser comes to the front, saying how many windows came back", code == 0 and out == {"status": "front", "pid": 100, "restored": 1}, out)
+bo.processes = lambda: [(200, 1, HUMAN)]
+code, out = bo.do_front(ALPHA_A)
+check("front: a browser that isn't running → down", code == 1 and out["status"] == "down", out)
+bo.restore_windows, bo.set_front = _rw, _sf
+desk_sh = (HERE / "desk-browser.sh").read_text()
+check("desk-browser open: an open browser is brought to the front; a failure is exit 1 with the reason on stderr",
+      '"$OWNER" front "$WHO"' in desk_sh and 'fail msg desk.not_opened' in desk_sh and 'fail msg desk.not_closed' in desk_sh)
+# the Dock tray
+sys.path.insert(0, str(HERE.parent / "install"))
+import dock_tray
+def tile(path):
+    return {"tile-type": "file-tile", "tile-data": {"file-data": {"_CFURLString": "file://" + path.replace(" ", "%20") + "/"}}}
+dock = {"persistent-apps": [tile("/System/Applications/Mail.app"), tile("/Applications/Google Chrome.app"), tile("/Applications/Notes.app")], "other": 1}
+apps = ["/Users/you/Applications/RainbowOMMA/1 · Alpha — agent browser.app", "/Users/you/Applications/RainbowOMMA/2 · Bravo — agent browser.app"]
+d1 = dock_tray.place(dock, "/Users/you/Applications/RainbowOMMA", apps)
+kinds = [t["tile-type"] for t in d1["persistent-apps"]]
+check("Dock tray: the agents side by side right after Chrome, between two small spacers; the rest of the Dock as it was",
+      kinds == ["file-tile", "file-tile", "small-spacer-tile", "file-tile", "file-tile", "small-spacer-tile", "file-tile"]
+      and d1["persistent-apps"][3]["tile-data"]["file-label"] == "1 · Alpha — agent browser" and d1["other"] == 1, kinds)
+d2 = dock_tray.place(d1, "/Users/you/Applications/RainbowOMMA", apps[:1])
+check("Dock tray: running it again replaces the group in place (no second group)", [t["tile-type"] for t in d2["persistent-apps"]]
+      == ["file-tile", "file-tile", "small-spacer-tile", "file-tile", "small-spacer-tile", "file-tile"])
+d3 = dock_tray.place(d2, "/Users/you/Applications/RainbowOMMA")
+check("Dock tray --remove: only the group goes", d3["persistent-apps"] == dock["persistent-apps"])
+d4 = dock_tray.place({"persistent-apps": [tile("/System/Applications/Mail.app")]}, "/x/RainbowOMMA", apps[:1])
+check("Dock tray: no Chrome in the Dock → the group goes at the end", d4["persistent-apps"][0]["tile-data"]["file-data"]["_CFURLString"].endswith("Mail.app/"))
+tray = (HERE.parent / "install" / "make-dock-tray.sh").read_text()
+check("Dock tray: one applet per agent from browsers.json, no second Dock icon (LSUIElement), a dialog only on failure",
+      "browser-owner\" list" in tray and "LSUIElement" in tray and "on error e" in tray and not re.search(r"\b(alpha|bravo|charlie)\b", tray))
+mk2 = (HERE.parent / "install" / "make-desktop-apps.sh").read_text()
+check("ONLY=<agent>: only that agent's icons are built, and nothing is archived",
+      'ONLY="${ONLY:-}"' in mk2 and '[ "$who" != "$ONLY" ] && return 0' in mk2 and 'if [ -z "$ONLY" ]; then' in mk2)
+# office-owner: a failure says why
+_sub = ao.subprocess
+class _Fails:
+    TimeoutExpired = subprocess.TimeoutExpired
+    @staticmethod
+    def run(args, **kw):
+        return subprocess.CompletedProcess(args, 1, "", "Microsoft Excel got an error: Parameter error. (-50)")
+ao.subprocess, _run = _Fails, ao.RUN
+ao.RUN = None
+code, why = ao.osa("tell application \"Microsoft Excel\" to calculate")
+ao.subprocess, ao.RUN = _sub, _run
+check("office-owner: osascript's own reason comes back on a failure (it used to read only 'exit 1')", code == 1 and "(-50)" in why, why)
+check("tests never touch the live state: every owner here keeps it in a temporary folder",
+      all(str(m).startswith(tempfile.gettempdir()) for m in (bo.SHARED, ao.ROOT, po.STATE, pc.PO.STATE)), (bo.SHARED, ao.ROOT))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -3,6 +3,7 @@
 # "close all agents". Each icon runs desk-browser.sh from the folder the tools were installed into.
 #
 #   install/make-desktop-apps.sh [--bin DIR]      DIR: where install.sh put the tools (default ~/bin)
+#   ONLY=<agent> install/make-desktop-apps.sh     only that agent's two icons (a new agent): nothing is archived
 set -eu
 BIN="$HOME/bin"
 [ "${1:-}" = "--bin" ] && BIN="${2:?--bin needs a folder}"
@@ -22,53 +23,19 @@ py() {   # the first python3 that works — never macOS's stub, which only asks 
 msg() { py -I "$I18N" "$@" 2>/dev/null || echo "$1"; }
 CANCEL="$(msg desk.btn_cancel)"; CLOSE="$(msg desk.btn_close)"; ERR="$(msg desk.error)"
 
-mkdir -p "$ARCH"
-for f in "$DESK"/[0-9]\ ·\ *.app "$DESK"/[0-9][0-9]\ ·\ *.app; do
-  [ -e "$f" ] && mv "$f" "$ARCH/"
-done
-
-icon() {   # icon <out.icns> <hex> <text>
-  local png="$WORK/i.png" set="$WORK/i.iconset"
-  osascript -l JavaScript - "$png" "$2" "$3" <<'JS'
-ObjC.import('AppKit');
-function run(argv) {
-  const [out, hex, text] = argv; const v = parseInt(hex.slice(1), 16);
-  const r = ((v >> 16) & 255) / 255, g = ((v >> 8) & 255) / 255, b = (v & 255) / 255;
-  const light = (0.299 * r + 0.587 * g + 0.114 * b) > 0.65;
-  const S = 1024;
-  const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, S, S, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
-  $.NSGraphicsContext.saveGraphicsState;
-  $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
-  $.NSColor.colorWithDeviceRedGreenBlueAlpha(r, g, b, 1).setFill;
-  $.NSBezierPath.bezierPathWithOvalInRect($.NSMakeRect(64, 64, S - 128, S - 128)).fill;
-  const attrs = $.NSMutableDictionary.alloc.init;
-  attrs.setObjectForKey(light ? $.NSColor.colorWithDeviceRedGreenBlueAlpha(0.15, 0.12, 0, 1) : $.NSColor.whiteColor, $.NSForegroundColorAttributeName);
-  const s = $.NSString.alloc.initWithUTF8String(text);
-  // the largest bold size whose text fits inside the circle — English names are longer than Hebrew ones
-  let size = 260, sz;
-  do {
-    attrs.setObjectForKey($.NSFont.boldSystemFontOfSize(size), $.NSFontAttributeName);
-    sz = s.sizeWithAttributes(attrs);
-    size -= 10;
-  } while (sz.width > (S - 128) * 0.74 && size >= 80);
-  s.drawAtPointWithAttributes($.NSMakePoint((S - sz.width) / 2, (S - sz.height) / 2), attrs);
-  $.NSGraphicsContext.restoreGraphicsState;
-  rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $()).writeToFileAtomically(out, true);
-  return 'ok';
-}
-JS
-  rm -rf "$set"; mkdir -p "$set"
-  for s in 16 32 128 256 512; do
-    sips -z $s $s "$png" --out "$set/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s*2)) $((s*2)) "$png" --out "$set/icon_${s}x${s}@2x.png" >/dev/null
+ONLY="${ONLY:-}"
+if [ -z "$ONLY" ]; then
+  mkdir -p "$ARCH"
+  for f in "$DESK"/[0-9]\ ·\ *.app "$DESK"/[0-9][0-9]\ ·\ *.app; do
+    [ -e "$f" ] && mv "$f" "$ARCH/"
   done
-  iconutil -c icns "$set" -o "$1"
-}
+fi
 
-asq() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }   # text safe inside an AppleScript "string" (a label may hold " or \)
+. "$HERE/icon-lib.sh"
 
 app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
   local name="$1" hex="$2" txt="$3" act="$4" who="$5" confirm="${6:-}" src="$WORK/a.applescript" out="$DESK/$1.app"
+  [ -n "$ONLY" ] && [ "$who" != "$ONLY" ] && return 0
   local qn qc qb qcancel qclose qerr
   qn="$(asq "$name")"; qc="$(asq "$confirm")"; qb="$(asq "$BIN/desk-browser.sh")"
   qcancel="$(asq "$CANCEL")"; qclose="$(asq "$CLOSE")"; qerr="$(asq "$ERR")"
@@ -119,4 +86,4 @@ while IFS=$'\t' read -r who label hex; do
 done <<< "$AGENTS"
 app "$n · ✖ $(msg desk.app.close_all)" "#757575" "✖ $(msg desk.name.all)" close agents "$(msg desk.confirm_all names="$LABELS")"
 rm -rf "$WORK"
-echo "ok — $n icons on the desktop; the old ones in $ARCH"
+if [ -n "$ONLY" ]; then echo "ok — the icons of $ONLY on the desktop"; else echo "ok — $n icons on the desktop; the old ones in $ARCH"; fi

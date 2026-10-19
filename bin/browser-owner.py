@@ -2,7 +2,7 @@
 """browser-owner — the ONE owner of every agent's Chrome on a shared Mac.
 
     browser-owner list | names | status AGENT | start AGENT [--by WHO] | stop AGENT --by human [--allow-reopen]
-    browser-owner idle-stop AGENT --by WHO | recover AGENT [--by WHO] | human-theme
+    browser-owner idle-stop AGENT --by WHO | recover AGENT [--by WHO] | front AGENT | human-theme
 
 Agents are rows in browsers.json beside this file. See docs/DESIGN.md for every status word and rule.
 Exit codes: 0 ok · 2 refused · 1 failure. One JSON answer, always.
@@ -32,6 +32,7 @@ SHARED = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(HOME / ".
 CHROME_APP = "/Applications/Google Chrome.app"
 CHROME_BIN = "Google Chrome.app/Contents/MacOS/Google Chrome"
 STALE_FLAG_AFTER = 120
+LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 127.0.0.1 is never asked through an http_proxy
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 PORTS_BASE, PORTS_SIZE = 41000, 100    # an agent's default ports: 41000 + 100 × (CDP port − 9222) — below macOS's ephemeral 49152+
 HUMAN_PORTS = [3000, 3001, 4200, 5000, 5173, 5432, 6379, 8000, 8080, 8888, 9000, 27017]   # the well-known ones stay the human's
@@ -161,7 +162,7 @@ def save(a, st):
 
 def healthy(a, timeout=2.0):
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{a['port']}/json/version", timeout=timeout) as r:
+        with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/version", timeout=timeout) as r:
             json.loads(r.read())
         return True
     except Exception:
@@ -466,8 +467,8 @@ def install_theme(a, folder, timeout=25.0):
 def ensure_theme(a, st):
     """install (or rebuild) the agent's theme when it is missing or its color/name changed — only while its browser is down.
     A failure is recorded and the start goes on with the profile color (never blocks the agent)."""
-    if st.get("theme") == theme_key(a):
-        return "kept"
+    if st.get("theme") == theme_key(a) and theme_saved(a):
+        return "kept"                # only while the profile really carries it: signing in to Google lets Chrome Sync replace it
     try:
         ok, res = install_theme(a, build_theme(a))
     except Exception as exc:
@@ -532,6 +533,113 @@ def set_front(pid):
         return r.returncode == 0
     except Exception:
         return False
+
+
+def _cdp_browser_calls(port, calls, timeout=5.0):
+    """a tiny standard-library WebSocket client for the browser's own CDP endpoint (browser-owner runs on whatever python3 is
+    there, with -I — no websocket package). calls = [(method, params)] → their results, in order. Raises on any failure."""
+    import base64
+    import socket
+    import struct
+    with LOCAL.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
+        url = json.loads(r.read())["webSocketDebuggerUrl"]
+    path = "/" + url.split("/", 3)[3]
+    sk = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        key = base64.b64encode(os.urandom(16)).decode()
+        sk.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                    f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = sk.recv(4096)
+            if not chunk:
+                raise OSError("cdp: handshake closed")
+            buf += chunk
+        if b" 101 " not in buf.split(b"\r\n", 1)[0]:
+            raise OSError("cdp: handshake refused")
+        rest = buf.split(b"\r\n\r\n", 1)[1]
+
+        def recv_exact(n):
+            nonlocal rest
+            while len(rest) < n:
+                chunk = sk.recv(65536)
+                if not chunk:
+                    raise OSError("cdp: closed")
+                rest += chunk
+            out, rest = rest[:n], rest[n:]
+            return out
+
+        def send(obj):
+            data = json.dumps(obj).encode()
+            n = len(data)
+            hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else
+                                   bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+            mask = os.urandom(4)
+            sk.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+        def recv_msg():
+            while True:
+                b1, b2 = recv_exact(2)
+                n = b2 & 0x7F
+                if n == 126:
+                    n = struct.unpack(">H", recv_exact(2))[0]
+                elif n == 127:
+                    n = struct.unpack(">Q", recv_exact(8))[0]
+                payload = recv_exact(n)
+                if b1 & 0x0F == 1:
+                    return json.loads(payload.decode("utf-8"))
+
+        out = []
+        for i, (method, params) in enumerate(calls, 1):
+            send({"id": i, "method": method, "params": params or {}})
+            while True:
+                m = recv_msg()
+                if m.get("id") == i:
+                    if "error" in m:
+                        raise OSError(f"cdp {method}: {m['error'].get('message')}")
+                    out.append(m.get("result") or {})
+                    break
+        return out
+    finally:
+        sk.close()
+
+
+def restore_windows(a):
+    """activating an app never un-minimizes its windows: through the agent's own CDP port, every minimized window of its
+    browser goes back to normal, and the tab already shown is activated (never another tab). → windows restored (0 also when
+    CDP did not answer)"""
+    try:
+        targets = _cdp_browser_calls(a["port"], [("Target.getTargets", {})])[0].get("targetInfos", [])
+        wins = {}
+        for tid in [x["targetId"] for x in targets if x.get("type") == "page"]:
+            try:
+                r = _cdp_browser_calls(a["port"], [("Browser.getWindowForTarget", {"targetId": tid})])[0]
+                wins[r["windowId"]] = (r.get("bounds") or {}).get("windowState")
+            except Exception:
+                continue
+        todo = [w for w, state in wins.items() if state == "minimized"]
+        if todo:
+            _cdp_browser_calls(a["port"], [("Browser.setWindowBounds", {"windowId": w, "bounds": {"windowState": "normal"}}) for w in todo])
+        try:                                     # Chrome lists the most recently active page first: the one already shown
+            with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/list", timeout=3) as r:
+                shown = [x["id"] for x in json.loads(r.read()) if x.get("type") == "page"][:1]
+        except Exception:
+            shown = []
+        if shown:                                # on macOS this also de-miniaturizes that window (Chrome's windowState can lag the Dock)
+            _cdp_browser_calls(a["port"], [("Target.activateTarget", {"targetId": shown[0]})])
+        return len(todo)
+    except Exception:
+        return 0
+
+
+def do_front(a):
+    """the agent's browser to the front for the human — a minimized window comes back first"""
+    roots = tree_of(a, processes())[0]
+    if not roots:
+        return 1, {"status": "down", "why": t("bo.front_down", label=a["label"])}
+    restored = restore_windows(a)
+    ok = set_front(roots[0])
+    return (0 if ok else 1), {"status": "front" if ok else "no-front", "pid": roots[0], "restored": restored}
 
 
 def give_focus_back(a, before, wait=4.0):
@@ -707,7 +815,7 @@ def do_recover(a, by):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "human-theme"])
+    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "human-theme"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
     ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
@@ -744,6 +852,10 @@ def main(argv=None):
     if a.cmd == "status":
         print(json.dumps(view(ag), ensure_ascii=False))
         return 0
+    if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
+        code, out = do_front(ag)
+        print(json.dumps(out, ensure_ascii=False))
+        return code
     if ag.get("managedBy"):
         print(json.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
         return 2

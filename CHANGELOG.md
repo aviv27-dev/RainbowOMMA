@@ -28,6 +28,11 @@ exit codes are an API and change only in a major version.
 - `CONTRIBUTING.md`, `SECURITY.md`, issue and pull request templates.
 - A logo, real screenshots, and a branded social preview.
 
+- `browser-owner front <agent>`: brings the agent's browser to the human's front, un-minimizing its windows through its
+  own CDP port. `desk-browser.sh open` uses it for a browser that is already open.
+- `install/make-dock-tray.sh`: the agents' browsers as one group in the Dock, right after Chrome (`--remove` takes it out).
+- `ONLY=<agent> install/make-desktop-apps.sh`: one agent's icons, nothing archived.
+
 ### Changed
 - The Claude Code guard moved to `bin/rainbowomma-guard` (installed with the other tools); the Hermes adapter files
   moved to `adapters/hermes/`.
@@ -39,6 +44,10 @@ exit codes are an API and change only in a major version.
   registry gets a clear answer instead of a traceback.
 
 ### Fixed
+- An agent's theme comes back after Chrome Sync replaced it (signing in to Google inside the agent's profile).
+- `office-owner` reports osascript's own reason for a failure instead of "exit 1".
+- `desk-browser.sh` exits 1 with the reason on stderr when a browser didn't open or close.
+- The test suite keeps all its state in a temporary folder, so it never shares a lock or lease with a live install.
 - The guard reads the shell line instead of matching raw text. It now blocks `/usr/bin/pkill`, `\pkill`, wrappers
   (`sudo`, `env`, `nohup`, `xargs`), `sh -c` / `eval`, `ps | grep | xargs kill` and `lsof -ti :92xx | xargs kill`, and
   Chrome started with `open -a … --remote-debugging-port`. It no longer blocks a commit message, an `echo`, a search or

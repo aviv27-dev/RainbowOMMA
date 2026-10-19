@@ -148,6 +148,7 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `browser-owner stop <agent> --by human [--allow-reopen]` | only the human closes it; it stays closed unless `--allow-reopen` |
 | `browser-owner recover <agent> --by <who>` | restarts a hung browser after three probes; never one the human closed |
 | `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
+| `browser-owner front <agent>` | brings the agent's browser to the front for you, un-minimizing it through its own CDP port (`restored` says how many windows) |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
 | `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back |
@@ -177,7 +178,13 @@ Status words and exit codes never change with the language, because agents parse
 ### 🖥️ One-click desktop controls
 `install/make-desktop-apps.sh` puts colored open/close icons on the desktop for every agent in your `browsers.json`,
 one pair for your own Chrome, and a "close all agents" button. Closing an agent's browser asks for confirmation first.
-If you installed the tools somewhere other than `~/bin`, pass `--bin <folder>`.
+If you installed the tools somewhere other than `~/bin`, pass `--bin <folder>`. A new agent? `ONLY=<agent>` builds just its
+two icons and leaves the others where they are.
+
+Every Chrome shares one Dock icon, so `install/make-dock-tray.sh` adds the agents' browsers to the Dock as one group,
+right after Chrome: a circle in each agent's color with its name. A click opens that agent's browser, or brings it to the
+front if it's already open, even when it's minimized. `--remove` takes the group out again; the rest of your Dock is
+never touched.
 
 ![Colored desktop icons for opening and closing each agent's browser, the human's Chrome, and all agents](docs/images/desktop-icons.png)
 
