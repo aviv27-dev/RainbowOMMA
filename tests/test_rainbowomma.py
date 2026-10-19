@@ -1171,5 +1171,52 @@ check("office-owner: osascript's own reason comes back on a failure (it used to 
 check("tests never touch the live state: every owner here keeps it in a temporary folder",
       all(str(m).startswith(tempfile.gettempdir()) for m in (bo.SHARED, ao.ROOT, po.STATE, pc.PO.STATE)), (bo.SHARED, ao.ROOT))
 
+# ── heal: the colors survive Chrome Sync and Chrome updates ──
+notes, inst = [], []
+_nt, _vw, _cv, _pr = bo.notify, bo.view, bo.chrome_version, bo.processes
+bo.notify = lambda title, text: notes.append(text)
+bo.install_theme = lambda a, folder, timeout=25.0: fake_install(a, record=inst)
+bo.CHROME_VER_FILE = tmp / "chrome-version.json"; bo.DOCK_APPS = tmp / "dock-apps"; bo.DOCK_APPS.mkdir(exist_ok=True)
+(bo.DOCK_APPS / "3 · צ׳רלי — agent browser.app").mkdir(exist_ok=True)
+def drop_theme(a):
+    pp = Path(a["profile"], "Default", "Preferences"); d = json.loads(pp.read_text())
+    d.setdefault("extensions", {})["theme"] = {"id": ""}; pp.write_text(json.dumps(d))
+bo.chrome_version = lambda: "155.0.1"
+drop_theme(CHARLIE_A); up[9224] = False; bo.processes = lambda: [(200, 1, HUMAN)]
+r = bo.heal({"charlie": CHARLIE_A})
+check("heal: a CLOSED browser whose theme Chrome Sync took gets it back now (windowless), with no notification",
+      inst == [1] and r["agents"][0]["theme"] == "installed" and not notes and bo.theme_saved(CHARLIE_A), r)
+r = bo.heal({"charlie": CHARLIE_A})
+check("heal: …and the next pass leaves it alone", inst == [1] and r["agents"][0]["theme"] == "ok", r)
+drop_theme(CHARLIE_A); bo.view = lambda a, st=None, rows=None: {"roots": [400], "profileBusy": []}
+r1 = bo.heal({"charlie": CHARLIE_A}); r2 = bo.heal({"charlie": CHARLIE_A})
+check("heal: an OPEN browser is never restarted — one notification (not one per pass), put back on its next start",
+      inst == [1] and r1["agents"][0]["theme"] == "missing-open" and len(notes) == 1 and "צ׳רלי" in notes[0]
+      and json.loads(Path(CHARLIE_A["state"]).read_text()).get("themeMissingSince"), (r1, notes))
+bo.view = _vw; up[9224] = False
+r = bo.heal({"charlie": CHARLIE_A})
+check("heal: once it's closed the theme comes back and the 'missing' mark is cleared",
+      inst == [1, 1] and not json.loads(Path(CHARLIE_A["state"]).read_text()).get("themeMissingSince"), r)
+notes.clear(); bo.chrome_version = lambda: "156.0.2"
+r = bo.heal({"charlie": CHARLIE_A})
+check("heal: a Chrome update is noted, colors and Dock applets checked — one notification that all is in place",
+      r["chromeChanged"] and r["dockMissing"] == [] and len(notes) == 1 and "156.0.2" in notes[0], (r, notes))
+notes.clear(); bo.chrome_version = lambda: "157.0.0"
+r = bo.heal({"charlie": CHARLIE_A, "alpha": ALPHA_A})
+check("heal: …an agent without its Dock applet is named in that notification", r["dockMissing"] == [ALPHA_A["label"]]
+      and len(notes) == 1 and ALPHA_A["label"] in notes[0], (r, notes))
+r = bo.heal({"charlie": CHARLIE_A})
+check("heal: no Chrome change → no notification", not r["chromeChanged"] and len(notes) == 1)
+bo.notify, bo.chrome_version, bo.processes = _nt, _cv, _pr
+bo.install_theme = fake_install
+r = subprocess.run(["bash", installer, "--with-heal"], capture_output=True, text=True, env=ienv)
+hp = fake_home / "Library" / "LaunchAgents" / "com.rainbowomma.heal.plist"
+check("install --with-heal: the heal job, every 30 minutes and at login, with absolute paths",
+      r.returncode == 0 and hp.exists() and "~" not in hp.read_text() and f"{fake_home}/bin/browser-owner" in hp.read_text()
+      and "<integer>1800</integer>" in hp.read_text(), r.stdout + r.stderr)
+tray = (HERE.parent / "install" / "make-dock-tray.sh").read_text()
+check("Dock tray: the person's own Chrome closes the group (human.json color, or neutral grey)",
+      "human-chrome.sh" in tray and "dock.human_name" in tray and "#B0BEC5" in tray)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

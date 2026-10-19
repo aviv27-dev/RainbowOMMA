@@ -36,6 +36,7 @@
 | `bin/desk-browser.sh` | what the desktop icons run: `open\|close <agent>`, `open\|close human`, `close agents` |
 | `tools/cursor-themes/build_cursor_themes.py`, `cua.default.lottie` | one Cua cursor theme per agent in its color — §6 |
 | `adapters/hermes/cua-cursor-theme.patch`, `adapters/hermes/cursor-config.yaml` | Hermes Agent: select the agent's cursor theme per session — §6 |
+| `install/com.rainbowomma.heal.plist` | the launchd heal template (every 30 min, at login); `install.sh --with-heal` writes it with absolute paths |
 | `install/com.rainbowomma.agent-office-sweep.plist` | the launchd sweep template; `install.sh --with-sweep` writes it with absolute paths |
 | `.github/workflows/tests.yml`, `release.yml` | tests on macOS for every push and PR · a release from a `v*` tag or by hand from the Actions tab |
 | `tests/test_rainbowomma.py` | fake process table, fake osascript, fake Chrome — never touches a real browser |
@@ -75,7 +76,10 @@
   browser's root process is brought to the front. Local CDP calls never go through an `http_proxy`.
 - **A theme Chrome Sync replaced.** Signing in to Google inside an agent profile lets Chrome Sync swap the agent's theme
   for the account's (`extensions.theme.id` emptied). The theme counts as installed only while the profile carries it, so
-  the next start puts it back.
+  the next start puts it back. `heal` (the `com.rainbowomma.heal` launchd job: every 30 minutes and at login) does it
+  sooner for a closed browser, under its lock. An open browser is never restarted for its colors: `themeMissingSince`
+  and one notification. A Chrome update (`CFBundleShortVersionString`, kept in `chrome-version.json`) gets one
+  notification saying whether every agent still has its theme and, if the Dock tray was built, its applet.
 
 ## 4. agent-office
 A document is identified by its full path (every spelling: `/var` vs `/private/var`). It is closed only if the agent

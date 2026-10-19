@@ -30,7 +30,10 @@ exit codes are an API and change only in a major version.
 
 - `browser-owner front <agent>`: brings the agent's browser to the human's front, un-minimizing its windows through its
   own CDP port. `desk-browser.sh open` uses it for a browser that is already open.
-- `install/make-dock-tray.sh`: the agents' browsers as one group in the Dock, right after Chrome (`--remove` takes it out).
+- `install/make-dock-tray.sh`: the agents' browsers as one group in the Dock, right after Chrome, closed by the person's
+  own Chrome in their color (`--remove` takes it out).
+- `browser-owner heal` and `install.sh --with-heal`: every 30 minutes and at login, the colors Chrome Sync took come back
+  (now for a closed browser; on the next start, with one notification, for an open one), and a Chrome update is noted.
 - `ONLY=<agent> install/make-desktop-apps.sh`: one agent's icons, nothing archived.
 
 ### Changed

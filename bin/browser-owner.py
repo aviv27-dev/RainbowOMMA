@@ -2,7 +2,7 @@
 """browser-owner — the ONE owner of every agent's Chrome on a shared Mac.
 
     browser-owner list | names | status AGENT | start AGENT [--by WHO] | stop AGENT --by human [--allow-reopen]
-    browser-owner idle-stop AGENT --by WHO | recover AGENT [--by WHO] | front AGENT | human-theme
+    browser-owner idle-stop AGENT --by WHO | recover AGENT [--by WHO] | front AGENT | heal | human-theme
 
 Agents are rows in browsers.json beside this file. See docs/DESIGN.md for every status word and rule.
 Exit codes: 0 ok · 2 refused · 1 failure. One JSON answer, always.
@@ -813,9 +813,81 @@ def do_recover(a, by):
     return do_start(a, by)
 
 
+CHROME_VER_FILE = SHARED / "chrome-version.json"
+DOCK_APPS = Path(os.path.expanduser(os.environ.get("RAINBOW_DOCK_APPS") or "~/Applications/RainbowOMMA"))   # make-dock-tray.sh's
+
+
+def chrome_version():
+    try:
+        out = subprocess.run(["/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", f"{CHROME_APP}/Contents/Info.plist"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def notify(title, text):
+    try:
+        subprocess.run(["osascript", "-e", f"display notification {json.dumps(text)} with title {json.dumps(title)}"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+def heal(reg):
+    """keep every agent's colors: a CLOSED browser whose theme is gone (Chrome Sync, a settings reset) gets it back now
+    (windowless install, under its lock); an OPEN one is never restarted from here — one notification, and its next start
+    puts it back. A Chrome update is recorded, with one notification on whether every theme and Dock applet is in place."""
+    rows = processes()
+    out = []
+    for name, a in reg.items():
+        if a.get("managedBy") or a.get("noTheme"):
+            continue
+        st = load(a)
+        if st.get("theme") == theme_key(a) and theme_saved(a):
+            if st.pop("themeMissingSince", None):
+                save(a, st)
+            out.append({"agent": name, "theme": "ok"})
+            continue
+        v = view(a, st=st, rows=rows)
+        if v["roots"] or v.get("profileBusy"):
+            if not st.get("themeMissingSince"):
+                st["themeMissingSince"] = now_iso()
+                save(a, st)
+                notify("RainbowOMMA", t("bo.heal_missing_open", label=a["label"]))
+                log(a, "heal: theme missing while the browser is open — put back on the next start")
+            out.append({"agent": name, "theme": "missing-open", "since": st.get("themeMissingSince")})
+            continue
+        Path(a["lock"]).parent.mkdir(parents=True, exist_ok=True)
+        with open(a["lock"], "w") as lk:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                out.append({"agent": name, "theme": "busy"})
+                continue
+            res = ensure_theme(a, st)
+            st.pop("themeMissingSince", None)
+            save(a, st)
+            log(a, f"heal: theme {res} while the browser was closed")
+            out.append({"agent": name, "theme": res})
+    ver, prev = chrome_version(), None
+    try:
+        prev = json.loads(CHROME_VER_FILE.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        pass
+    apps = sorted(p.name for p in DOCK_APPS.glob("*.app")) if DOCK_APPS.exists() else []
+    missing_apps = [x["label"] for x in reg.values() if apps and not any(f"· {x['label']} —" in n for n in apps)]
+    if ver and ver != prev:
+        atomic_write(CHROME_VER_FILE, json.dumps({"version": ver, "at": now_iso(), "previous": prev}, ensure_ascii=False))
+        if prev:
+            bad = [x["agent"] for x in out if x["theme"] not in ("ok", "kept", "installed")] + missing_apps
+            notify("RainbowOMMA", t("bo.heal_chrome_ok", ver=ver) if not bad else t("bo.heal_chrome_check", ver=ver, names=", ".join(bad)))
+    return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "human-theme"])
+    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "human-theme"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
     ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
@@ -833,6 +905,13 @@ def main(argv=None):
                         title=t("bo.human_title"))
         print(json.dumps({"status": "built", "folder": str(d)}, ensure_ascii=False))
         return 0
+    if a.cmd == "heal":
+        try:
+            print(json.dumps(heal(reg), ensure_ascii=False))
+            return 0
+        except Exception as exc:   # one JSON answer, always
+            print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
     if a.cmd == "names":
         # plain words for shell callers (kill-chrome --all): the agents this owner may stop — no JSON parsing in bash
         print(" ".join(n for n, x in reg.items() if not x.get("managedBy")))
