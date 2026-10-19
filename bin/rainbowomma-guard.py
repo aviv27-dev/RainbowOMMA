@@ -25,6 +25,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # -I drops the script's folder; the receipts live beside it
 
@@ -39,6 +40,10 @@ WHY = {
     "human-active": "the human is using the keyboard or mouse right now — wait a few seconds and try again (a GUI action now would land in their window)",
     "human-browser": "a browser MCP attached to the human's own Chrome (--autoConnect, --extension) would act in their tabs — "
                      "point it at your own browser: `browser-owner mcp-config <agent>`",
+    "send": "sending through Messages or Mail can't be taken back — ask the human first: "
+            "`rainbowomma-approve ask --agent <you> --why \"…\" -- <this exact command>`, then run it again",
+    "approval-up": "the human is answering an approval dialog — no agent clicks or types until they do",
+    "human-screen": "the human took over the screen — no agent clicks or types until they hand it back; wait, or ask them",
     "paused": "the human paused all agents (the menu-bar stop) — nothing runs until they resume; wait, or ask them",
     "human": "only the human acts as the human: --by human (and the desktop controls) are the person's, never an agent's",
 }
@@ -162,8 +167,12 @@ def verdict(command):
             return WHY["human"]
         if name == "rm" and _recursive(args) and any(_protected(x) for x in args if not x.startswith("-")):
             return WHY["rm-home"]
-        if _gui_command(name, args) and human_active():
-            return WHY["human-active"]
+        if name == "osascript" and _sends(" ".join(args)) and not _approved(command):
+            return WHY["send"]
+        if _gui_command(name, args):
+            why = WHY["approval-up"] if _approval_up() else WHY["human-active"] if human_active() else screen_verdict(foreground=True)
+            if why:
+                return why
         if any("chrome-devtools-mcp" in x for x in [name] + args) and "--autoconnect" in args:
             return WHY["human-browser"]
         if any("@playwright/mcp" in x for x in [name] + args) and "--extension" in args:
@@ -316,7 +325,54 @@ def gui_tool_verdict(event):
     action = re.split(r"__|\.|/", name)[-1].lower()
     if READ_ONLY_ACTIONS.search(action):
         return None
-    return WHY["human-active"] if human_active() else None
+    if _approval_up():
+        return WHY["approval-up"]
+    if human_active():
+        return WHY["human-active"]
+    return screen_verdict(foreground=not re.search(r"cua", name, re.I))      # Cua drives apps in the background
+
+
+SEND = re.compile(r'tell application "?(messages|mail)"?.*\b(send|outgoing message)\b', re.S)
+
+
+def _sends(text):
+    return bool(SEND.search(text))
+
+
+def _approved(command):
+    try:
+        return bool(_load_beside("rainbow_approve", "rainbowomma-approve.py").consume(command))
+    except Exception:
+        return False
+
+
+def _approval_up():
+    try:
+        return _load_beside("rainbow_approve", "rainbowomma-approve.py").pending()
+    except Exception:
+        return False
+
+
+def screen_verdict(foreground):
+    """the human's takeover stops every GUI action; a foreground one also needs the screen lease (taken here, 15 s, renewed)"""
+    try:
+        so = _load_beside("rainbow_screen_owner", "screen-owner.py")
+        cur = so.holder()
+    except Exception:
+        return None
+    if cur and cur["holder"] == "human":
+        return WHY["human-screen"]
+    if not foreground:
+        return None
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if not me:
+        return f"the screen is {cur['holder']}'s right now — wait for it" if cur else None
+    ok, lease = so.try_take(me, so.AUTO_TTL_S, auto=True)
+    if ok:
+        return None
+    left = max(1, int(float(lease["until"]) - time.time()))
+    return (f"the screen is {lease['holder']}'s for {left} s more — wait, or `screen-owner take {me} --wait 60` "
+            f"(an agent that drives in the background, like Cua, doesn't need it)")
 
 
 CDP_URL = re.compile(r"(?:127\.0\.0\.1|localhost):(92(?:2[2-9]|[3-9]\d))\b")

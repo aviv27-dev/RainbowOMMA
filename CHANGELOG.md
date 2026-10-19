@@ -6,6 +6,11 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `screen-owner`: one lease for the screen (keyboard, mouse, the window in front). Foreground GUI actions take a short
+  lease by themselves through the guard, so two agents never type into each other's windows; `takeover`/`handback`
+  let the human stop every agent's GUI action and give it back (also in the menu bar).
+- `rainbowomma-approve`: sending through Messages or Mail needs the human's "Allow once" for that exact command; no
+  agent may click while the dialog is up. MCP tools: `take_screen`, `release_screen`, `ask_human_approval`.
 - `browser-owner mcp-config`: a Chrome DevTools MCP or Playwright MCP entry on the agent's own browser; the guard refuses
   `--autoConnect`/`--extension` and another agent's CDP port.
 - `sensitiveSites`: an agent's browser tools open them only while the human is at the Mac.

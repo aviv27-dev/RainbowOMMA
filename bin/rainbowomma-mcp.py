@@ -46,6 +46,18 @@ TOOLS = [
     {"name": "my_processes", "description": "Your processes and the ports they listen on.",
      "inputSchema": {"type": "object", "properties": {}},
      "argv": lambda me, a: ["proc-owner", "list", me]},
+    {"name": "take_screen", "description": "Hold the screen (keyboard, mouse, the window in front) before driving the foreground for a while. "
+                                           "Background drivers (Cua) don't need it. Refused while the human types or holds it.",
+     "inputSchema": {"type": "object", "properties": {"minutes": {"type": "number"}, "wait_seconds": {"type": "number"}}},
+     "argv": lambda me, a: ["screen-owner", "take", me, "--minutes", str(float(a.get("minutes") or 5)), "--wait", str(float(a.get("wait_seconds") or 0))]},
+    {"name": "release_screen", "description": "Give the screen back as soon as you're done with the foreground.",
+     "inputSchema": {"type": "object", "properties": {}},
+     "argv": lambda me, a: ["screen-owner", "release", me]},
+    {"name": "ask_human_approval", "description": "Before sending anything that can't be taken back (Messages, Mail): the human sees exactly "
+                                                  "this command and allows it once, or not. Then run exactly that command.",
+     "inputSchema": {"type": "object", "properties": {"why": {"type": "string"}, "command": {"type": "array", "items": {"type": "string"}}},
+                     "required": ["command"]},
+     "argv": lambda me, a: ["rainbowomma-approve", "ask", "--agent", me, "--why", str(a.get("why") or ""), "--", *[str(x) for x in a["command"]]]},
     {"name": "browser_status", "description": "Your browser: up, down, hung, blocked, profile-busy, or closed by the human.",
      "inputSchema": {"type": "object", "properties": {}},
      "argv": lambda me, a: ["browser-owner", "status", me]},

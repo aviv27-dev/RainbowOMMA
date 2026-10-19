@@ -230,3 +230,16 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   receipts; every item runs the same tool a human would (`desk-browser.sh`, `rainbowomma-pause`, `rainbowomma-doctor`).
   `install.sh --with-menubar` writes the plugin into SwiftBar's plugin folder (or `$RAINBOW_HOME/swiftbar`).
 
+## 13. Wave C: the screen, the human's takeover, approvals
+- **One screen lease** (`$RAINBOW_HOME/state/screen.json`, under a lock): `{holder, until}`. A foreground GUI action by a
+  named agent (AppleScript to System Events with keystroke/click, `cliclick`, an MCP computer-use tool that isn't Cua)
+  takes or renews a 15 s lease through the guard; while another agent holds it, the action is refused with how long
+  it has left. `screen-owner take` holds it longer (an agent can't take it while the human types). Cua's background
+  actions don't need it.
+- **The human's takeover** (`holder: "human"`, default 30 min, `handback` ends it): the guard refuses every GUI action,
+  background ones too, and the cursor proxy holds them, then answers with `isError`.
+- **Approvals.** The guard refuses AppleScript that sends through Messages or Mail (`send`, a new outgoing message)
+  unless that exact command (its shell words) was approved: `rainbowomma-approve ask` shows the human a dialog with
+  the command, "Allow once" stores its hash for 5 minutes, and the guard consumes it. While the dialog is up
+  (`approval-pending.json`), no agent may click or type, so it can't press "Allow" itself.
+

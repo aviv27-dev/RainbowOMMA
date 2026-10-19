@@ -4,6 +4,7 @@
 SwiftBar (https://swiftbar.app) runs the plugin install.sh --with-menubar writes, every 10 seconds; this prints its menu:
     the title     one dot per agent — filled when its browser is up — or ⏸ while the human paused all agents
     the menu      each agent: its status, open / bring to front, close · pause / resume all agents (⌘⌥⌃P)
+                  · take over the screen / hand it back
                   · the latest receipts · the doctor
 Read-only: every action in the menu runs the same tool the human could run in a terminal.
 """
@@ -46,7 +47,7 @@ def action(tool, *params, terminal=False, refresh=True):
     return out + f" terminal={'true' if terminal else 'false'}" + (" refresh=true" if refresh else "")
 
 
-def menu(agents, paused, receipts):
+def menu(agents, paused, receipts, screen=None):
     lines = []
     if paused:
         lines.append(f"⏸ {t('mb.paused_title')}")
@@ -63,6 +64,12 @@ def menu(agents, paused, receipts):
         lines.append(f"▶ {t('mb.resume_all')} | " + action("rainbowomma-pause", "off") + f" shortcut={PAUSE_SHORTCUT}")
     else:
         lines.append(f"⏸ {t('mb.pause_all')} | " + action("rainbowomma-pause", "on") + f" shortcut={PAUSE_SHORTCUT}")
+    if screen and screen.get("holder") == "human":
+        lines.append(f"🖐 {t('mb.handback')} | " + action("screen-owner", "handback"))
+    else:
+        if screen and screen.get("holder"):
+            lines.append(f"{t('mb.screen_held', who=screen['holder'])} | color=#757575")
+        lines.append(f"🖐 {t('mb.takeover')} | " + action("screen-owner", "takeover"))
     lines.append("---")
     lines.append(t("mb.recent"))
     for r in reversed(receipts):
@@ -75,7 +82,7 @@ def menu(agents, paused, receipts):
 def main():
     listing = run_json("browser-owner", "list").get("agents", [])
     paused = (rainbow_receipts.path().parent.parent / "state" / "paused.json").exists()     # $RAINBOW_HOME/state
-    print(menu(listing, paused, rainbow_receipts.read(n=8)))
+    print(menu(listing, paused, rainbow_receipts.read(n=8), run_json("screen-owner", "who")))
     return 0
 
 
