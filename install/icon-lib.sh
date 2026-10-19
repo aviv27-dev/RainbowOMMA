@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # icon-lib.sh — sourced by make-desktop-apps.sh and make-dock-tray.sh: icon() draws the colored circle with a name in it as an
 # .icns; asq() makes text safe inside an AppleScript string
 icon() {   # icon <out.icns> <hex> <text> [inset px of 1024] [largest font size] — needs $WORK

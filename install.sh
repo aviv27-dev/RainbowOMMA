@@ -2,11 +2,12 @@
 # RainbowOMMA installer — copies the tools into one folder, creates the registry from the example (never overwrites yours),
 # creates the state folders, and optionally loads the launchd sweep for office-owner with absolute paths.
 #
-#   ./install.sh [--bin DIR] [--with-sweep] [--with-heal] [--dry-run]
+#   ./install.sh [--bin DIR] [--with-sweep] [--with-heal] [--adapter AGENT …] [--dry-run]
 #
 #   --bin DIR      where the tools go (default: ~/bin). They look for each other in the same folder.
 #   --with-sweep   install + load the launchd job that sweeps stale document leases every 15 minutes
 #   --with-heal    install + load the launchd job that puts back agent colors Chrome Sync took (every 30 min, at login)
+#   --adapter A    write agent framework A's adapter, with your paths filled in, to $RAINBOW_HOME/adapters/A (see docs/AGENTS.md)
 #   --dry-run      print what would happen, change nothing
 #
 # RAINBOW_HOME (default ~/.rainbowomma) is where logs, state and themes live; the jobs are given the same value.
@@ -16,14 +17,16 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HOME/bin"
 SWEEP=0
 HEAL=0
+ADAPTERS=""
 DRY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --bin) BIN="${2:?--bin needs a folder}"; shift 2 ;;
     --with-sweep) SWEEP=1; shift ;;
     --with-heal) HEAL=1; shift ;;
+    --adapter) ADAPTERS="$ADAPTERS ${2:?--adapter needs an agent framework, e.g. claude-code}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -86,6 +89,22 @@ PY
 }
 [ "$SWEEP" = 1 ] && job "$LABEL" sweep
 [ "$HEAL" = 1 ] && job com.rainbowomma.heal heal
+
+for A in $ADAPTERS; do
+  SRC="$HERE/adapters/$A"
+  if [ ! -d "$SRC" ]; then
+    echo "no adapter called $A — there are: $(ls "$HERE/adapters" | tr '\n' ' ')" >&2; exit 2
+  fi
+  DEST="$ROOT/adapters/$A"
+  echo "→ adapter $A in $DEST (your paths filled in) — merge it into $A's settings as docs/AGENTS.md says"
+  [ "$DRY" = 1 ] && { echo "would: copy $SRC with /Users/you → $HOME"; continue; }
+  mkdir -p "$DEST"
+  ( cd "$SRC" && find . -type f ) | while IFS= read -r f; do
+    mkdir -p "$DEST/$(dirname "$f")"
+    sed -e "s|/Users/you/bin|$BIN|g" -e "s|/Users/you|$HOME|g" "$SRC/$f" > "$DEST/$f"
+    if [ -x "$SRC/$f" ]; then chmod +x "$DEST/$f"; fi
+  done
+done
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "note: $BIN is not on your PATH — call the tools by their full path, or add it." ;; esac
 cat <<EOF

@@ -1263,5 +1263,66 @@ pm.human_idle_s = lambda: 0.0; slept.clear()
 check("cursor proxy: …never longer than RAINBOW_HUMAN_WAIT_S (30 s), and a screenshot never waits",
       pm.wait_for_human("type_text", sleep=slept.append) <= 30 + 5 and pm.wait_for_human("screenshot", sleep=slept.append) == 0)
 
+# ── a Chrome of its own: each agent may run another Chrome channel (separate app, Dock icon and ⌘Q) ──
+r = json.loads(REG.read_text()); r["agents"]["zed"] = {"label": "z", "port": 9230, "profile": str(tmp / "zed-prof"), "color": "#000000", "chrome": "canary"}
+bp = tmp / "chan.json"; bp.write_text(json.dumps(r)); creg = bo.registry(bp)
+check("chrome: stable by default; \"canary\" (or beta, dev, cft, or a path to a Chrome .app) per agent",
+      creg["alpha"]["chrome_app"] == "/Applications/Google Chrome.app" and creg["zed"]["chrome_app"] == "/Applications/Google Chrome Canary.app")
+r["agents"]["zed"]["chrome"] = "firefox"; bp.write_text(json.dumps(r))
+try:
+    bo.registry(bp); ok_ = False
+except ValueError:
+    ok_ = True
+check("chrome: an unknown channel is refused by the registry", ok_)
+ZED = creg["zed"]
+CAN = f"/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary --user-data-dir={ZED['profile']} --remote-debugging-port=9230"
+CAN_HELPER = "/Applications/Google Chrome Canary.app/Contents/Frameworks/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper --type=gpu"
+check("chrome: a Canary (or any flavor) root on the agent's port and profile is the agent's; its helpers are not roots",
+      bo.is_root(ZED, CAN) and not bo.is_root(ZED, CAN_HELPER) and not bo.is_root(ALPHA_A, CAN))
+opened = []
+_srun = bo.subprocess.run
+bo.subprocess.run = lambda args, **kw: (opened.append(args), subprocess.CompletedProcess(args, 0, "", ""))[1]
+_h, bo.healthy = bo.healthy, (lambda a, timeout=2.0: True)
+ZED_LOCAL = dict(ZED, chrome_app=str(tmp / "Google Chrome Canary.app")); Path(ZED_LOCAL["chrome_app"]).mkdir(exist_ok=True)
+bo_l = load("browser-owner.py")
+bo_l.healthy = bo.healthy   # subprocess.run is already the fake above (one module for all)
+rc, txt = bo_l.launch(ZED_LOCAL)
+missing = bo_l.launch(dict(ZED, chrome_app=str(tmp / "nowhere" / "Google Chrome Beta.app")))
+bo.subprocess.run, bo.healthy = _srun, _h
+check("chrome: the agent's own Chrome app is the one opened; a channel that isn't installed is a clear failure",
+      rc == 0 and opened and opened[0][4] == ZED_LOCAL["chrome_app"] and missing[0] == 1 and "nowhere" in missing[1], (opened, missing))
+
+# ── doctor, --adapter, uninstall ──
+denv = dict(genv, BROWSER_OWNER_REGISTRY=str(REG), RAINBOW_LANG="en")
+r = subprocess.run(["bash", str(HERE / "rainbowomma-doctor"), "--json"], capture_output=True, text=True, env=denv)
+dj = json.loads(r.stdout)
+names = [c["check"] for c in dj["checks"]]
+check("doctor: one JSON answer — python, the registry, the state folder, the tools, and the optional parts (Word, Cua, jobs, guard)",
+      any("registry" in n for n in names) and any("state folder" in n for n in names) and any("Cua" in n for n in names)
+      and any("guardrail" in n for n in names) and next(c for c in dj["checks"] if "registry" in c["check"])["ok"], dj)
+check("doctor: missing optional parts never fail it (exit 0 when everything needed is there)",
+      (r.returncode == 0) == (dj["status"] == "ok") and all(c["ok"] or not c["needed"] or sys.platform == "darwin" for c in dj["checks"]), dj)
+r = subprocess.run(["bash", str(HERE / "rainbowomma-doctor"), "--json"], capture_output=True, text=True,
+                   env=dict(denv, BROWSER_OWNER_REGISTRY=str(tmp / "nowhere.json")))
+check("doctor: no browsers.json → exit 1, with the fix", r.returncode == 1 and "install.sh" in r.stdout, r.stdout[:300])
+r = subprocess.run(["bash", installer, "--adapter", "claude-code", "--adapter", "codex"], capture_output=True, text=True, env=ienv)
+ad = fake_home / ".rainbowomma" / "adapters"
+check("install --adapter: the adapter's files with your own paths filled in, nothing left as /Users/you",
+      r.returncode == 0 and f"{fake_home}/bin/rainbowomma-guard" in (ad / "claude-code" / "settings.json").read_text()
+      and (ad / "codex" / "rainbowomma.rules").exists() and "/Users/you" not in (ad / "claude-code" / "settings.json").read_text(), r.stdout + r.stderr)
+r = subprocess.run(["bash", installer, "--adapter", "nope"], capture_output=True, text=True, env=ienv)
+check("install --adapter: an unknown framework is refused and the known ones are listed", r.returncode == 2 and "claude-code" in r.stderr)
+uninstaller = str(HERE.parent / "uninstall.sh")
+(fake_home / "bin" / "my-own-script").write_text("keep me")
+r = subprocess.run(["bash", uninstaller], capture_output=True, text=True, env=ienv)
+check("uninstall: the tools and the jobs go; browsers.json, the state folder and your own files in ~/bin stay",
+      r.returncode == 0 and not (fake_home / "bin" / "browser-owner").exists() and (fake_home / "bin" / "browsers.json").exists()
+      and (fake_home / "bin" / "my-own-script").exists() and (fake_home / ".rainbowomma").is_dir()
+      and not (fake_home / "Library" / "LaunchAgents" / "com.rainbowomma.heal.plist").exists(), r.stdout + r.stderr)
+r = subprocess.run(["bash", uninstaller, "--purge"], capture_output=True, text=True, env=ienv)
+check("uninstall --purge: browsers.json and the state folder go too; the agents' Chrome profiles are never touched",
+      r.returncode == 0 and not (fake_home / "bin" / "browsers.json").exists() and not (fake_home / ".rainbowomma").exists()
+      and (fake_home / "bin" / "my-own-script").exists() and "profiles were not touched" in r.stdout, r.stdout)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
