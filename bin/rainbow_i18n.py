@@ -121,6 +121,11 @@ M = {
     "ao.pdf_out": {"en": "--out must be a .pdf file and not the source file", "he": "--out חייב להיות קובץ ‎.pdf ולא קובץ המקור"},
     "ao.pdf_exists": {"en": "{path} already exists — not replacing it (pass --force to replace it, or --out for another name)",
                       "he": "{path} כבר קיים — לא מחליפים אותו (‎--force כדי להחליף, או ‎--out לשם אחר)"},
+    "ao.xlsx_types": {"en": "xlsx through Excel — xlsx / xlsm / xls only", "he": "xlsx דרך Excel — רק xlsx / xlsm / xls"},
+    "ao.xlsx_out": {"en": "--out must be a {ext} file too", "he": "--out חייב להיות גם הוא קובץ {ext}"},
+    "ao.xlsx_open": {"en": "{path} is open in Excel (or Excel could not say) — not writing under it; close it, or use --out",
+                     "he": "{path} פתוח ב-Excel (או ש-Excel לא ענה) — לא כותבים מתחתיו; לסגור אותו, או להשתמש ב-‎--out"},
+    "ao.xlsx_failed": {"en": "Excel did not recalculate the workbook — {detail}", "he": "Excel לא חישב מחדש את חוברת העבודה — {detail}"},
     "ao.pdf_failed": {"en": "Word produced no PDF — {detail}", "he": "Word לא הפיק PDF — {detail}"},
     # ── desktop icons (desk-browser.sh, make-desktop-apps.sh) ──
     "desk.name.human": {"en": "Human", "he": "האדם"},

@@ -1324,5 +1324,44 @@ check("uninstall --purge: browsers.json and the state folder go too; the agents'
       r.returncode == 0 and not (fake_home / "bin" / "browsers.json").exists() and not (fake_home / ".rainbowomma").exists()
       and (fake_home / "bin" / "my-own-script").exists() and "profiles were not touched" in r.stdout, r.stdout)
 
+# ── office-owner xlsx: formulas recalculated by the real Excel ──
+xcalls = []
+def excel_osa(sc):
+    xcalls.append(sc)
+    if "calculate (worksheet i of wb)" in sc:
+        m = re.search(r'workbook file name "([^"]+)"', sc); Path(m.group(1)).write_text("recalculated")
+        pm_ = re.search(r'filename "([^"]+\.pdf)"', sc)
+        if pm_:
+            Path(pm_.group(1)).write_bytes(b"%PDF- sheet")
+        return 0, ""
+    return osa(sc)
+ao.RUN = excel_osa
+book = tmp / "agent" / "report.xlsx"; book.write_text("formulas without values")
+docs.pop("Microsoft Excel", None)
+code, out = ao.cmd_xlsx("bravo", str(book))
+check("xlsx: Excel recalculates a copy (calculate by sheet index, never 'repeat with sh in'), and the result replaces the workbook",
+      code == 0 and out["status"] == "recalculated" and book.read_text() == "recalculated" and "repeat with i from 1 to (count of worksheets of wb)" in xcalls[-1]
+      and "ofc-xlsx-" in xcalls[-1] and not list(ao.WORD_DIR.glob("ofc-xlsx-*")), (out, xcalls[-1:]))
+code, out = ao.cmd_xlsx("bravo", str(book), out=str(tmp / "agent" / "report-calc.xlsx"), pdf=str(tmp / "agent" / "report-sheet.pdf"))
+check("xlsx --out --pdf: the recalculated copy elsewhere, plus the active sheet as a PDF",
+      code == 0 and (tmp / "agent" / "report-calc.xlsx").read_text() == "recalculated" and (tmp / "agent" / "report-sheet.pdf").read_bytes() == b"%PDF- sheet", out)
+code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "agent" / "report-sheet.pdf"))
+check("xlsx --pdf: never over an existing PDF without --force", code == 1 and "--force" in out["why"], out)
+docs["Microsoft Excel"] = {str(book): True}
+book.write_text("the human's edits")
+code, out = ao.cmd_xlsx("bravo", str(book))
+check("xlsx: a workbook open in Excel is never written under — refused, untouched", code == 1 and book.read_text() == "the human's edits", out)
+docs.pop("Microsoft Excel", None)
+def excel_fails(sc):
+    xcalls.append(sc)
+    return (1, "Microsoft Excel got an error: Parameter error. (-50)") if "calculate" in sc else osa(sc)
+ao.RUN = excel_fails
+code, out = ao.cmd_xlsx("bravo", str(book))
+check("xlsx: Excel's failure → the workbook untouched, Excel's own reason, no leftover copy",
+      code == 1 and "(-50)" in out["why"] and book.read_text() == "the human's edits" and not list(ao.WORD_DIR.glob("ofc-xlsx-*")), out)
+code, out = ao.cmd_xlsx("bravo", str(tmp / "agent" / "x.docx"))
+check("xlsx: only xlsx / xlsm / xls", code == 1, out)
+ao.RUN = osa
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

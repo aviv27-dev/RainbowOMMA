@@ -173,6 +173,7 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `receipts [--agent A] [--tool T] [--since ISO] [-n N]` | what the owners did and refused, oldest first |
 | `as-agent <agent> <command…>` · `rainbowomma-mcp --agent <agent>` | run any agent as that agent (`RAINBOW_AGENT` + a session id; reaps on exit) · the owners as MCP tools |
 | `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
+| `office-owner xlsx --agent <a> <book.xlsx> [--out other.xlsx] [--pdf sheet.pdf] [--force]` | the real Excel recalculates every formula (a workbook a script wrote has no computed values) on its own copy; never under a workbook someone has open |
 | `office-owner pdf --agent <a> <file.docx> [--force]` · `apps` · `list` · `sweep` | Word → PDF (never over an existing PDF without `--force`) · which apps run and who launched them · the leases · drop stale leases and quit idle apps it launched |
 
 ### 🖱️ A cursor in the same color

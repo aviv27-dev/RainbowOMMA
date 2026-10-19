@@ -6,6 +6,8 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `office-owner xlsx`: the real Excel recalculates every formula on its own copy, which then replaces the workbook (or
+  goes to `--out`); `--pdf` exports the active sheet. A workbook open in Excel is never written under.
 - `rainbowomma-doctor`: what's in place, what's missing and how to fix it (`--json` for agents); changes nothing.
 - `uninstall.sh`, and `install.sh --adapter <framework>`: the adapter with your paths filled in, ready to merge.
 - CI lints Python (ruff, real errors only) and every shell script (shellcheck, warnings and up).

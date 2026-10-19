@@ -2,6 +2,7 @@
 """agent-office / office-owner — the ONE owner of the shared Office/PDF apps an AI agent touches.
 
     office-owner open|close|renew --agent NAME <file> · office-owner pdf --agent NAME <file.docx> [--out file.pdf] [--force]
+    office-owner xlsx --agent NAME <book.xlsx> [--out other.xlsx] [--pdf sheet.pdf] [--force]   formulas recalculated by Excel
     office-owner sweep [--max-age-h 3] [--dry-run] · office-owner list · office-owner apps
 
 A document is closed only if the agent leased it, nobody had it open before, and the app says it is saved (checked in the
@@ -411,6 +412,70 @@ def cmd_pdf(agent, src, out=None, force=False):
     return 0, {"status": "converted", "pdf": str(dest), "renderer": "Microsoft Word"}
 
 
+def cmd_xlsx(agent, src, out=None, pdf=None, force=False):
+    """recalculate every formula through the real Excel (a workbook written by a script has no computed values), on a
+    uniquely named copy closed by name — never the human's open workbook. The result replaces the source (or goes to
+    --out); --pdf also exports the active sheet."""
+    p = Path(norm(src))
+    if not p.exists():
+        return 1, {"status": "failed", "why": t("ao.no_file", path=p)}
+    ext = p.suffix.lower()
+    if ext not in (".xlsx", ".xlsm", ".xls"):
+        return 1, {"status": "failed", "why": t("ao.xlsx_types")}
+    dest = Path(norm(out)) if out else p
+    if dest.suffix.lower() != ext:
+        return 1, {"status": "failed", "why": t("ao.xlsx_out", ext=ext)}
+    pdf_dest = Path(norm(pdf)) if pdf else None
+    if pdf_dest and pdf_dest.suffix.lower() != ".pdf":
+        return 1, {"status": "failed", "why": t("ao.pdf_out")}
+    if pdf_dest and pdf_dest.exists() and not force:
+        return 1, {"status": "failed", "why": t("ao.pdf_exists", path=pdf_dest)}
+    if dest != p and dest.exists() and not force:
+        return 1, {"status": "failed", "why": t("ao.pdf_exists", path=dest)}
+    now_open = open_paths("excel")
+    if now_open is None or set(forms(dest)) & set(now_open or []):
+        return 1, {"status": "failed", "why": t("ao.xlsx_open", path=dest)}       # never write under a workbook someone has open
+    WORD_DIR.mkdir(parents=True, exist_ok=True)
+    base = "ofc-xlsx-" + uuid.uuid4().hex[:12]
+    tmp, tmp_pdf = WORD_DIR / (base + ext), WORD_DIR / (base + ".pdf")
+    shutil.copy2(p, tmp)
+    with leases_lock():
+        note_use("excel", "office-owner/" + agent)
+    close_mine = (f'repeat with x in (workbooks as list)\ntry\nif name of x is {q(tmp.name)} then close x saving no\nend try\nend repeat')
+    export = f'save as active sheet of wb filename {q(str(tmp_pdf))} file format PDF file format\n' if pdf_dest else ""
+    script = (f'with timeout of {PDF_TIMEOUT_S - 10} seconds\ntell application "Microsoft Excel"\nlaunch\n'
+              f'open workbook workbook file name {q(str(tmp))}\nset wb to workbook {q(tmp.name)}\n'
+              f'repeat with i from 1 to (count of worksheets of wb)\ncalculate (worksheet i of wb)\nend repeat\n'   # by index: "repeat with sh in" fails (-50)
+              f'save wb\n{export}{close_mine}\nend tell\nend timeout')
+    before = tmp.stat().st_mtime_ns
+    try:
+        with inflight("excel"):
+            code, msg = osa(script, PDF_TIMEOUT_S)
+            ok = code == 0 and tmp.exists() and tmp.stat().st_mtime_ns != before and (not pdf_dest or (tmp_pdf.exists() and tmp_pdf.stat().st_size > 0))
+            if not ok:
+                osa(f'with timeout of 15 seconds\ntell application "Microsoft Excel"\n{close_mine}\nend tell\nend timeout')
+        with leases_lock():
+            touch("excel")
+        if not ok:
+            log(f"xlsx FAILED {agent} {p} ({msg[:120]})")
+            return 1, {"status": "failed", "why": t("ao.xlsx_failed", detail=msg.strip()[:160] or f"exit {code}")}
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(tmp), str(dest))                     # replaces the source (or --out) only now, recalculated
+        res = {"status": "recalculated", "xlsx": str(dest), "renderer": "Microsoft Excel"}
+        if pdf_dest:
+            pdf_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(tmp_pdf), str(pdf_dest))
+            res["pdf"] = str(pdf_dest)
+        log(f"xlsx {agent} {p} -> {dest}{' + ' + str(pdf_dest) if pdf_dest else ''}")
+        return 0, res
+    finally:
+        for f in (tmp, tmp_pdf):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
 def idle_quit(dry=False):
     """quit an app ONLY if the owner launched it (the same process), idle ≥ 10 min, no lease or conversion on it, no documents"""
     out, st = [], apps_state()
@@ -482,16 +547,19 @@ def main(argv=None):
     r = sub.add_parser("renew"); r.add_argument("--agent", required=True); r.add_argument("file")
     s = sub.add_parser("sweep"); s.add_argument("--max-age-h", type=float, default=3.0); s.add_argument("--dry-run", action="store_true")
     sub.add_parser("list")
+    x = sub.add_parser("xlsx"); x.add_argument("--agent", required=True); x.add_argument("--out"); x.add_argument("--pdf")
+    x.add_argument("--force", action="store_true"); x.add_argument("file")
     pd = sub.add_parser("pdf"); pd.add_argument("--agent", required=True); pd.add_argument("--out"); pd.add_argument("--force", action="store_true"); pd.add_argument("file")
     sub.add_parser("apps")
     a = ap.parse_args(argv)
-    if a.cmd == "pdf":                      # NOT under the leases lock: conversions run in parallel (each its own copy)
+    if a.cmd in ("pdf", "xlsx"):            # NOT under the leases lock: conversions run in parallel (each its own copy)
         try:
-            code, out = cmd_pdf(a.agent.strip().lower(), a.file, a.out, a.force)
+            code, out = (cmd_pdf(a.agent.strip().lower(), a.file, a.out, a.force) if a.cmd == "pdf"
+                         else cmd_xlsx(a.agent.strip().lower(), a.file, a.out, a.pdf, a.force))
         except Exception as exc:
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
-        rainbow_receipts.write("office-owner", "pdf", a.agent.strip().lower(), a.agent.strip().lower(), out.get("status"),
-                               file=a.file, pdf=out.get("pdf"), why=out.get("why"))
+        rainbow_receipts.write("office-owner", a.cmd, a.agent.strip().lower(), a.agent.strip().lower(), out.get("status"),
+                               file=a.file, pdf=out.get("pdf"), xlsx=out.get("xlsx"), why=out.get("why"))
         print(json.dumps(out, ensure_ascii=False))
         return code
     try:
