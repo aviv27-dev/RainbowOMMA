@@ -1532,5 +1532,47 @@ check("guard as Alpha: pbcopy, pbpaste and AppleScript's clipboard are the human
       sg("echo hi | pbcopy") == 2 and sg("pbpaste > x.txt") == 2 and sg("osascript -e 'set the clipboard to \"x\"'") == 2
       and sg("echo hi | rainbowomma-clip copy alpha") == 0 and as_agent("echo hi | pbcopy") == 0)
 
+# ── wave D, part 2: receipts to OpenTelemetry, apps an agent may not drive ──
+from http.server import BaseHTTPRequestHandler, HTTPServer
+got_otlp = []
+class Collector(BaseHTTPRequestHandler):
+    def do_POST(self):
+        got_otlp.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+        self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+    def log_message(self, *a):
+        pass
+srv = HTTPServer(("127.0.0.1", 0), Collector); threading.Thread(target=srv.serve_forever, daemon=True).start()
+oenv = dict(genv, RAINBOW_HOME=str(tmp / "otel-home"), NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+for k in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+    oenv.pop(k, None)
+def rcpt(*args):
+    r = subprocess.run(["bash", str(HERE / "receipts"), *args], capture_output=True, text=True, env=oenv)
+    return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
+subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "on"], capture_output=True, env=oenv)
+subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "off"], capture_output=True, env=oenv)
+url = f"http://127.0.0.1:{srv.server_port}"
+first = rcpt("--export-otlp", url); second = rcpt("--export-otlp", url)
+subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "on"], capture_output=True, env=oenv)
+third = rcpt("--export-otlp", url)
+srv.shutdown()
+recs0 = got_otlp[0][1]["resourceLogs"][0]["scopeLogs"][0]["logRecords"] if got_otlp else []
+check("receipts → OpenTelemetry: OTLP/HTTP JSON logs to /v1/logs, each receipt once (a cursor), WARN for refusals",
+      first == {"status": "exported", "sent": 2} and second == {"status": "exported", "sent": 0} and third["sent"] == 1
+      and got_otlp[0][0] == "/v1/logs" and recs0[0]["body"]["stringValue"] == "pause on → paused"
+      and any(a["key"] == "rainbowomma.tool" for a in recs0[0]["attributes"]), (first, second, third, got_otlp[:1]))
+check("receipts → OpenTelemetry: no collector named → a clear failure", rcpt("--export-otlp")["status"] == "failed")
+areg = json.loads(REG.read_text()); areg["agents"]["alpha"]["apps"] = {"Notes": "deny", "Terminal": "allow"}; AREG = tmp / "apps.json"; AREG.write_text(json.dumps(areg))
+def ag_app(ev, agent=None):
+    return subprocess.run([sys.executable, "-I", guard], input=json.dumps(ev), capture_output=True, text=True,
+                          env=dict(genv, BROWSER_OWNER_REGISTRY=str(AREG), RAINBOW_TEST_IDLE_S="60", **({"RAINBOW_AGENT": agent} if agent else {}))).returncode
+term = {"tool_input": {"command": "osascript -e 'tell application \"Terminal\" to do script \"ls\"'"}}
+notes = {"tool_input": {"command": "osascript -e 'tell application \"Notes\" to make new note'"}}
+keych = {"tool_input": {"command": "open -a 'Keychain Access'"}}
+cua_term = {"tool_name": "mcp__cua__click", "tool_input": {"bundle_id": "com.apple.Terminal", "x": 1, "y": 1}}
+check("apps: by default no agent drives a terminal, System Settings or Keychain Access (AppleScript, open -a, computer use)",
+      ag_app(term, "bravo") == 2 and ag_app(keych, "bravo") == 2 and ag_app(cua_term, "bravo") == 2 and ag_app(notes, "bravo") == 0)
+check("apps: per agent, \"apps\" allows or denies more — Alpha may drive Terminal, but not Notes",
+      ag_app(term, "alpha") == 0 and ag_app(notes, "alpha") == 2 and bo.denied_apps("alpha", AREG).count("notes") == 1)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
