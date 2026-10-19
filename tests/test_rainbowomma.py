@@ -1481,5 +1481,56 @@ os.environ["RAINBOW_LANG"] = "he"
 check("menu bar: take over the screen, or hand it back while you hold it; who holds it now",
       "param1=handback" in txt_h and "param1=takeover" in txt_a and "screen: alpha" in txt_a, (txt_h[-300:], txt_a[-300:]))
 
+# ── wave D: a simulator and a clipboard of its own, per agent ──
+FAKE_SIMCTL = tmp / "fake_simctl"
+FAKE_SIMCTL.write_text("""#!/usr/bin/env python3
+import json, os, sys, uuid
+st = os.environ["FAKE_SIM_STATE"]
+d = json.load(open(st)) if os.path.exists(st) else {"devices": {"iOS-26": [{"name": "iPhone 16", "udid": "AAAAAAAA-0000-0000-0000-000000000001", "state": "Booted"}]}}
+a = sys.argv[1:]
+devs = d["devices"]["iOS-26"]
+if a[:2] == ["list", "devices"]:
+    print(json.dumps(d))
+elif a[0] == "create":
+    u = str(uuid.uuid4()).upper(); devs.append({"name": a[1], "udid": u, "state": "Shutdown"}); print(u)
+elif a[0] in ("boot", "shutdown"):
+    for x in devs:
+        if x["udid"] == a[1]:
+            x["state"] = "Booted" if a[0] == "boot" else "Shutdown"
+json.dump(d, open(st, "w"))
+""")
+FAKE_SIMCTL.chmod(0o755)
+simenv = dict(genv, RAINBOW_SIMCTL=str(FAKE_SIMCTL), FAKE_SIM_STATE=str(tmp / "sims.json"))
+def sim(*args):
+    r = subprocess.run(["bash", str(HERE / "sim-owner"), *args], capture_output=True, text=True, env=simenv)
+    return r.returncode, json.loads(r.stdout)
+code, a_sim = sim("lease", "alpha"); _, b_sim = sim("lease", "bravo"); _, again = sim("lease", "alpha")
+check("sim-owner: each agent gets its own simulator (created once as rainbowomma-<agent>, booted), the same one next time",
+      code == 0 and a_sim["name"] == "rainbowomma-alpha" and a_sim["udid"] != b_sim["udid"] and again["udid"] == a_sim["udid"], (a_sim, b_sim))
+check("sim-owner who: a simulator's owner, or the human's", sim("who", b_sim["udid"])[1]["agent"] == "bravo"
+      and sim("who", "AAAAAAAA-0000-0000-0000-000000000001")[1]["agent"] == "human")
+def sg(cmd, agent="alpha"):
+    return subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": cmd}}), capture_output=True, text=True,
+                          env=dict(simenv, RAINBOW_AGENT=agent)).returncode
+sim_blocked = ["xcrun simctl install booted App.app", f"xcrun simctl launch {b_sim['udid']} com.example.app",
+               "xcodebuild test -scheme App -destination 'platform=iOS Simulator,name=iPhone 16'",
+               f"xcodebuild -scheme App -destination 'platform=iOS Simulator,id={b_sim['udid']}' test"]
+sim_allowed = [f"xcrun simctl install {a_sim['udid']} App.app", f"xcodebuild -scheme App -destination 'platform=iOS Simulator,id={a_sim['udid']}' test",
+               "xcodebuild -scheme App -destination 'platform=macOS' build", "xcrun simctl list devices"]
+check("guard as Alpha: simctl `booted`, another agent's simulator and a shared one in -destination are refused",
+      all(sg(c) == 2 for c in sim_blocked), [c for c in sim_blocked if sg(c) != 2])
+check("guard as Alpha: its own simulator, a macOS build and read-only simctl go through", all(sg(c) == 0 for c in sim_allowed),
+      [c for c in sim_allowed if sg(c)])
+clip_env = dict(genv, RAINBOW_HOME=str(tmp / "clip-home"))
+subprocess.run(["bash", str(HERE / "rainbowomma-clip"), "copy", "alpha"], input="alpha's text", text=True, env=clip_env)
+subprocess.run(["bash", str(HERE / "rainbowomma-clip"), "copy", "bravo"], input="bravo's text", text=True, env=clip_env)
+pa = subprocess.run(["bash", str(HERE / "rainbowomma-clip"), "paste", "alpha"], capture_output=True, text=True, env=clip_env).stdout
+cf = tmp / "clip-home" / "state" / "clip" / "alpha" / "default"
+check("clip: each agent pastes back only what it copied; the files only its user can read",
+      pa == "alpha's text" and oct(cf.stat().st_mode & 0o777) == "0o600", (pa, oct(cf.stat().st_mode)))
+check("guard as Alpha: pbcopy, pbpaste and AppleScript's clipboard are the human's — refused; rainbowomma-clip goes through",
+      sg("echo hi | pbcopy") == 2 and sg("pbpaste > x.txt") == 2 and sg("osascript -e 'set the clipboard to \"x\"'") == 2
+      and sg("echo hi | rainbowomma-clip copy alpha") == 0 and as_agent("echo hi | pbcopy") == 0)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

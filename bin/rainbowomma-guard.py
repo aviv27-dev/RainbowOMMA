@@ -40,6 +40,8 @@ WHY = {
     "human-active": "the human is using the keyboard or mouse right now — wait a few seconds and try again (a GUI action now would land in their window)",
     "human-browser": "a browser MCP attached to the human's own Chrome (--autoConnect, --extension) would act in their tabs — "
                      "point it at your own browser: `browser-owner mcp-config <agent>`",
+    "clipboard": "the system clipboard is the human's — keep yours with `rainbowomma-clip copy|paste <you>`",
+    "sim-booted": "`booted` means whichever simulator happens to be running, maybe another agent's — use your own: `sim-owner lease <you>`",
     "send": "sending through Messages or Mail can't be taken back — ask the human first: "
             "`rainbowomma-approve ask --agent <you> --why \"…\" -- <this exact command>`, then run it again",
     "approval-up": "the human is answering an approval dialog — no agent clicks or types until they do",
@@ -167,6 +169,13 @@ def verdict(command):
             return WHY["human"]
         if name == "rm" and _recursive(args) and any(_protected(x) for x in args if not x.startswith("-")):
             return WHY["rm-home"]
+        me_ = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+        if me_ and (name in ("pbcopy", "pbpaste") or (name == "osascript" and "the clipboard" in " ".join(args))):
+            return WHY["clipboard"]
+        if me_ and (name == "simctl" or (name == "xcrun" and args[:1] == ["simctl"]) or name == "xcodebuild"):
+            why = sim_verdict(name, args, me_)
+            if why:
+                return why
         if name == "osascript" and _sends(" ".join(args)) and not _approved(command):
             return WHY["send"]
         if _gui_command(name, args):
@@ -330,6 +339,35 @@ def gui_tool_verdict(event):
     if human_active():
         return WHY["human-active"]
     return screen_verdict(foreground=not re.search(r"cua", name, re.I))      # Cua drives apps in the background
+
+
+UDID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def sim_verdict(name, args, me):
+    """an agent's simctl / xcodebuild must name its own simulator — never `booted`, a shared device or another agent's"""
+    if name != "xcodebuild":
+        if "booted" in args:
+            return WHY["sim-booted"]
+        targets = [a for a in args if UDID.fullmatch(a) or a.startswith("rainbowomma-")]
+    else:
+        dest = " ".join(args[i + 1] for i, a in enumerate(args[:-1]) if a == "-destination")
+        if "simulator" not in dest and "id=" not in dest:
+            return None
+        targets = [m.group(1) for m in re.finditer(r"(?:id|name)=([^,'\"]+)", dest)]
+        if not targets:
+            return None
+    try:
+        so = _load_beside("rainbow_sim_owner", "sim-owner.py")
+        devs = so.devices()
+    except Exception:
+        return None
+    for tgt in targets:
+        owner = so.owner_of(tgt, devs)
+        if owner != me and (owner or name == "xcodebuild"):
+            whose = f"{owner}'s" if owner else "a shared one"
+            return f"simulator {tgt} is {whose}, not {me}'s — use your own: `sim-owner lease {me}`"
+    return None
 
 
 SEND = re.compile(r'tell application "?(messages|mail)"?.*\b(send|outgoing message)\b', re.S)

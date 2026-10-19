@@ -243,3 +243,14 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   the command, "Allow once" stores its hash for 5 minutes, and the guard consumes it. While the dialog is up
   (`approval-pending.json`), no agent may click or type, so it can't press "Allow" itself.
 
+## 14. Wave D: simulators, clipboards, Linux
+- **Simulators.** `sim-owner` keeps one simulator per agent, named `rainbowomma-<agent>` (created with `simctl create`
+  the first time, booted on lease). Ownership comes from the name, so nothing else needs storing. With `RAINBOW_AGENT`
+  set, the guard refuses `simctl … booted`, a UDID or `rainbowomma-*` name of another agent, and an `xcodebuild
+  -destination` that names a simulator that isn't the agent's own (a shared `name=iPhone 16` included).
+- **Clipboards.** The system clipboard stays the human's: a named agent's `pbcopy`, `pbpaste` and AppleScript `the
+  clipboard` are refused. `rainbowomma-clip` keeps each agent's clips as 0600 files under `$RAINBOW_HOME/state/clip/`.
+  (A computer-use paste with ⌘V can't be seen by a pre-tool hook.)
+- **Linux.** Ports, processes, the guard, receipts, the MCP server and the simulator lease have no macOS-only parts;
+  CI runs the whole suite on Linux too, with the macOS parts faked as on macOS.
+
