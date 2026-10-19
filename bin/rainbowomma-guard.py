@@ -37,6 +37,9 @@ WHY = {
     "debug-port": "an agent's Chrome is started only by browser-owner",
     "rm-home": "rm -r of your home folder, the whole disk or a system folder can't be undone — name the exact folder inside your work",
     "human-active": "the human is using the keyboard or mouse right now — wait a few seconds and try again (a GUI action now would land in their window)",
+    "human-browser": "a browser MCP attached to the human's own Chrome (--autoConnect, --extension) would act in their tabs — "
+                     "point it at your own browser: `browser-owner mcp-config <agent>`",
+    "paused": "the human paused all agents (the menu-bar stop) — nothing runs until they resume; wait, or ask them",
     "human": "only the human acts as the human: --by human (and the desktop controls) are the person's, never an agent's",
 }
 HELP = ("Use the owner instead: `browser-owner start|recover <agent> --by <agent>` for your browser "
@@ -161,6 +164,14 @@ def verdict(command):
             return WHY["rm-home"]
         if _gui_command(name, args) and human_active():
             return WHY["human-active"]
+        if any("chrome-devtools-mcp" in x for x in [name] + args) and "--autoconnect" in args:
+            return WHY["human-browser"]
+        if any("@playwright/mcp" in x for x in [name] + args) and "--extension" in args:
+            return WHY["human-browser"]
+        if name == "open" or name.endswith("chrome") or name.endswith("chromium"):
+            why = _sensitive_verdict([x for x in args if "://" in x])
+            if why:
+                return why
     if re.search(r"\blaunch_by=['\"]?human\b", low):          # export LAUNCH_BY=human; ./agent-launcher.sh
         return WHY["human"]
     killing = "kill" in names or any(n == "xargs" and "kill" in a for n, a in cmds)
@@ -169,7 +180,7 @@ def verdict(command):
     if names & PORT_KILLERS or any(a and a[0] in PORT_KILLERS for n, a in cmds if n in ("npx", "pnpx", "bunx", "pnpm", "yarn")) \
             or any(n == "fuser" and any(x.startswith("-") and "k" in x for x in a) for n, a in cmds):
         return WHY["port-kill"]
-    return port_verdict(claimed_ports(low, cmds)) or kill_verdict(cmds)
+    return port_verdict(claimed_ports(low, cmds)) or kill_verdict(cmds) or cdp_verdict(low)
 
 
 def claimed_ports(low, cmds):
@@ -252,6 +263,51 @@ def human_active():
     return idle is not None and idle < float(os.environ.get("RAINBOW_HUMAN_IDLE_S") or 5)
 
 
+URL_HOST = re.compile(r"^[a-z][a-z0-9+.-]*://([^/:?#\s]+)", re.I)
+NAV_ACTION = re.compile(r"navigate|goto|new_page|open|new_tab|url", re.I)
+
+
+def _host_sensitive(host, sites):
+    host = host.lower().rstrip(".")
+    return next((d for d in sites if host == d or host.endswith("." + d)), None)
+
+
+def human_present():
+    idle = human_idle_s()
+    return idle is not None and idle < float(os.environ.get("RAINBOW_HUMAN_PRESENT_S") or 120)
+
+
+def _sensitive_verdict(urls):
+    hosts = [m.group(1) for u in urls for m in [URL_HOST.match(u.strip())] if m]
+    if not hosts:
+        return None
+    try:
+        sites = _port_owner().BO.sensitive_sites()
+    except Exception:
+        return None
+    for h in hosts:
+        d = _host_sensitive(h, sites)
+        if d and not human_present():
+            return (f"{h} is a sensitive site ({d}) — an agent goes there only while the human is at the Mac "
+                    f"(used it in the last {int(float(os.environ.get('RAINBOW_HUMAN_PRESENT_S') or 120))} s); ask the human")
+    return None
+
+
+def browser_tool_verdict(event):
+    """a browser MCP tool navigating to a sensitive site while the human is away"""
+    name = str(event.get("tool_name") or event.get("toolName") or "")
+    action = re.split(r"__|\.|/", name)[-1]
+    if not NAV_ACTION.search(action):
+        return None
+    ti = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    return _sensitive_verdict([str(v) for k, v in ti.items() if k.lower() in ("url", "uri", "href") and isinstance(v, str)])
+
+
+def is_paused():
+    root = os.path.expanduser(os.environ.get("RAINBOW_HOME") or os.path.join(os.path.expanduser("~"), ".rainbowomma"))
+    return os.path.exists(os.path.join(root, "state", "paused.json"))
+
+
 def gui_tool_verdict(event):
     """an MCP computer-use action (click, type, key, scroll …) while the human is at the keyboard or mouse"""
     name = str(event.get("tool_name") or event.get("toolName") or "")
@@ -261,6 +317,26 @@ def gui_tool_verdict(event):
     if READ_ONLY_ACTIONS.search(action):
         return None
     return WHY["human-active"] if human_active() else None
+
+
+CDP_URL = re.compile(r"(?:127\.0\.0\.1|localhost):(92(?:2[2-9]|[3-9]\d))\b")
+
+
+def cdp_verdict(low):
+    """with RAINBOW_AGENT set: a CDP endpoint of ANOTHER agent's browser (--browserUrl, --cdp-endpoint, curl …) is not yours"""
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    ports = {int(p) for p in CDP_URL.findall(low)}
+    if not me or not ports:
+        return None
+    try:
+        reg = _port_owner().registry()
+    except Exception:
+        return None
+    owner = {a["port"]: n for n, a in reg.items()}
+    for p in sorted(ports):
+        if p in owner and owner[p] != me:
+            return f"port {p} is {owner[p]}'s browser, not {me}'s — drive your own: `browser-owner mcp-config {me}`"
+    return None
 
 
 def killed_pids(cmds):
@@ -373,7 +449,9 @@ def main(argv=None):
     if not isinstance(event, dict):
         return 0
     for cmd in [None] + commands(event):
-        why = gui_tool_verdict(event) if cmd is None else verdict(cmd)
+        why = (gui_tool_verdict(event) or browser_tool_verdict(event)) if cmd is None else verdict(cmd)
+        if cmd is None and not why and is_paused() and (commands(event) or event.get("tool_name") or event.get("toolName")):
+            why = WHY["paused"]
         if why:
             try:
                 import rainbow_receipts

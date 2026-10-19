@@ -213,3 +213,20 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   `RAINBOW_HUMAN_WAIT_S` (30 s). Unknown idle time (not macOS, no `ioreg`) never blocks.
 - **`rm -r` of home.** The guard refuses a recursive `rm` of `/`, `~`, `$HOME`, `/Users/<name>` or a system folder.
 
+## 12. Wave B: browser MCPs, sensitive sites, the stop button
+- **Browser MCPs on the agent's own browser.** `browser-owner mcp-config` prints `npx chrome-devtools-mcp --browserUrl
+  http://127.0.0.1:<port>` or `npx @playwright/mcp --cdp-endpoint …` for the agent's own CDP port. The guard refuses
+  `chrome-devtools-mcp --autoConnect` and `@playwright/mcp --extension` (they attach to the human's Chrome), and for a
+  named agent any `127.0.0.1:92xx`/`localhost:92xx` that is another agent's CDP port.
+- **Sensitive sites.** `sensitiveSites` (top of `browsers.json`): a domain matches itself and its subdomains. A browser
+  tool whose action looks like navigation (`navigate`, `goto`, `new_page`, `open`, `url`) with a `url` to one of them,
+  or `open`/a Chrome binary with such a URL, is refused unless the human used the keyboard or mouse in the last
+  `RAINBOW_HUMAN_PRESENT_S` (120 s). Unknown idle time counts as absent.
+- **The stop button.** `rainbowomma-pause` keeps `$RAINBOW_HOME/state/paused.json`. While it exists the guard refuses
+  every command and tool call it sees, and the cursor proxy holds each action up to `RAINBOW_PAUSE_WAIT_S` (60 s), then
+  answers it with `isError` without forwarding it. Read-only calls (screenshots, `get_*`) pass. Pausing and resuming
+  leave receipts.
+- **The menu bar.** `rainbowomma-menubar` prints a SwiftBar menu from `browser-owner list`, the pause flag and the latest
+  receipts; every item runs the same tool a human would (`desk-browser.sh`, `rainbowomma-pause`, `rainbowomma-doctor`).
+  `install.sh --with-menubar` writes the plugin into SwiftBar's plugin folder (or `$RAINBOW_HOME/swiftbar`).
+

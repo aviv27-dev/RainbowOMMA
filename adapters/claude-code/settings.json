@@ -21,6 +21,15 @@
             "command": "/Users/you/bin/rainbowomma-guard"
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*(chrome|devtools|playwright|browser).*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-guard"
+          }
+        ]
       }
     ],
     "SessionEnd": [

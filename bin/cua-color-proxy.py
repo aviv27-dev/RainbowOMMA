@@ -38,6 +38,7 @@ NOT_ACTIONS = {"end_session", "list_sessions", "get_session", "get_session_state
 READ_ONLY = re.compile(r"(screenshot|^get_|^list_|_state$|^start_session$|^end_session$|^set_agent_cursor|^zoom$)")
 HUMAN_IDLE_S = float(os.environ.get("RAINBOW_HUMAN_IDLE_S") or 5)       # the human touched keyboard/mouse less than this ago → wait
 HUMAN_WAIT_S = float(os.environ.get("RAINBOW_HUMAN_WAIT_S") or 30)      # …but never longer than this: then the action goes through
+PAUSE_WAIT_S = float(os.environ.get("RAINBOW_PAUSE_WAIT_S") or 60)      # the human paused all agents: hold this long, then answer an error
 ROOT = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))
 
 
@@ -79,6 +80,21 @@ def wait_for_human(name, sleep=time.sleep):
         sleep(step)
         waited += step
     return waited
+
+
+def paused():
+    return (ROOT / "state" / "paused.json").exists()
+
+
+def held_by_pause(name, sleep=time.sleep):
+    """→ True when the action must not run: the human paused all agents and did not resume within PAUSE_WAIT_S"""
+    if not name or READ_ONLY.search(name) or not paused():
+        return False
+    waited = 0.0
+    while paused() and waited < PAUSE_WAIT_S:
+        sleep(1.0)
+        waited += 1.0
+    return paused()
 
 
 def driver_path(given=None):
@@ -185,8 +201,11 @@ class Proxy:
 
     def pump_agent(self, stdin):
         for line in iter(stdin.readline, b""):
+            msg = self._parse(line)
             try:
-                self.before(self._parse(line))
+                if self.refuse_if_paused(msg):
+                    continue
+                self.before(msg)
             except Exception as exc:                     # a message we can't read still reaches the driver
                 log(f"{self.agent}: skipped theming for one message — {type(exc).__name__}: {exc}")
             self._send_raw(line)
@@ -194,6 +213,20 @@ class Proxy:
             self.proc.stdin.close()
         except OSError:
             pass
+
+    def refuse_if_paused(self, msg):
+        """the human's stop: an action held past PAUSE_WAIT_S is answered with an error and never reaches the driver"""
+        if not isinstance(msg, dict) or msg.get("method") != "tools/call" or "id" not in msg:
+            return False
+        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        if not held_by_pause(params.get("name")):
+            return False
+        reply = {"jsonrpc": "2.0", "id": msg["id"], "result": {"isError": True, "content": [
+            {"type": "text", "text": "The human paused all agents (RainbowOMMA). Nothing was done. Wait for them to resume, or ask them."}]}}
+        self.out.write((json.dumps(reply) + "\n").encode())
+        self.out.flush()
+        log(f"{self.agent}: {params.get('name')} refused — the human paused all agents")
+        return True
 
     def _send(self, msg):
         self._send_raw((json.dumps(msg, separators=(",", ":")) + "\n").encode())

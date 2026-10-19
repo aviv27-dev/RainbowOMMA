@@ -2,11 +2,12 @@
 # RainbowOMMA installer — copies the tools into one folder, creates the registry from the example (never overwrites yours),
 # creates the state folders, and optionally loads the launchd sweep for office-owner with absolute paths.
 #
-#   ./install.sh [--bin DIR] [--with-sweep] [--with-heal] [--adapter AGENT …] [--dry-run]
+#   ./install.sh [--bin DIR] [--with-sweep] [--with-heal] [--with-menubar] [--adapter AGENT …] [--dry-run]
 #
 #   --bin DIR      where the tools go (default: ~/bin). They look for each other in the same folder.
 #   --with-sweep   install + load the launchd job that sweeps stale document leases every 15 minutes
 #   --with-heal    install + load the launchd job that puts back agent colors Chrome Sync took (every 30 min, at login)
+#   --with-menubar the menu-bar item for SwiftBar (agents as colored dots, pause all agents with ⌘⌥⌃P)
 #   --adapter A    write agent framework A's adapter, with your paths filled in, to $RAINBOW_HOME/adapters/A (see docs/AGENTS.md)
 #   --dry-run      print what would happen, change nothing
 #
@@ -17,6 +18,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HOME/bin"
 SWEEP=0
 HEAL=0
+MENUBAR=0
 ADAPTERS=""
 DRY=0
 while [ $# -gt 0 ]; do
@@ -24,9 +26,10 @@ while [ $# -gt 0 ]; do
     --bin) BIN="${2:?--bin needs a folder}"; shift 2 ;;
     --with-sweep) SWEEP=1; shift ;;
     --with-heal) HEAL=1; shift ;;
+    --with-menubar) MENUBAR=1; shift ;;
     --adapter) ADAPTERS="$ADAPTERS ${2:?--adapter needs an agent framework, e.g. claude-code}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -89,6 +92,21 @@ PY
 }
 [ "$SWEEP" = 1 ] && job "$LABEL" sweep
 [ "$HEAL" = 1 ] && job com.rainbowomma.heal heal
+
+if [ "$MENUBAR" = 1 ]; then
+  PLUGINS="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
+  [ -n "$PLUGINS" ] || PLUGINS="$ROOT/swiftbar"
+  echo "→ menu-bar item $PLUGINS/rainbowomma.10s.sh (SwiftBar runs it every 10 s)"
+  if [ "$DRY" = 1 ]; then echo "would: write it"; else
+    mkdir -p "$PLUGINS"
+    printf '#!/bin/bash\n# <swiftbar.title>RainbowOMMA</swiftbar.title>\n# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>\nexec %q\n' \
+      "$BIN/rainbowomma-menubar" > "$PLUGINS/rainbowomma.10s.sh"
+    chmod +x "$PLUGINS/rainbowomma.10s.sh"
+    if [ "$PLUGINS" = "$ROOT/swiftbar" ]; then
+      echo "   install SwiftBar (brew install --cask swiftbar) and choose $PLUGINS as its plugin folder"
+    fi
+  fi
+fi
 
 for A in $ADAPTERS; do
   SRC="$HERE/adapters/$A"

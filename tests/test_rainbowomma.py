@@ -1363,5 +1363,70 @@ code, out = ao.cmd_xlsx("bravo", str(tmp / "agent" / "x.docx"))
 check("xlsx: only xlsx / xlsm / xls", code == 1, out)
 ao.RUN = osa
 
+# ── wave B: browser MCPs on the agent's own browser, sensitive sites, the menu bar and the stop button ──
+cfg = bo.mcp_config(BRAVO_A, "devtools")
+pw = bo.mcp_config(BRAVO_A, "playwright")
+cl = bo.mcp_config(BRAVO_A, "devtools", "claude")
+check("mcp-config: Chrome DevTools MCP and Playwright MCP pointed at the agent's own CDP port, never --autoConnect",
+      cfg["mcpServers"]["bravo-browser"]["args"][-2:] == ["--browserUrl", "http://127.0.0.1:9223"]
+      and pw["mcpServers"]["bravo-browser"]["args"][-2:] == ["--cdp-endpoint", "http://127.0.0.1:9223"]
+      and cl["command"].startswith("claude mcp add-json --scope user bravo-browser") and "--autoConnect" not in json.dumps([cfg, pw]), (cfg, pw))
+attach = ["npx chrome-devtools-mcp@latest --autoConnect", "npx @playwright/mcp@latest --extension",
+          "npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9223", "curl -s http://localhost:9224/json/list"]
+check("guard: a browser MCP on the human's Chrome is refused; as Alpha, another agent's CDP port too — its own is fine",
+      [as_agent(c, "alpha") for c in attach] == [2, 2, 2, 2] and as_agent("npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222", "alpha") == 0,
+      [as_agent(c, "alpha") for c in attach])
+sreg = json.loads(REG.read_text()); sreg["sensitiveSites"] = ["bank.example", "*.gov.example"]; SREG = tmp / "sensitive.json"; SREG.write_text(json.dumps(sreg))
+def nav(url, idle, tool="mcp__alpha-browser__navigate_page"):
+    r = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_name": tool, "tool_input": {"url": url}}), capture_output=True,
+                       text=True, env=dict(genv, BROWSER_OWNER_REGISTRY=str(SREG), RAINBOW_TEST_IDLE_S=str(idle), RAINBOW_AGENT="alpha"))
+    return r.returncode
+check("sensitive sites: an agent opens one only while the human is at the Mac (used it in the last 2 minutes)",
+      nav("https://login.bank.example/a", 900) == 2 and nav("https://login.bank.example/a", 30) == 0
+      and nav("https://portal.gov.example/x", 900) == 2 and nav("https://news.example.com", 900) == 0
+      and nav("https://login.bank.example/a", 900, tool="mcp__playwright__browser_navigate") == 2)
+check("the Claude Code adapter also runs the guard before browser MCP tools",
+      any("playwright" in h["matcher"] for h in json.loads((AD / "claude-code" / "settings.json").read_text())["hooks"]["PreToolUse"]))
+# the stop button
+pause_env = dict(genv, RAINBOW_HOME=str(tmp / "pause-home"))
+r = subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "on"], capture_output=True, text=True, env=pause_env)
+on = json.loads(r.stdout)
+gp = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": "npm test"}}), capture_output=True, text=True, env=pause_env)
+gm = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_name": "mcp__cua__screenshot", "tool_input": {}}), capture_output=True, text=True, env=pause_env)
+r2 = subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "toggle"], capture_output=True, text=True, env=pause_env)
+ga = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": "npm test"}}), capture_output=True, text=True, env=pause_env)
+check("pause: while the human paused all agents, the guard refuses every command and tool call; after resume all goes on",
+      on["status"] == "paused" and gp.returncode == 2 and "paused all agents" in gp.stderr and gm.returncode == 2
+      and json.loads(r2.stdout)["status"] == "running" and ga.returncode == 0, (on, gp.stderr[:120], r2.stdout))
+pflag = pm.ROOT / "state" / "paused.json"; pflag.parent.mkdir(parents=True, exist_ok=True); pflag.write_text("{}")
+_pw = pm.PAUSE_WAIT_S; pm.PAUSE_WAIT_S = 2
+px2 = pm.Proxy.__new__(pm.Proxy); px2.agent, px2.themed, px2.ended = "alpha", {}, set()
+px2.proc = type("P", (), {"stdin": _Sink()})(); px2.out = io.BytesIO(); px2.theme_session = lambda label: None
+pm.time.sleep, _sl = (lambda s: None), pm.time.sleep
+px2.pump_agent(io.BytesIO(b'{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"click","arguments":{}}}\n'
+                          b'{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"screenshot","arguments":{}}}\n'))
+pm.time.sleep, pm.PAUSE_WAIT_S = _sl, _pw
+pflag.unlink()
+answered = [json.loads(x) for x in px2.out.getvalue().splitlines()]
+check("pause: the cursor proxy holds a click, then answers it with an error that never reaches the driver; a screenshot passes",
+      [m["id"] for m in answered] == [7] and answered[0]["result"]["isError"] and len(px2.proc.stdin.lines) == 1
+      and b'"id":8' in px2.proc.stdin.lines[0], (answered, px2.proc.stdin.lines))
+mbm = load("rainbowomma-menubar.py")
+os.environ["RAINBOW_LANG"] = "en"
+ag_rows = [{"agent": "alpha", "label": "Alpha", "color": "#FB8C00", "status": "up", "up": True},
+           {"agent": "bravo", "label": "Bravo", "color": "#1E88E5", "status": "down", "up": False}]
+txt = mbm.menu(ag_rows, False, [{"at": "2026-10-19T10:15:00+0000", "agent": "alpha", "tool": "port-owner", "action": "lease", "status": "leased"}])
+txt_p = mbm.menu(ag_rows, True, [])
+os.environ["RAINBOW_LANG"] = "he"
+check("menu bar: a dot per agent in its color (filled when up), open/front and close per agent, the latest receipts",
+      "\033[38;2;251;140;0m●" in txt.splitlines()[0] and "○" in txt.splitlines()[0] and "param1=open param2=alpha" in txt
+      and "param1=close param2=alpha" in txt and "param1=close param2=bravo" not in txt and "10:15 alpha: port-owner lease" in txt, txt)
+check("menu bar: pause all agents with ⌘⌥⌃P; while paused the title says so and the item resumes",
+      "param1=on" in txt and "shortcut=CMD+OPTION+CTRL+P" in txt and txt_p.startswith("⏸") and "param1=off" in txt_p, txt_p[:200])
+r = subprocess.run(["bash", installer, "--with-menubar"], capture_output=True, text=True, env=ienv)
+plug = fake_home / ".rainbowomma" / "swiftbar" / "rainbowomma.10s.sh"
+check("install --with-menubar: the SwiftBar plugin, pointing at the installed menu-bar tool",
+      r.returncode == 0 and plug.exists() and "rainbowomma-menubar" in plug.read_text() and os.access(plug, os.X_OK), r.stdout + r.stderr)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
