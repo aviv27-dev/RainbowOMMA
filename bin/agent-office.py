@@ -61,11 +61,14 @@ def log(msg):
 
 
 def osa(script, timeout=None):
-    """→ (code, stdout); a hang (a dialog, a permission prompt) is a failure, never an answer"""
+    """→ (code, stdout) — or, on a failure, (code, the reason osascript gave); a hang (a dialog, a permission prompt) is a
+    failure, never an answer"""
     if RUN:
         return RUN(script)
     try:
         r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout or TIMEOUT_S)
+        if r.returncode:                       # the reason is on stderr (e.g. "Microsoft Word got an error: …") — say it
+            return r.returncode, ((r.stderr or "").strip() or (r.stdout or "").strip())
         return r.returncode, (r.stdout or "").strip()
     except subprocess.TimeoutExpired:
         return 124, ""

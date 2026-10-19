@@ -14,7 +14,7 @@
 ## 2. Components (repo layout)
 | Path | What |
 |---|---|
-| `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · human-theme`, `--by WHO` |
+| `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · front · human-theme`, `--by WHO` |
 | `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`); top-level `humanPorts` |
 | `bin/port-owner(.py)` | every agent's ports: a range per agent (`ports` in the registry, default 41000 + 100 × (CDP port − 9222)), leases inside it, `humanPorts` never leased: `lease · env · who · release · list` — §8 |
 | `bin/proc-owner(.py)` | whose a process is (`RAINBOW_AGENT` in its environment, an ancestor that carries it, or the agent's Chrome tree; else the human's): `whose · kill --by · list · reap` — §9 |
@@ -23,7 +23,8 @@
 | `bin/theme-frame.js` | draws the agent's name onto the theme's frame image (AppKit via JXA — no image library) |
 | `bin/office-owner` = `bin/agent-office(.py)` | document leases in Word/Excel/Acrobat/Preview, real-Word → PDF, quitting only the apps it launched: `open · close · renew · pdf · sweep · list · apps` |
 | `bin/kill-chrome.sh` | the human's broom: closes their Chrome + headless leftovers, spares every agent browser; `--all` goes through the owner |
-| `bin/desk-browser.sh`, `install/make-desktop-apps.sh` | colored desktop icons: open/close each agent, the human's Chrome, all agents |
+| `bin/desk-browser.sh`, `install/make-desktop-apps.sh` | colored desktop icons: open/close each agent, the human's Chrome, all agents (`ONLY=<agent>`: one agent's) |
+| `install/make-dock-tray.sh`, `install/dock_tray.py`, `install/icon-lib.sh` | the agents' browsers as one group in the Dock after Chrome (`--remove`) · the Dock placement · the shared icon drawing |
 | `examples/agent-shortcut` | `<agent>-browser <cmd>` = `browser-owner <cmd> <agent>` (kept for callers that know the old name) |
 | `examples/agent-launcher.sh` | an agent with its own launcher; the owner calls it back with `<LAUNCHER_ENV>=1` |
 | `bin/rainbowomma-guard(.py)` | the one pre-tool hook every guardrail adapter runs; reads each framework's hook payload — §5 |
@@ -67,6 +68,14 @@
   `close_fds=False`. A windowless Chrome does not exit when the pipe closes; a windowed one does. A failed install falls
   back to the profile color and records `themeError`. Rebuilt when `THEME_VERSION`, color or label changes.
 - **Name collision.** Do NOT call any tool `agent-browser`: Hermes Agent looks up Vercel's `agent-browser` CLI on PATH.
+
+- **Front for the human.** `front` un-minimizes first: activating an app never de-miniaturizes its windows, so through the
+  agent's own CDP port (a standard-library WebSocket client, no package) every minimized window of its browser goes back
+  to `normal`, and the tab already shown is activated, never another tab. No Automation grant is needed. Then the
+  browser's root process is brought to the front. Local CDP calls never go through an `http_proxy`.
+- **A theme Chrome Sync replaced.** Signing in to Google inside an agent profile lets Chrome Sync swap the agent's theme
+  for the account's (`extensions.theme.id` emptied). The theme counts as installed only while the profile carries it, so
+  the next start puts it back.
 
 ## 4. agent-office
 A document is identified by its full path (every spelling: `/var` vs `/private/var`). It is closed only if the agent

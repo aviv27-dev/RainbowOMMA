@@ -60,6 +60,7 @@ M = {
                           "he": "{by} הוא סוכן אחר — רק המנקה של {label} (או ה-keepalive) סוגר את הדפדפן של {label} בחוסר פעילות"},
     "bo.idle_too_soon": {"en": "{label}'s browser was started {mins} min ago — not idle yet (idleMinutes = {idle})",
                          "he": "הדפדפן של {label} נפתח לפני {mins} דק׳ — עוד לא בחוסר פעילות (idleMinutes = {idle})"},
+    "bo.front_down": {"en": "{label}'s browser is not running", "he": "הדפדפן של {label} לא רץ"},
     "bo.busy": {"en": "another action on this browser is running right now", "he": "פעולה אחרת על הדפדפן הזה רצה עכשיו"},
     # ── port-owner ──
     "po.human_port": {"en": "port {port} is kept for the human (humanPorts) — take one of your own: port-owner lease {agent}",
@@ -89,6 +90,7 @@ M = {
     "desk.human_open_failed": {"en": "Could not open the human's Chrome", "he": "לא הצלחתי לפתוח את Chrome של האדם"},
     "desk.opened": {"en": "{name}'s browser is open", "he": "הדפדפן של {name} נפתח"},
     "desk.already_open": {"en": "{name}'s browser is already open", "he": "הדפדפן של {name} כבר פתוח"},
+    "desk.in_front": {"en": "{name}'s browser is in front", "he": "הדפדפן של {name} בקדמת המסך"},
     "desk.not_opened": {"en": "{name}'s browser did not open: {status} — {why}", "he": "הדפדפן של {name} לא נפתח: {status} — {why}"},
     "desk.closed": {"en": "{name}'s browser is closed — it will not open by itself until it is opened by hand from the shortcut",
                     "he": "הדפדפן של {name} נסגר — לא ייפתח לבד עד לפתיחה ידנית מהקיצור"},
@@ -110,6 +112,7 @@ M = {
                                "open by itself until it is opened by hand.",
                          "he": "לסגור את הדפדפנים של כל הסוכנים ({names})? ההתחברויות של הסוכנים יתנתקו, ואף אחד מהם לא ייפתח לבד "
                                "עד לפתיחה ידנית."},
+    "dock.app_name": {"en": "{n} · {name} — agent browser", "he": "{n} · {name} — דפדפן סוכן"},
     "desk.btn_cancel": {"en": "Cancel", "he": "ביטול"},
     "desk.btn_close": {"en": "Close", "he": "סגור"},
     "desk.error": {"en": "Error: ", "he": "שגיאה: "},
