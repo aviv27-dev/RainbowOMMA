@@ -6,6 +6,9 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `sim-owner`: an iOS Simulator of each agent's own; the guard refuses `simctl … booted` and another agent's (or a
+  shared) simulator. `rainbowomma-clip`: a clipboard of each agent's own; a named agent's `pbcopy`/`pbpaste` are refused.
+- CI runs the test suite on Linux too.
 - `screen-owner`: one lease for the screen (keyboard, mouse, the window in front). Foreground GUI actions take a short
   lease by themselves through the guard, so two agents never type into each other's windows; `takeover`/`handback`
   let the human stop every agent's GUI action and give it back (also in the menu bar).
