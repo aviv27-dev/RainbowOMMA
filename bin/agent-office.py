@@ -25,6 +25,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
+import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
 
 ROOT = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))   # logs, state, work folder
@@ -489,6 +490,8 @@ def main(argv=None):
             code, out = cmd_pdf(a.agent.strip().lower(), a.file, a.out, a.force)
         except Exception as exc:
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+        rainbow_receipts.write("office-owner", "pdf", a.agent.strip().lower(), a.agent.strip().lower(), out.get("status"),
+                               file=a.file, pdf=out.get("pdf"), why=out.get("why"))
         print(json.dumps(out, ensure_ascii=False))
         return code
     try:
@@ -508,6 +511,13 @@ def main(argv=None):
                 code, out = 0, {"leases": [{k: v for k, v in d.items() if k != "_file"} for d in leases()]}
     except Exception as exc:
         code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+    if a.cmd in ("open", "close"):
+        rainbow_receipts.write("office-owner", a.cmd, a.agent.strip().lower(), a.agent.strip().lower(), out.get("status"),
+                               file=a.file, why=out.get("why"))
+    elif a.cmd == "sweep" and not a.dry_run:
+        for x in out.get("items", []) + out.get("apps", []):
+            if x.get("result") in ("closed", "quit", "dropped"):
+                rainbow_receipts.write("office-owner", "sweep", x.get("agent"), "sweep", x["result"], file=x.get("path"), app=x.get("app"))
     print(json.dumps(out, ensure_ascii=False))
     return code
 

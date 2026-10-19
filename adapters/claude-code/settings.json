@@ -12,6 +12,15 @@
             "command": "/Users/you/bin/rainbowomma-guard"
           }
         ]
+      },
+      {
+        "matcher": "mcp__.*(cua|computer).*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-guard"
+          }
+        ]
       }
     ],
     "SessionEnd": [

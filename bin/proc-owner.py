@@ -27,6 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder; the message catalog lives beside it
+import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
 
 
@@ -241,6 +242,11 @@ def main(argv=None):
         code, out = 1, {"status": "failed", "why": t("bo.no_registry", path=PO.REGISTRY or BO.REGISTRY)}
     except Exception as exc:   # one JSON answer, always
         code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+    if a.cmd == "kill":
+        rainbow_receipts.write("proc-owner", "kill", out.get("agent"), a.by.strip().lower(), out.get("status"), pid=a.pid, why=out.get("why"))
+    elif a.cmd == "reap" and not a.dry_run and (out.get("processes") or out.get("released")):
+        rainbow_receipts.write("proc-owner", "reap", a.agent.strip().lower(), "session-end", out.get("status"),
+                               pids=out.get("processes"), ports=out.get("released"))
     print(json.dumps(out, ensure_ascii=False))
     return code
 
