@@ -3,6 +3,7 @@
 
     browser-owner list | names | status AGENT | start AGENT [--by WHO] | stop AGENT --by human [--allow-reopen]
     browser-owner idle-stop AGENT --by WHO | recover AGENT [--by WHO] | front AGENT | heal | human-theme
+    browser-owner mcp-config AGENT [--tool devtools|playwright] [--format json|claude]   point a browser MCP at ITS browser
 
 Agents are rows in browsers.json beside this file. See docs/DESIGN.md for every status word and rule.
 Exit codes: 0 ok · 2 refused · 1 failure. One JSON answer, always.
@@ -76,6 +77,15 @@ def human_ports(path=None):
     except (OSError, ValueError):
         got = None
     return sorted({int(p) for p in got}) if isinstance(got, list) else list(HUMAN_PORTS)
+
+
+def sensitive_sites(path=None):
+    """domains an agent may open only while the human is at the Mac: "sensitiveSites" at the top of browsers.json"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("sensitiveSites")
+    except (OSError, ValueError):
+        got = None
+    return [str(x).strip().lower().lstrip("*.") for x in got if str(x).strip()] if isinstance(got, list) else []
 
 
 def registry(path=None):
@@ -898,12 +908,29 @@ def heal(reg):
     return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps}
 
 
+MCP_TOOLS = {   # the browser MCP servers an agent can point at ITS OWN browser — never the human's (no --autoConnect, no extension)
+    "devtools": lambda port: ["-y", "chrome-devtools-mcp@latest", "--browserUrl", f"http://127.0.0.1:{port}"],
+    "playwright": lambda port: ["-y", "@playwright/mcp@latest", "--cdp-endpoint", f"http://127.0.0.1:{port}"],
+}
+
+
+def mcp_config(a, tool="devtools", fmt="json"):
+    """a ready-made MCP server entry that drives the agent's own browser through its CDP port"""
+    server = {"command": "npx", "args": MCP_TOOLS[tool](a["port"])}
+    name = f"{a['name']}-browser"
+    if fmt == "claude":
+        return {"status": "ok", "name": name, "command": f"claude mcp add-json --scope user {name} '{json.dumps(server)}'"}
+    return {"status": "ok", "name": name, "mcpServers": {name: server}}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "human-theme"])
+    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
     ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
+    ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
+    ap.add_argument("--format", choices=["json", "claude"], default="json", help="mcp-config: an mcpServers entry, or a claude mcp add-json line")
     a = ap.parse_args(argv)
     try:
         reg = registry()
@@ -947,6 +974,9 @@ def main(argv=None):
         return 1
     if a.cmd == "status":
         print(json.dumps(view(ag), ensure_ascii=False))
+        return 0
+    if a.cmd == "mcp-config":
+        print(json.dumps(mcp_config(ag, a.tool, a.format), ensure_ascii=False))
         return 0
     if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
         code, out = do_front(ag)

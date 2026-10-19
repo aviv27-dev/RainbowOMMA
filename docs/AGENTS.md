@@ -69,6 +69,10 @@ These three work for every agent, whatever its framework:
 - **Clean up at session end.** Claude Code, Gemini CLI, Factory Droid and Copilot CLI adapters run
   `~/bin/rainbowomma-session-end` from their session-end hook (it does nothing for an agent without `RAINBOW_AGENT`).
   For the others, `as-agent` does the same when the agent exits.
+- **A browser MCP on the agent's own browser.** `~/bin/browser-owner mcp-config alpha` (or `--tool playwright`,
+  `--format claude`) prints a Chrome DevTools MCP or Playwright MCP entry pointed at Alpha's own CDP port. The guardrail
+  refuses `--autoConnect` and `--extension` (they attach to the human's Chrome) and, for a named agent, another agent's
+  CDP port.
 - **The owners as MCP tools** (`lease_port`, `who_port`, `whose_process`, `stop_process`, `my_processes`,
   `browser_status`, `start_my_browser`, `recover_my_browser`): register `~/bin/rainbowomma-mcp --agent alpha` the
   same way as the cursor proxy below, e.g.

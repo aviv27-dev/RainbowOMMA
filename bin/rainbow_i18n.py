@@ -111,6 +111,15 @@ M = {
                      "he": "להוסיף את המתאם של הסוכן — docs/AGENTS.md, או install.sh --adapter <agent>"},
     "dr.summary_ok": {"en": "Everything needed is in place.", "he": "כל מה שנדרש במקום."},
     "dr.summary_bad": {"en": "{n} needed thing(s) missing — the fix is under each ✗.", "he": "חסרים {n} דברים נדרשים — התיקון מתחת לכל ✗."},
+    # ── menu bar ──
+    "mb.paused_title": {"en": "agents paused", "he": "הסוכנים בהשהיה"},
+    "mb.open": {"en": "Open its browser", "he": "לפתוח את הדפדפן"},
+    "mb.front": {"en": "Bring its browser to the front", "he": "להביא את הדפדפן לקדמת המסך"},
+    "mb.close": {"en": "Close its browser", "he": "לסגור את הדפדפן"},
+    "mb.pause_all": {"en": "Pause all agents", "he": "להשהות את כל הסוכנים"},
+    "mb.resume_all": {"en": "Resume all agents", "he": "להמשיך את כל הסוכנים"},
+    "mb.recent": {"en": "Latest receipts", "he": "הקבלות האחרונות"},
+    "mb.doctor": {"en": "Check the setup (doctor)…", "he": "לבדוק את ההתקנה (doctor)…"},
     # ── office-owner / agent-office ──
     "ao.no_file": {"en": "no such file: {path}", "he": "אין קובץ: {path}"},
     "ao.bad_app": {"en": "unsupported app — word / excel / acrobat / preview", "he": "אפליקציה לא נתמכת — word / excel / acrobat / preview"},

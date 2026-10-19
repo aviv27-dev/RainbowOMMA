@@ -6,6 +6,11 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `browser-owner mcp-config`: a Chrome DevTools MCP or Playwright MCP entry on the agent's own browser; the guard refuses
+  `--autoConnect`/`--extension` and another agent's CDP port.
+- `sensitiveSites`: an agent's browser tools open them only while the human is at the Mac.
+- `rainbowomma-pause` (the stop button for all agents) and `install.sh --with-menubar` (a SwiftBar item: agents as
+  colored dots, open/front/close, pause with ⌘⌥⌃P, the latest receipts).
 - `office-owner xlsx`: the real Excel recalculates every formula on its own copy, which then replaces the workbook (or
   goes to `--out`); `--pdf` exports the active sheet. A workbook open in Excel is never written under.
 - `rainbowomma-doctor`: what's in place, what's missing and how to fix it (`--json` for agents); changes nothing.

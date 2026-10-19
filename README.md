@@ -139,6 +139,19 @@ waits: the guardrail refuses GUI commands (`osascript … keystroke`, `cliclick`
 paused for 5 seconds, and the cursor proxy simply holds the action until then. The guardrail also refuses `rm -r` of your
 home folder, the whole disk or a system folder.
 
+### 🚦 A stop button, and your agents in the menu bar
+`install.sh --with-menubar` adds a [SwiftBar](https://swiftbar.app) item: one dot per agent in its color (filled while its
+browser is up), and per agent "open / bring to front" and "close". **Pause all agents** (⌘⌥⌃P, or
+`~/bin/rainbowomma-pause on`) is the stop button: the guardrail refuses every command and tool call, and the cursor proxy
+answers computer-use actions with an error, until you resume. Nothing is killed. The latest receipts are in the menu
+too.
+
+### 🔒 Sensitive sites need you there
+List them as `"sensitiveSites": ["bank.example", "*.gov.example"]` at the top of `browsers.json`. An agent's browser tool
+(Chrome DevTools MCP, Playwright MCP, any `navigate`/`open` tool) may go there only while you're at the Mac: you used the
+keyboard or mouse in the last 2 minutes (`RAINBOW_HUMAN_PRESENT_S`). Otherwise it's refused and the agent is told to ask
+you.
+
 ### 🔧 One MCP server for all of it
 `~/bin/rainbowomma-mcp --agent alpha` gives any MCP agent the same owners as tools: `lease_port`, `who_port`,
 `whose_process`, `stop_process`, `my_processes`, `browser_status`, `start_my_browser`, `recover_my_browser`.
@@ -167,9 +180,11 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
 | `browser-owner front <agent>` | brings the agent's browser to the front for you, un-minimizing it through its own CDP port (`restored` says how many windows) |
 | `browser-owner heal` | puts back the colors Chrome Sync took: now for a closed browser, on its next start for an open one (with one notification); notes a Chrome update. `install.sh --with-heal` runs it every 30 minutes |
+| `browser-owner mcp-config <agent> [--tool devtools\|playwright] [--format json\|claude]` | a Chrome DevTools MCP or Playwright MCP entry that drives the agent's own browser (its CDP port), never yours |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
 | `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back |
+| `rainbowomma-pause on\|off\|toggle\|status` | the stop button for all agents (also in the menu bar, ⌘⌥⌃P) |
 | `receipts [--agent A] [--tool T] [--since ISO] [-n N]` | what the owners did and refused, oldest first |
 | `as-agent <agent> <command…>` · `rainbowomma-mcp --agent <agent>` | run any agent as that agent (`RAINBOW_AGENT` + a session id; reaps on exit) · the owners as MCP tools |
 | `office-owner open\|close\|renew --agent <a> <file>` | leases a document, and closes it only if that agent opened it and it's saved |
@@ -263,6 +278,7 @@ Optional: Microsoft Word for `office-owner pdf`, and Cua Driver for the colored 
 | `BROWSER_OWNER_REGISTRY` | `browsers.json` next to the tools | the agent registry |
 | `RAINBOW_AGENT` | (unset) | set in an agent's environment (`as-agent` does it): every process it starts is that agent's; the guardrail holds it to its own ports and processes |
 | `RAINBOW_HUMAN_IDLE_S` · `RAINBOW_HUMAN_WAIT_S` | `5` · `30` | how long you must have paused before an agent's click or keystroke goes ahead · the longest the cursor proxy holds one |
+| `RAINBOW_HUMAN_PRESENT_S` · `RAINBOW_PAUSE_WAIT_S` | `120` · `60` | how recently you must have used the Mac for an agent to open a sensitive site · how long the cursor proxy holds an action while all agents are paused |
 | `RAINBOW_SESSION` | (set by `as-agent`) | one session's id: `proc-owner reap --session` stops only that session's leftovers |
 
 ## Tests
