@@ -502,13 +502,33 @@ def kill_verdict(cmds):
         return None
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     for pid in pids:
-        owner, via = own.get(pid, ("human", "none"))
         if pid not in own:
             continue                                  # no such process: kill fails on its own
-        if (me and owner != me) or (not me and owner != "human"):
-            hint = f"`proc-owner kill <pid> --by {me}` stops your own" if me else "`proc-owner whose <pid>` says whose a process is"
-            return f"process {pid} is {owner}'s (by {via}), not yours — {hint}"
+        owner, via = own[pid]
+        if not me:                                    # who is asking can't be told, so nothing is provably theirs
+            return (f"process {pid} can't be shown to be yours — this agent has no name; start it with `as-agent <name> …` "
+                    f"(or RAINBOW_AGENT in its settings), then `proc-owner kill <pid> --by <name>`")
+        if owner != me:
+            whose = "not provably any agent's" if via == "none" else f"{owner}'s (by {via})"
+            return f"process {pid} is {whose}, not yours — `proc-owner kill <pid> --by {me}` stops only your own"
     return None
+
+
+def track(me):
+    """the agent framework's own process becomes the agent's root (once), and what runs under it is recorded every 10 s —
+    so its processes stay its own even where the OS hides their environment (macOS 27)"""
+    if os.environ.get("RAINBOW_TRACK_ROOT") == "off":
+        return
+    try:
+        pc = _load_beside("rainbow_proc_owner", "proc-owner.py")
+        rows = pc.processes()
+        root = pc.framework_root(os.getpid(), rows)
+        fresh = root is not None and pc.register(me, root, rows) and pc.load_roots().get(root, {}).get("agent") == me
+        f = pc.roots_file()
+        if fresh and (not f.exists() or time.time() - f.stat().st_mtime > 10):
+            pc.ownership(pc.registry(), rows, keep=True)
+    except Exception:
+        pass
 
 
 def port_verdict(ports):
@@ -582,6 +602,9 @@ def main(argv=None):
         return 0
     if not isinstance(event, dict):
         return 0
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if me:
+        track(me)
     for cmd in [None] + commands(event):
         why = (app_tool_verdict(event) or gui_tool_verdict(event) or browser_tool_verdict(event)) if cmd is None else verdict(cmd)
         if cmd is None and not why and is_paused() and (commands(event) or event.get("tool_name") or event.get("toolName")):

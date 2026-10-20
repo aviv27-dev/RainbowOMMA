@@ -15,6 +15,7 @@ results = []
 def check(name, cond, info=""):
     results.append(bool(cond)); print(("✅ " if cond else "❌ ") + name + ("" if cond else f"  — {info}"))
 
+os.environ["RAINBOW_TRACK_ROOT"] = "off"      # the guard would register this test runner as an agent's root; one test turns it on
 SAFE_HOME = Path(tempfile.mkdtemp(prefix="rainbow-home-"))
 os.environ["RAINBOW_HOME"] = str(SAFE_HOME)   # a test run never shares a live lock, lease or state file with the real one
 bo = load("browser-owner.py")
@@ -993,8 +994,8 @@ finally:
         k.kill()
 check("guard as Alpha: `kill <pid>` only for Alpha's own process — Bravo's and the human's are refused",
       got[("alpha", "alpha")] == 0 and got[("alpha", "bravo")] == 2 and got[("alpha", "human")] == 2, got)
-check("guard without RAINBOW_AGENT: another agent's process is refused, the rest is let through",
-      got[(None, "bravo")] == 2 and got[(None, "alpha")] == 2 and got[(None, "human")] == 0, got)
+check("guard without RAINBOW_AGENT: nothing is provably the caller's — every live process is refused",
+      got[(None, "bravo")] == 2 and got[(None, "alpha")] == 2 and got[(None, "human")] == 2, got)
 
 # ── after a session: reap, the session-end hook, as-agent ──
 listening.clear(); listening.update({41001: "node (pid 520)", 41003: "Python (pid 550)"})
@@ -1573,6 +1574,87 @@ check("apps: by default no agent drives a terminal, System Settings or Keychain 
       ag_app(term, "bravo") == 2 and ag_app(keych, "bravo") == 2 and ag_app(cua_term, "bravo") == 2 and ag_app(notes, "bravo") == 0)
 check("apps: per agent, \"apps\" allows or denies more — Alpha may drive Terminal, but not Notes",
       ag_app(term, "alpha") == 0 and ag_app(notes, "alpha") == 2 and bo.denied_apps("alpha", AREG).count("notes") == 1)
+
+# ── ownership where the OS hides process environments (macOS 27): marks the agents write themselves ──
+noenv = dict(genv, RAINBOW_ENV_MARKERS="off", BROWSER_OWNER_REGISTRY=str(REG))
+noenv.pop("RAINBOW_AGENT", None)
+sessions_ = {who: subprocess.Popen(["bash", str(HERE / "as-agent"), who, "sleep", "60"], env=noenv) for who in ("alpha", "bravo")}
+human_kid = subprocess.Popen(["sleep", "60"], env=noenv)
+try:
+    kid = {}
+    for _ in range(40):
+        threading.Event().wait(0.25)                 # time.sleep is instant in this file (bo.time.sleep above)
+        ps_ = [ln.split(None, 2) for ln in subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True).stdout.splitlines()]
+        kid = {who: next((int(r[0]) for r in ps_ if len(r) == 3 and int(r[1]) == sp.pid and r[2].startswith("sleep")), None)
+               for who, sp in sessions_.items()}
+        if all(kid.values()):
+            break
+    def nk(target, agent):
+        e = dict(noenv, **({"RAINBOW_AGENT": agent} if agent else {}))
+        return subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": f"kill {target}"}}),
+                              capture_output=True, text=True, env=e).returncode
+    pids_ = {"alpha": kid["alpha"], "bravo": kid["bravo"], "human": human_kid.pid}
+    got2 = {(me, who): nk(pids_[who], me) for me in ("alpha", None) for who in ("alpha", "bravo", "human")}
+    os.environ["RAINBOW_HOME"] = noenv["RAINBOW_HOME"]; w_pc = load("proc-owner.py"); os.environ["RAINBOW_ENV_MARKERS"] = "off"
+    w_pc.PO.REGISTRY = REG
+    whose_alpha = w_pc.cmd_whose(kid["alpha"])[1] if kid["alpha"] else {}
+    os.environ.pop("RAINBOW_ENV_MARKERS"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+finally:
+    for sp in [*sessions_.values(), human_kid]:
+        sp.kill()
+    subprocess.run(["pkill", "-P", str(sessions_["alpha"].pid)], capture_output=True); subprocess.run(["pkill", "-P", str(sessions_["bravo"].pid)], capture_output=True)
+check("env unreadable (macOS 27): as-agent registers its own shell, so the process under it is Alpha's by mark",
+      whose_alpha.get("agent") == "alpha" and whose_alpha.get("via") == "ancestor", whose_alpha)
+check("env unreadable: as Alpha, `kill` only Alpha's own — Bravo's and an unmarked (human's) process are refused",
+      got2[("alpha", "alpha")] == 0 and got2[("alpha", "bravo")] == 2 and got2[("alpha", "human")] == 2, got2)
+check("env unreadable: an agent without a name can't prove anything is its own — refused for all three",
+      got2[(None, "alpha")] == 2 and got2[(None, "bravo")] == 2 and got2[(None, "human")] == 2, got2)
+frows = [(1, 0, "launchd"), (50, 1, "/usr/local/bin/node /usr/local/bin/claude"), (60, 50, "/bin/sh -c ~/bin/rainbowomma-guard"),
+         (70, 60, "/usr/bin/python3 -I /x/rainbowomma-guard.py"), (80, 50, "node server.js"),
+         (90, 1, "/Applications/Code.app/Contents/Frameworks/Code Helper (Plugin).app/Contents/MacOS/Code Helper (Plugin)"),
+         (91, 90, "/bin/sh -c guard"), (92, 91, "/usr/bin/python3 -I guard.py")]
+check("guard: the agent framework's own process is its root — never a shell, python, launchd, or a GUI app's helper (an editor)",
+      pc.framework_root(70, frows) == 50 and pc.framework_root(92, frows) is None)
+os.environ["RAINBOW_HOME"] = str(tmp / "roots-home"); rpc = load("proc-owner.py"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+rpc.PO.REGISTRY = REG; rpc.MARKERS = lambda: {}
+rpc.register("alpha", 50, frows)
+check("a live root stays its first agent's: another agent can't claim it", rpc.register("bravo", 50, frows) is False
+      and rpc.load_roots()[50]["agent"] == "alpha")
+_, own1 = rpc.ownership(rows=frows, keep=True)
+orphaned = [(1, 0, "launchd"), (80, 1, "node server.js"), (95, 1, "node other.js")]
+_, own2 = rpc.ownership(rows=orphaned)
+check("a server an agent left behind stays its own after its session ends (re-parented to launchd, ancestry gone)",
+      own1[80] == ("alpha", "ancestor") and own2[80] == ("alpha", "mark") and own2[95] == ("human", "none"), (own1.get(80), own2))
+orphaned2 = [(1, 0, "launchd"), (80, 1, "python3 something-else.py")]
+_, own3 = rpc.ownership(rows=orphaned2)
+check("…but a reused pid (another command line) is never the agent's", own3[80] == ("human", "none"))
+check("…nor a login shell (-zsh)", pc.framework_root(2, [(1, 0, "launchd"), (5, 1, "-zsh"), (2, 5, "/bin/sh -c guard")]) is None)
+
+# the guard registers the agent framework above it as the agent's root (RAINBOW_TRACK_ROOT on), env unreadable
+fw_dir = tmp / "fw"; fw_dir.mkdir(); (fw_dir / "agentfw").symlink_to("/bin/bash")
+th = tmp / "track-home"
+tenv = dict(genv, RAINBOW_HOME=str(th), RAINBOW_ENV_MARKERS="off", RAINBOW_AGENT="alpha", RAINBOW_TRACK_ROOT="on")
+evt = json.dumps({"tool_input": {"command": "ls"}}).replace("'", "")
+fw = subprocess.Popen([str(fw_dir / "agentfw"), "-c", f"sleep 30 & echo '{evt}' | {sys.executable} -I {guard}; wait"], env=tenv)
+try:
+    t_roots, t_kid = {}, None
+    for _ in range(40):
+        threading.Event().wait(0.25)
+        rf = th / "state" / "proc-roots.json"
+        t_roots = json.loads(rf.read_text()) if rf.exists() else {}
+        ps_ = [ln.split(None, 2) for ln in subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="], capture_output=True, text=True).stdout.splitlines()]
+        t_kid = next((int(r[0]) for r in ps_ if len(r) == 3 and int(r[1]) == fw.pid and r[2].startswith("sleep")), None)
+        if str(fw.pid) in t_roots and t_kid:
+            break
+    k_env = dict(tenv, RAINBOW_TRACK_ROOT="off")
+    t_alpha = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": f"kill {t_kid}"}}),
+                             capture_output=True, text=True, env=k_env).returncode
+    t_bravo = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": f"kill {t_kid}"}}),
+                             capture_output=True, text=True, env=dict(k_env, RAINBOW_AGENT="bravo")).returncode
+finally:
+    subprocess.run(["pkill", "-P", str(fw.pid)], capture_output=True); fw.kill()
+check("guard (env unreadable): the agent framework running it becomes the agent's root — what it starts is the agent's own",
+      t_roots.get(str(fw.pid), {}).get("agent") == "alpha" and t_alpha == 0 and t_bravo == 2, (t_roots, t_alpha, t_bravo))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
