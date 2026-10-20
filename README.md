@@ -126,9 +126,11 @@ eval "$(~/bin/port-owner env alpha --name web) npm run dev"   # PORT=41000 npm r
 
 ### 🧾 Every process has an owner
 Start an agent with `~/bin/as-agent alpha claude` (or set `RAINBOW_AGENT=alpha` in its settings) and every process it
-starts carries its name. `proc-owner whose <pid>` says whose a process is: an agent's (by that mark, an ancestor that
-carries it, or its Chrome), or yours. An agent stops only its own: `proc-owner kill <pid> --by alpha`, and the
-guardrail refuses a plain `kill` of another agent's or your process. When the session ends, `proc-owner reap` stops
+starts is marked as its own (`as-agent` registers its root; the guardrail registers the framework above it — no
+reading of other processes' environments, which macOS 27 hides). `proc-owner whose <pid>` says whose a process is: an
+agent's (by that mark, a marked ancestor, or its Chrome), or not provably any agent's — then it's yours. An agent stops
+only what is provably its own: `proc-owner kill <pid> --by alpha`, and the guardrail refuses a plain `kill` of
+anything else. When the session ends, `proc-owner reap` stops
 the servers it left behind and gives its ports back, but never its browser and never another session's servers.
 
 ### 🧾 Receipts, and the human at the keyboard comes first
@@ -214,7 +216,7 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `browser-owner mcp-config <agent> [--tool devtools\|playwright] [--format json\|claude]` | a Chrome DevTools MCP or Playwright MCP entry that drives the agent's own browser (its CDP port), never yours |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
-| `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back |
+| `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` · `register <agent>` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back · mark the calling shell as the agent's root (`as-agent` does it) |
 | `screen-owner take <agent> [--minutes M] [--wait S]` · `release` · `takeover` · `handback` · `who` | the screen lease: an agent holds it to drive the foreground; the human takes it over and hands it back |
 | `rainbowomma-approve ask --agent A --why … -- <command>` · `list` | the human allows one exact irreversible command (Messages, Mail) once |
 | `sim-owner lease <agent> [--device "iPhone 16"]` · `who <udid>` · `release` · `list` | an iOS Simulator of the agent's own, and its UDID |

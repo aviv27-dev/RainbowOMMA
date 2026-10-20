@@ -13,6 +13,7 @@ case " $("$DIR/browser-owner" names 2>/dev/null) " in
 esac
 export RAINBOW_AGENT="$NAME"
 RAINBOW_SESSION="${NAME}-$(date +%s)-$$"; export RAINBOW_SESSION
+"$DIR/proc-owner" register "$NAME" >/dev/null 2>&1 || true   # this shell is the agent's root: every process under it is NAME's
 "$@"
 RC=$?
 "$DIR/proc-owner" reap "$NAME" --session "$RAINBOW_SESSION" >/dev/null 2>&1

@@ -78,6 +78,11 @@ exit codes are an API and change only in a major version.
   registry gets a clear answer instead of a traceback.
 
 ### Fixed
+- macOS 27 hides other processes' environments (`ps -E`), so `RAINBOW_AGENT` could no longer show whose a process was
+  and the guard's `kill <pid>` rule failed open. Ownership now comes from marks the agents write: `as-agent` registers
+  its shell (`proc-owner register`), the guard registers the agent framework above it and records its descendants
+  (`$RAINBOW_HOME/state/proc-roots.json`, pid + command line). "Can't tell" is refused: a named agent may `kill` only
+  what is provably its own, and an agent without a name no live process at all.
 - An agent's theme comes back after Chrome Sync replaced it (signing in to Google inside the agent's profile).
 - `office-owner` reports osascript's own reason for a failure instead of "exit 1".
 - `desk-browser.sh` exits 1 with the reason on stderr when a browser didn't open or close.

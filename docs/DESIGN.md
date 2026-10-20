@@ -17,7 +17,7 @@
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · front · human-theme`, `--by WHO` |
 | `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`), `chrome` (`stable` · `beta` · `dev` · `canary` · `cft` · a path to a Chrome `.app`); top-level `humanPorts` |
 | `bin/port-owner(.py)` | every agent's ports: a range per agent (`ports` in the registry, default 41000 + 100 × (CDP port − 9222)), leases inside it, `humanPorts` never leased: `lease · env · who · release · list` — §8 |
-| `bin/proc-owner(.py)` | whose a process is (`RAINBOW_AGENT` in its environment, an ancestor that carries it, or the agent's Chrome tree; else the human's): `whose · kill --by · list · reap` — §9 |
+| `bin/proc-owner(.py)` | whose a process is (a mark the agent wrote — its registered root or a process seen under it —, `RAINBOW_AGENT` where the OS shows environments, or the agent's Chrome tree; else not provably any agent's): `whose · kill --by · list · reap · register` — §9 |
 | `bin/as-agent`, `bin/rainbowomma-session-end` | run any agent as a named agent (`RAINBOW_AGENT` + `RAINBOW_SESSION`, reap on exit) · the session-end hook adapters run — §9 |
 | `bin/rainbowomma-mcp(.py)` | the owners as MCP tools for any MCP agent (stdio, standard library only) — §10 |
 | `bin/theme-frame.js` | draws the agent's name onto the theme's frame image (AppKit via JXA — no image library) |
@@ -180,13 +180,19 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   agent owns or holds are refused. A port that appears only in text (a commit message, an `echo`) is not a claim.
 
 ## 9. proc-owner — every process has an owner
-- **Who.** `RAINBOW_AGENT=<name>` in a process's environment (Linux: `/proc/<pid>/environ`; macOS: `ps -E`, same user
-  only) makes it that agent's, and so does an ancestor that carries it (a child whose environment was cleared) or being
-  in the agent's Chrome tree (browser-owner's). Everything else is the human's. Set the name where the agent starts:
-  `as-agent alpha claude`, or the framework's own env setting (Claude Code `"env"`).
+- **Who.** Ownership comes from marks the agents write themselves, never from reading another process's environment
+  alone (macOS 27 no longer shows it, even to the same user). `as-agent` registers its own shell as the agent's root
+  (`proc-owner register AGENT`, in `$RAINBOW_HOME/state/proc-roots.json`, keyed by pid *and* command line, so a
+  reused pid is never the agent's); the guard registers the agent framework above it (the first ancestor that isn't a
+  shell, a wrapper or python — never launchd, a login shell or a GUI app's helper such as an editor's) and, every
+  10 s, records what runs under a root, so a server stays its agent's after it is re-parented to launchd. A live root
+  stays its first agent's. A process is an agent's by such a mark, by a marked ancestor, by `RAINBOW_AGENT` in its
+  environment where the OS still shows it (Linux, older macOS), or by being in the agent's Chrome tree. Anything else
+  is "human" with `"via": "none"`: not provably any agent's.
 - **Stop only your own.** `kill PID --by AGENT` sends TERM (`--force`: KILL after 5 s) only when the process is that
   agent's; `--by human` may stop any; pid 1 and the caller itself never. The guard applies the same rule to a plain
-  `kill <pid>`: with `RAINBOW_AGENT` set, only the agent's own; without it, never another agent's. `kill $VAR` and
+  `kill <pid>`: with `RAINBOW_AGENT` set, only what is provably the agent's own; without it, no live process at all
+  (nothing can be shown to be the caller's). "Can't tell" is a refusal. `kill $VAR` and
   `kill %1` can't be resolved from the text and are let through.
 - **After a session.** `reap AGENT` stops the agent's servers that outlived their session: processes of that agent,
   re-parented to launchd (ppid 1) and listening on a port. Never its Chrome, never the caller or its ancestors (the

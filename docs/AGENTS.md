@@ -61,11 +61,13 @@ Every MCP snippet below registers the colored cursor for agent `alpha`; use the 
 These three work for every agent, whatever its framework:
 
 - **Name it.** Start the agent as a named agent, e.g. `~/bin/as-agent alpha claude`, `~/bin/as-agent bravo codex`.
-  Every process it starts then carries `RAINBOW_AGENT=alpha`. The guardrail holds it to its own ports (`port-owner`)
+  Every process it starts then carries `RAINBOW_AGENT=alpha`, and `as-agent` registers its shell as alpha's root, so
+  its processes are alpha's even where the OS hides their environment (macOS 27). The guardrail holds it to its own ports (`port-owner`)
   and its own processes (`proc-owner`), and when it exits, the servers it left behind stop and its ports go back.
   Without `as-agent`, set `RAINBOW_AGENT` in the framework's environment where it has one (Claude Code: `"env"` in
   `settings.json`, as in the adapter; Codex: `[shell_environment_policy] set = { RAINBOW_AGENT = "alpha" }` in
-  `config.toml`).
+  `config.toml`); the guardrail hook then registers the framework's own process as the agent's root on its first call.
+  An agent without a name can't stop any process with a plain `kill`.
 - **Clean up at session end.** Claude Code, Gemini CLI, Factory Droid and Copilot CLI adapters run
   `~/bin/rainbowomma-session-end` from their session-end hook (it does nothing for an agent without `RAINBOW_AGENT`).
   For the others, `as-agent` does the same when the agent exits.
