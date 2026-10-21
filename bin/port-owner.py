@@ -221,6 +221,10 @@ def main(argv=None):
     li = sub.add_parser("list"); li.add_argument("agent", nargs="?")
     a = ap.parse_args(argv)
     agent = (getattr(a, "agent", None) or "").strip().lower() or None
+    bad = rainbow_receipts.acting_as(agent) if a.cmd in ("lease", "env", "release") else None
+    if bad:
+        print(json.dumps({"status": "refused", "why": bad}, ensure_ascii=False), file=sys.stderr if a.cmd == "env" else sys.stdout)
+        return 2
     try:
         if a.cmd in ("lease", "env"):
             code, out = cmd_lease(agent, a.name, a.prefer)

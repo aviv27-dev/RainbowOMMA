@@ -53,7 +53,15 @@ done
 
 if [ "$PURGE" = 1 ]; then
   [ -e "$BIN/browsers.json" ] && { echo "→ $BIN/browsers.json"; run rm -f "$BIN/browsers.json"; }
-  [ -d "$ROOT" ] && { echo "→ $ROOT (logs, state, themes, receipts)"; run rm -rf "$ROOT"; }
+  if [ -d "$ROOT" ]; then
+    # only a real folder that is RainbowOMMA's: never /, your home, a symlink, or a folder without its state or logs
+    R="$(cd "$ROOT" && pwd -P)"
+    if [ -L "$ROOT" ] || [ "$R" = / ] || [ "$R" = "$(cd "$HOME" && pwd -P)" ] || { [ ! -d "$R/state" ] && [ ! -d "$R/logs" ]; }; then
+      echo "not removing $ROOT: it doesn't look like RainbowOMMA's folder (no state/ or logs/, or it is / or your home) — delete it yourself" >&2
+    else
+      echo "→ $ROOT (logs, state, themes, receipts)"; run rm -rf "$R"
+    fi
+  fi
 else
   echo "kept: $BIN/browsers.json and $ROOT (--purge removes them)"
 fi

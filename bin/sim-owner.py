@@ -83,6 +83,9 @@ def main(argv=None):
     r = sub.add_parser("release"); r.add_argument("agent"); r.add_argument("--shutdown", action="store_true")
     sub.add_parser("list")
     a = ap.parse_args(argv)
+    if a.cmd in ("lease", "release") and rainbow_receipts.acting_as(a.agent):
+        print(json.dumps({"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}, ensure_ascii=False))
+        return 2
     try:
         if a.cmd == "lease":
             code, out = cmd_lease(a.agent.strip().lower(), a.device)

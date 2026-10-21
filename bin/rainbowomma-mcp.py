@@ -49,7 +49,8 @@ TOOLS = [
     {"name": "take_screen", "description": "Hold the screen (keyboard, mouse, the window in front) before driving the foreground for a while. "
                                            "Background drivers (Cua) don't need it. Refused while the human types or holds it.",
      "inputSchema": {"type": "object", "properties": {"minutes": {"type": "number"}, "wait_seconds": {"type": "number"}}},
-     "argv": lambda me, a: ["screen-owner", "take", me, "--minutes", str(float(a.get("minutes") or 5)), "--wait", str(float(a.get("wait_seconds") or 0))]},
+     "argv": lambda me, a: ["screen-owner", "take", me, "--minutes", str(min(max(float(a.get("minutes") or 5), 0.1), 60.0)),
+                            "--wait", str(min(max(float(a.get("wait_seconds") or 0), 0.0), 120.0))]},
     {"name": "release_screen", "description": "Give the screen back as soon as you're done with the foreground.",
      "inputSchema": {"type": "object", "properties": {}},
      "argv": lambda me, a: ["screen-owner", "release", me]},

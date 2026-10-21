@@ -12,7 +12,9 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0, pinned by commit (a tag can be moved)
+        with:
+          persist-credentials: false
       - name: Run the test suite (fakes only — no real browser or app)
         run: python3 tests/test_rainbowomma.py
       - name: Shell syntax
@@ -22,16 +24,20 @@ jobs:
     # ports, processes, the guard, receipts, the MCP server and the simulator lease work on Linux too; the macOS parts are faked
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0, pinned by commit (a tag can be moved)
+        with:
+          persist-credentials: false
       - name: Run the test suite on Linux (fakes only)
         run: python3 tests/test_rainbowomma.py
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0, pinned by commit (a tag can be moved)
+        with:
+          persist-credentials: false
       - name: Install ruff and shellcheck
-        run: python3 -m pip install --quiet ruff shellcheck-py
+        run: python3 -m pip install --quiet ruff==0.17.1 shellcheck-py==0.11.0.1
       - name: Python — real errors only (undefined names, unused imports, syntax)
         run: ruff check --select F,E9 bin tools tests install
       - name: Shell — warnings and errors

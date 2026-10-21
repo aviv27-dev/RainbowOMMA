@@ -19,7 +19,7 @@ from pathlib import Path
 
 
 def folder(agent):
-    if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", agent):
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", agent) or agent == "human":
         raise SystemExit("rainbowomma-clip: bad agent name")
     root = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))
     return root / "state" / "clip" / agent
@@ -31,6 +31,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", a.name):
         print("rainbowomma-clip: bad clip name", file=sys.stderr)
+        return 2
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if me and a.agent.strip().lower() != me:
+        print(f"rainbowomma-clip: you are {me} — your clips only, never {a.agent}'s", file=sys.stderr)
         return 2
     d = folder(a.agent.strip().lower())
     if a.cmd == "clear":

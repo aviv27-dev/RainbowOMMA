@@ -23,7 +23,9 @@ mine() {
       *) continue ;;
     esac
     case "$cmd" in
-      *remote-debugging-port*|*--headless*|*--type=*) continue ;;
+      *remote-debugging-port*|*remote-debugging-pipe*|*--headless*|*--type=*) continue ;;
+      *--user-data-dir="$DATA_DIR"|*--user-data-dir="$DATA_DIR"\ *) ;;
+      *--user-data-dir=*) continue ;;      # a Chrome on another profile (an agent's) is never "your Chrome"
     esac
     echo "$pid"
   done | head -1

@@ -15,6 +15,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -111,11 +112,13 @@ def registry(path=None):
     raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))["agents"]
     out, ports, profiles, states, ranges = {}, {}, {}, {}, {}
     for name, r in raw.items():
-        if not NAME_RE.match(name):
-            raise ValueError(f"bad agent name: {name!r}")
+        if not NAME_RE.match(name) or name == "human" or name.startswith("human-"):
+            raise ValueError(f"bad agent name: {name!r}")                  # human-* is the human's (their theme folder too)
         miss = [k for k in ("label", "port", "profile", "color") if not r.get(k)]
         if miss:
             raise ValueError(f"{name}: missing {', '.join(miss)}")
+        if not isinstance(r["label"], str) or len(r["label"]) > 40 or re.search(r"[\x00-\x1f\x7f|\\\"]", r["label"]):
+            raise ValueError(f"{name}: a label is up to 40 characters, without control characters, |, \\ or \"")
         port = int(r["port"])
         if not 9222 <= port <= 9299:
             raise ValueError(f"{name}: port {port} outside 9222–9299")
@@ -165,10 +168,38 @@ def log(a, msg):
     try:
         p = Path(a["log"])
         p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {a['name']}: {msg}\n")
+        fd = os.open(str(p), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)     # never through a planted link
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {a['name']}: {' '.join(str(msg).split())}\n")
     except OSError:
         pass
+
+
+def open_lock(path):
+    """the agent's lock file, never opened through a symlink (that would truncate whatever it points to)"""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    return os.fdopen(os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "r+")
+
+
+PROFILE_TOP = ("Default", "Local State", "First Run")
+
+
+def profile_unsafe(a):
+    """a link inside the agent's profile could lead its Chrome — or paint() — into another profile (the human's) → the reason, or None"""
+    prof = Path(a["profile"])
+    if not prof.exists():
+        return None
+    if prof.is_symlink():
+        return f"{prof} is a symlink"
+    real = os.path.realpath(str(prof))
+    try:
+        entries = list(prof.iterdir())
+    except OSError as exc:
+        return f"{prof}: {exc}"
+    for e in [*entries, *[prof / "Default" / x for x in ("Preferences", "Secure Preferences", "Cookies")]]:
+        if e.is_symlink() or (e.exists() and not os.path.realpath(str(e)).startswith(real + os.sep)):
+            return f"{e} is a link out of the agent's profile"
+    return None
 
 
 def load(a):
@@ -413,6 +444,10 @@ def build_theme(a, text=None, title=None):
     tint = [int(c + (255 - c) * 0.78) for c in base]
     ink = [int(c * 0.35) for c in base]
     d = THEMES / a["name"]
+    if d.is_symlink() or d.is_file():
+        d.unlink()
+    elif d.exists():
+        shutil.rmtree(d)                  # Chrome reads this folder at every start: nothing but what is built here may be in it
     d.mkdir(parents=True, exist_ok=True)
     manifest = {"manifest_version": 3, "name": title or t("bo.theme_title", label=a["label"]), "version": f"{THEME_VERSION}.{int(time.time()) % 100000}",
                 "description": "browser-owner — the agent's browser theme (RainbowOMMA)",
@@ -432,6 +467,21 @@ def build_theme(a, text=None, title=None):
         pass                       # a theme without the written name is still a solid color
     atomic_write(d / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
     return d
+
+
+THEME_FILES = {"manifest.json", "frame.png"}
+THEME_KEYS = {"manifest_version", "name", "version", "description", "theme"}
+
+
+def theme_clean(name):
+    """the theme folder holds only what build_theme writes (no script, no extra key Chrome would run)"""
+    d = THEMES / name
+    try:
+        if d.is_symlink() or {x.name for x in d.iterdir()} - THEME_FILES or any(x.is_symlink() for x in d.iterdir()):
+            return False
+        return set(json.loads((d / "manifest.json").read_text(encoding="utf-8"))) <= THEME_KEYS
+    except (OSError, ValueError):
+        return not d.exists()
 
 
 def theme_saved(a):
@@ -507,6 +557,9 @@ def ensure_theme(a, st):
     """install (or rebuild) the agent's theme when it is missing or its color/name changed — only while its browser is down.
     A failure is recorded and the start goes on with the profile color (never blocks the agent)."""
     if st.get("theme") == theme_key(a) and theme_saved(a):
+        if not theme_clean(a["name"]):
+            build_theme(a)           # something was added to its folder: Chrome would load it at the next start
+            log(a, "theme folder had foreign files — rebuilt")
         return "kept"                # only while the profile really carries it: signing in to Google lets Chrome Sync replace it
     try:
         ok, res = install_theme(a, build_theme(a))
@@ -627,6 +680,8 @@ def _cdp_browser_calls(port, calls, timeout=5.0):
                     n = struct.unpack(">H", recv_exact(2))[0]
                 elif n == 127:
                     n = struct.unpack(">Q", recv_exact(8))[0]
+                if n > 32 * 1024 * 1024:
+                    raise OSError("cdp: a message larger than 32 MB")          # a squatter on the port can't make us read forever
                 payload = recv_exact(n)
                 if b1 & 0x0F == 1:
                     return json.loads(payload.decode("utf-8"))
@@ -758,6 +813,9 @@ def do_start(a, by):
     if v["status"] == "profile-busy":
         return profile_busy(v)
     st = reconcile(a, st, v)
+    bad = profile_unsafe(a)
+    if bad:
+        return 2, {"status": "refused", "why": f"{bad} — the profile must be the agent's own folder; ask the human to check it"}
     if st.get("offByHuman") and by != "human":
         return 2, {"status": "refused", "why": t("bo.refused_off", label=a["label"], at=st.get("offAt"))}
     if by == "human" and st.get("offByHuman"):
@@ -805,7 +863,7 @@ def started_ago(st):
 def do_idle_stop(a, by):
     if not a.get("idleMinutes"):
         return 2, {"status": "refused", "why": t("bo.no_idle", label=a["label"])}
-    if by in a.get("peers", ()) and by != a["name"]:          # one agent never closes another agent's browser
+    if (by in a.get("peers", ()) and by != a["name"]) or by == "human":   # one agent never closes another agent's browser
         return 2, {"status": "refused", "why": t("bo.idle_not_yours", by=by, label=a["label"])}
     rows = processes()
     roots, tree = tree_of(a, rows)
@@ -813,7 +871,9 @@ def do_idle_stop(a, by):
         return 0, {"status": "not-running"}
     st = load(a)
     ago = started_ago(st)
-    if ago is not None and 0 <= ago < a["idleMinutes"] * 60:   # opened more recently than its idle time — cannot be idle yet
+    if ago is None:                                            # opened outside the owner: how long it has been idle can't be told
+        return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=0, idle=a["idleMinutes"])}
+    if 0 <= ago < a["idleMinutes"] * 60:   # opened more recently than its idle time — cannot be idle yet
         return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=int(ago // 60), idle=a["idleMinutes"])}
     st["lastStop"] = {"at": now_iso(), "by": by, "pids": len(tree), "idle": True}
     save(a, st)
@@ -891,6 +951,9 @@ def heal(reg):
                 save(a, st)
             out.append({"agent": name, "theme": "ok"})
             continue
+        if profile_unsafe(a):
+            out.append({"agent": name, "theme": "profile-unsafe"})
+            continue
         v = view(a, st=st, rows=rows)
         if v["roots"] or v.get("profileBusy"):
             if not st.get("themeMissingSince"):
@@ -900,8 +963,12 @@ def heal(reg):
                 log(a, "heal: theme missing while the browser is open — put back on the next start")
             out.append({"agent": name, "theme": "missing-open", "since": st.get("themeMissingSince")})
             continue
-        Path(a["lock"]).parent.mkdir(parents=True, exist_ok=True)
-        with open(a["lock"], "w") as lk:
+        try:
+            lk = open_lock(a["lock"])
+        except OSError:
+            out.append({"agent": name, "theme": "busy"})
+            continue
+        with lk:
             try:
                 fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
@@ -912,6 +979,10 @@ def heal(reg):
             save(a, st)
             log(a, f"heal: theme {res} while the browser was closed")
             out.append({"agent": name, "theme": res})
+    if (THEMES / "human-human").exists() and not theme_clean("human-human"):     # the human loaded it into their own Chrome
+        build_theme({"name": "human-human", "label": t("bo.human_label"), "color": "#B0BEC5"}, text=t("bo.human_text"),
+                    title=t("bo.human_title"))
+        out.append({"agent": "human", "theme": "rebuilt"})
     ver, prev = chrome_version(), None
     try:
         prev = json.loads(CHROME_VER_FILE.read_text(encoding="utf-8")).get("version")
@@ -928,8 +999,8 @@ def heal(reg):
 
 
 MCP_TOOLS = {   # the browser MCP servers an agent can point at ITS OWN browser — never the human's (no --autoConnect, no extension)
-    "devtools": lambda port: ["-y", "chrome-devtools-mcp@latest", "--browserUrl", f"http://127.0.0.1:{port}"],
-    "playwright": lambda port: ["-y", "@playwright/mcp@latest", "--cdp-endpoint", f"http://127.0.0.1:{port}"],
+    "devtools": lambda port: ["-y", "chrome-devtools-mcp@1.11.0", "--browserUrl", f"http://127.0.0.1:{port}"],     # pinned: it drives
+    "playwright": lambda port: ["-y", "@playwright/mcp@0.0.83", "--cdp-endpoint", f"http://127.0.0.1:{port}"],      # a browser's CDP
 }
 
 
@@ -951,6 +1022,12 @@ def main(argv=None):
     ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
     ap.add_argument("--format", choices=["json", "claude"], default="json", help="mcp-config: an mcpServers entry, or a claude mcp add-json line")
     a = ap.parse_args(argv)
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if me and a.by.strip().lower() not in (me, "agent", "keepalive"):        # an agent acts as itself — never as the human or a peer
+        print(json.dumps({"status": "refused", "why": t("bo.idle_not_yours", by=a.by, label=me)}, ensure_ascii=False))
+        return 2
+    if me and a.by.strip().lower() == "agent":
+        a.by = me
     try:
         reg = registry()
     except FileNotFoundError:
@@ -1006,8 +1083,12 @@ def main(argv=None):
         print(json.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
         return 2
     ag["peers"] = list(reg)
-    Path(ag["lock"]).parent.mkdir(parents=True, exist_ok=True)
-    with open(ag["lock"], "w") as lk:
+    try:
+        lk = open_lock(ag["lock"])
+    except OSError as exc:
+        print(json.dumps({"status": "failed", "why": f"lock: {type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+        return 1
+    with lk:
         try:
             fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:

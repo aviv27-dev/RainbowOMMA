@@ -5,5 +5,5 @@ for PY in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
   [ "$PY" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue   # macOS's install-the-tools stub
   if [ -x "$PY" ] && "$PY" -I -V >/dev/null 2>&1; then exec "$PY" -I "$DIR/rainbowomma-guard.py" "$@"; fi
 done
-echo "rainbowomma-guard: no working python3 found — nothing checked" >&2
-exit 0
+echo "Blocked by RainbowOMMA: the guard found no working python3, so it can't check this — and \"can't tell\" is a refusal. Install python3 (xcode-select --install)." >&2
+exit 2

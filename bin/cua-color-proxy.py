@@ -35,7 +35,7 @@ IMPLICIT = None                     # the key for the transport's implicit sessi
 REFRESH_AFTER_S = float(os.environ.get("RAINBOW_CUA_IDLE_S") or 240)    # the driver drops an idle implicit session at 300 s
 REPLY_TIMEOUT_S = 10.0
 NOT_ACTIONS = {"end_session", "list_sessions", "get_session", "get_session_state"}
-READ_ONLY = re.compile(r"(screenshot|^get_|^list_|_state$|^start_session$|^end_session$|^set_agent_cursor|^zoom$)")
+READ_ONLY = re.compile(r"^(screenshot|take_screenshot|get_\w+|list_\w+|\w+_state|start_session|end_session|set_agent_cursor\w*|zoom)$")
 HUMAN_IDLE_S = float(os.environ.get("RAINBOW_HUMAN_IDLE_S") or 5)       # the human touched keyboard/mouse less than this ago → wait
 HUMAN_WAIT_S = float(os.environ.get("RAINBOW_HUMAN_WAIT_S") or 30)      # …but never longer than this: then the action goes through
 PAUSE_WAIT_S = float(os.environ.get("RAINBOW_PAUSE_WAIT_S") or 60)      # the human paused all agents: hold this long, then answer an error
@@ -46,8 +46,9 @@ def log(msg):
     try:
         p = ROOT / "logs" / "cua-color-proxy.log"
         p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+        fd = os.open(str(p), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {' '.join(str(msg).split())}\n")
     except OSError:
         pass
 
@@ -121,6 +122,7 @@ class Proxy:
         self.agent, self.theme, self.motion = agent, theme, reduced_motion
         self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0)
         self.out = out or sys.stdout.buffer
+        self.out_lock = threading.Lock()
         self.ids = (f"rainbowomma-{n}" for n in itertools.count(1))
         self.waiting, self.replies = {}, {}
         self.cv = threading.Condition()
@@ -134,10 +136,16 @@ class Proxy:
             rid = msg.get("id") if isinstance(msg, dict) else None
             if isinstance(rid, str) and rid.startswith("rainbowomma-") and ("result" in msg or "error" in msg):
                 with self.cv:
-                    if rid in self.waiting:
+                    ours = rid in self.waiting
+                    if ours:
                         self.replies[rid] = msg
                         self.cv.notify_all()
-                continue                # our own calls never reach the agent
+                if ours:
+                    continue            # our own calls never reach the agent
+            self._write_out(line)
+
+    def _write_out(self, line):
+        with self.out_lock:             # two threads answer the agent: never interleaved
             self.out.write(line if line.endswith(b"\n") else line + b"\n")
             self.out.flush()
 
@@ -215,11 +223,16 @@ class Proxy:
         for line in iter(stdin.readline, b""):
             msg = self._parse(line)
             try:
+                if not isinstance(msg, dict) and line.strip() and paused():
+                    log(f"{self.agent}: a message that isn't one request (a batch, or unreadable) held back — the human paused all agents")
+                    continue            # what can't be read can't be let through while the human said stop
                 if self.refuse_if_paused(msg):
                     continue
                 self.before(msg)
-            except Exception as exc:                     # a message we can't read still reaches the driver
+            except Exception as exc:                     # a message we can't read still reaches the driver — unless paused
                 log(f"{self.agent}: skipped theming for one message — {type(exc).__name__}: {exc}")
+                if paused():
+                    continue
             self._send_raw(line)
         try:
             self.proc.stdin.close()
@@ -228,16 +241,18 @@ class Proxy:
 
     def refuse_if_paused(self, msg):
         """the human's stop: an action held past PAUSE_WAIT_S is answered with an error and never reaches the driver"""
-        if not isinstance(msg, dict) or msg.get("method") != "tools/call" or "id" not in msg:
+        if not isinstance(msg, dict) or msg.get("method") != "tools/call":
             return False
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
-        if not held_by_pause(params.get("name")):
+        if not held_by_pause(str(params.get("name") or "unnamed")):
             return False
+        if "id" not in msg:                                  # a notification: nothing to answer, and nothing runs
+            log(f"{self.agent}: {params.get('name')} (no id) dropped — the human paused all agents")
+            return True
         reply = {"jsonrpc": "2.0", "id": msg["id"], "result": {"isError": True, "content": [
             {"type": "text", "text": "The human paused all agents or took over the screen (RainbowOMMA). Nothing was done. "
                                      "Wait for them to hand it back, or ask them."}]}}
-        self.out.write((json.dumps(reply) + "\n").encode())
-        self.out.flush()
+        self._write_out((json.dumps(reply) + "\n").encode())
         log(f"{self.agent}: {params.get('name')} refused — the human paused all agents")
         return True
 

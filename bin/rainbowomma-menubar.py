@@ -11,6 +11,7 @@ Read-only: every action in the menu runs the same tool the human could run in a 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -47,6 +48,11 @@ def action(tool, *params, terminal=False, refresh=True):
     return out + f" terminal={'true' if terminal else 'false'}" + (" refresh=true" if refresh else "")
 
 
+def clean(x):
+    """one menu line's text: a newline or | in a label, a holder or a receipt would start a menu item of its own (bash=…)"""
+    return re.sub(r"[\x00-\x1f\x7f|]+", " ", str(x if x is not None else ""))
+
+
 def menu(agents, paused, receipts, screen=None):
     lines = []
     if paused:
@@ -55,7 +61,8 @@ def menu(agents, paused, receipts, screen=None):
         lines.append(" ".join(ansi_dot(a["color"], a.get("up")) for a in agents) + " | ansi=true" if agents else "🌈")
     lines.append("---")
     for a in agents:
-        lines.append(f"{a['label']} — {a['status']} | color={a['color']}")
+        color = a["color"] if re.fullmatch(r"#[0-9A-Fa-f]{6}", str(a.get("color"))) else "#757575"
+        lines.append(f"{clean(a['label'])} — {clean(a['status'])} | color={color}")
         lines.append(f"--{t('mb.front') if a.get('up') else t('mb.open')} | " + action("desk-browser.sh", "open", a["agent"]))
         if a.get("up"):
             lines.append(f"--{t('mb.close')} | " + action("desk-browser.sh", "close", a["agent"]))
@@ -68,13 +75,14 @@ def menu(agents, paused, receipts, screen=None):
         lines.append(f"🖐 {t('mb.handback')} | " + action("screen-owner", "handback"))
     else:
         if screen and screen.get("holder"):
-            lines.append(f"{t('mb.screen_held', who=screen['holder'])} | color=#757575")
+            lines.append(f"{clean(t('mb.screen_held', who=screen['holder']))} | color=#757575")
         lines.append(f"🖐 {t('mb.takeover')} | " + action("screen-owner", "takeover"))
     lines.append("---")
     lines.append(t("mb.recent"))
     for r in reversed(receipts):
         who = r.get("agent") or "—"
-        lines.append(f"--{str(r.get('at', ''))[11:16]} {who}: {r.get('tool')} {r.get('action')} → {r.get('status')} | size=12")
+        lines.append("--" + clean(f"{str(r.get('at', ''))[11:16]} {who}: {r.get('tool')} {r.get('action')} → {r.get('status')}")[:120]
+                     + " | size=12")
     lines.append(f"{t('mb.doctor')} | " + action("rainbowomma-doctor", terminal=True, refresh=False))
     return "\n".join(lines)
 
