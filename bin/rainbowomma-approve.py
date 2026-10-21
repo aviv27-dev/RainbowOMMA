@@ -11,9 +11,12 @@ command was approved; using an approval consumes it. Exit codes: 0 approved · 2
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -27,6 +30,10 @@ from rainbow_i18n import t  # noqa: E402
 
 VALID_S = 300
 DIALOG_S = 120
+MAX_COMMAND = 600            # longer is refused, never cut: the human sees all of what runs
+MAX_WHY = 200
+NAME_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
+ASK = None                   # tests replace it: (agent, why, command) -> True/False. No environment variable can answer.
 
 
 def store():
@@ -34,14 +41,15 @@ def store():
     return root / "state" / "approvals.json"
 
 
-def key(command):
-    """the same key for the command the agent asked about (its words) and the shell line the guard sees"""
+def key(command, agent=""):
+    """the same key for the command the agent asked about (its words) and the shell line the guard sees — and only
+    for the agent that asked"""
     if isinstance(command, str):
         try:
             command = shlex.split(command)
         except ValueError:
             command = command.split()
-    return hashlib.sha256("\0".join(command).encode()).hexdigest()
+    return hashlib.sha256("\0".join([agent or "", *command]).encode()).hexdigest()
 
 
 def pending_file():
@@ -56,6 +64,18 @@ def pending():
         return False
 
 
+@contextlib.contextmanager
+def locked():
+    """one reader-writer at a time: two guards must never both use one Allow-once"""
+    store().parent.mkdir(parents=True, exist_ok=True)
+    with open(store().with_suffix(".lock"), "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def _load():
     try:
         d = json.loads(store().read_text(encoding="utf-8"))
@@ -66,24 +86,33 @@ def _load():
 
 
 def _save(d):
-    store().parent.mkdir(parents=True, exist_ok=True)
-    store().write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    f = store()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, f)
 
 
-def consume(command):
-    """→ the approval for exactly this command (and it is used up), or None"""
-    d = _load()
-    rec = d.pop(key(command), None)
-    if rec:
-        _save(d)
+def consume(command, agent=""):
+    """→ the approval for exactly this command, asked by this agent (and it is used up), or None"""
+    with locked():
+        d = _load()
+        rec = d.pop(key(command, agent), None)
+        if rec:
+            _save(d)
     return rec
+
+
+def clean(text, limit):
+    """one line, no control characters: nothing can push the command out of the human's sight"""
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", str(text)).strip()[:limit]
 
 
 def ask_human(agent, why, command):
     """→ True (allow once) · False (deny, or no answer in time)"""
-    if os.environ.get("RAINBOW_TEST_APPROVE"):
-        return os.environ["RAINBOW_TEST_APPROVE"] == "yes"
-    text = t("ap.dialog", agent=agent, why=why, command=" ".join(command)[:600])
+    if ASK:
+        return ASK(agent, why, command)
+    text = t("ap.dialog", agent=agent, why=why, command=shlex.join(command))
     script = (f'display dialog {json.dumps(text)} with title "RainbowOMMA" buttons {{{json.dumps(t("ap.deny"))}, '
               f'{json.dumps(t("ap.allow"))}}} default button {json.dumps(t("ap.deny"))} with icon caution giving up after {DIALOG_S}')
     pending_file().parent.mkdir(parents=True, exist_ok=True)
@@ -119,14 +148,24 @@ def main(argv=None):
         print(json.dumps({"status": "failed", "why": "usage: rainbowomma-approve ask --agent NAME --why TEXT -- COMMAND …"}))
         return 1
     agent = a.agent.strip().lower()
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if not NAME_RE.fullmatch(agent) or agent == "human" or (me and agent != me):
+        print(json.dumps({"status": "refused", "why": f"--agent must be your own agent name ({me or 'a-z, 0-9, -'})"}, ensure_ascii=False))
+        return 2
+    if len(shlex.join(command)) > MAX_COMMAND:
+        print(json.dumps({"status": "refused", "why": f"the command is longer than {MAX_COMMAND} characters — the human must "
+                                                      "be able to read all of it; send a shorter one"}, ensure_ascii=False))
+        return 2
+    a.why = clean(a.why, MAX_WHY)
     ok = ask_human(agent, a.why, command)
     rainbow_receipts.write("approve", "ask", agent, agent, "approved" if ok else "refused", why=a.why, command=cmd)
     if not ok:
         print(json.dumps({"status": "refused", "why": t("ap.refused")}, ensure_ascii=False))
         return 2
-    d = _load()
-    d[key(command)] = {"agent": agent, "command": cmd[:300], "until": time.time() + VALID_S}
-    _save(d)
+    with locked():
+        d = _load()
+        d[key(command, me)] = {"agent": agent, "command": cmd[:MAX_COMMAND], "until": time.time() + VALID_S}
+        _save(d)
     print(json.dumps({"status": "approved", "validSeconds": VALID_S, "next": t("ap.next")}, ensure_ascii=False))
     return 0
 

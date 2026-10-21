@@ -27,6 +27,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -101,6 +102,9 @@ def markers():
 
 # ── marks the agents write themselves: a root process per agent session, and every descendant seen under it ──
 NOT_ROOTS = {"sh", "bash", "zsh", "dash", "fish", "env", "nohup", "timeout", "rainbowomma-guard", "as-agent"}
+# the human's terminals and sessions: above them nothing is an agent's, and they are never one's root
+HUMAN_HOSTS = {"tmux", "tmux: server", "screen", "login", "sshd", "sshd-session", "launchd", "zellij", "mosh-server", "su", "sudo",
+               "terminal", "iterm2", "wezterm-gui", "alacritty", "kitty", "ghostty", "warp", "hyper", "tabby"}
 
 
 def roots_file():
@@ -116,9 +120,10 @@ def load_roots():
 
 def save_roots(d):
     f = roots_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_name(f".{f.name}.{os.getpid()}.tmp")
-    tmp.write_text(json.dumps({str(k): v for k, v in d.items()}, ensure_ascii=False), encoding="utf-8")
+    f.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp = tempfile.mkstemp(prefix=f".{f.name}.", suffix=".tmp", dir=str(f.parent))
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({str(k): v for k, v in d.items()}, ensure_ascii=False))
     os.replace(tmp, f)
 
 
@@ -126,13 +131,13 @@ def save_roots(d):
 def roots_locked():
     """one writer at a time: two sessions starting together must not drop each other's root"""
     f = roots_file()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    with open(f.with_suffix(".lock"), "w") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+    f.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(str(f.with_suffix(".lock")), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)    # never through a planted link
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
 
 
 def known_marks(rows, roots=None):
@@ -152,9 +157,18 @@ def register(agent, pid, rows=None):
         roots = load_roots()
         if roots.get(pid, {}).get("cmd") == cmd:
             return roots[pid].get("agent") == agent       # the same live process: the first claim stands
+        marks, parent, p = known_marks(rows, roots), {x: pp for x, pp, _ in rows}, parent_of(pid, rows)
+        while p and p > 1:                                # under another agent's mark: that agent can't become this one
+            if marks.get(p, agent) != agent:
+                return False
+            p = parent.get(p)
         roots[pid] = {"agent": agent, "cmd": cmd, "root": True}
         save_roots(roots)
     return True
+
+
+def parent_of(pid, rows):
+    return next((pp for p, pp, _ in rows if p == pid), None)
 
 
 def framework_root(start_pid, rows):
@@ -164,9 +178,14 @@ def framework_root(start_pid, rows):
     cmd = {p: c for p, _, c in rows}
     p = parent.get(start_pid)
     while p and p > 1:
-        first = os.path.basename((cmd.get(p) or "").split(" ")[0]).lower().lstrip("-")     # -zsh: a login shell
-        if first not in NOT_ROOTS and not first.startswith("python"):
-            return None if ".app/contents/" in (cmd.get(p) or "").lower() else p
+        line = cmd.get(p) or ""
+        word = line.split(" ")[0]
+        first = os.path.basename(word).lower()
+        if word.startswith("-") or first in HUMAN_HOSTS or line.lower().startswith("tmux") or ".app/contents/" in line.lower():
+            return None                                   # a login shell, a terminal, tmux, an editor: the human's, never a root
+        guard_py = first.startswith("python") and "rainbowomma" in line.lower()
+        if first not in NOT_ROOTS and not guard_py:
+            return p                                      # a Python framework (Hermes, aider …) is a root like any other
         p = parent.get(p)
     return None
 
@@ -335,16 +354,24 @@ def main(argv=None):
         if a.cmd == "whose":
             code, out = cmd_whose(a.pid)
         elif a.cmd == "kill":
-            code, out = cmd_kill(a.pid, a.by.strip().lower(), a.force)
+            me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+            if me and a.by.strip().lower() != me:
+                code, out = 2, {"status": "refused", "why": f"you are {me}: you stop only your own processes, never as {a.by}"}
+            else:
+                code, out = cmd_kill(a.pid, a.by.strip().lower(), a.force)
         elif a.cmd == "list":
             code, out = cmd_list(a.agent.strip().lower())
         elif a.cmd == "register":       # the caller registers ITSELF (its parent process: as-agent's shell) — never another pid
             agent = a.agent.strip().lower()
-            if agent not in registry():
+            if rainbow_receipts.acting_as(agent):
+                code, out = 2, {"status": "refused", "why": rainbow_receipts.acting_as(agent)}
+            elif agent not in registry():
                 code, out = 1, {"status": "failed", "why": t("bo.unknown_agent", agent=repr(agent), names=", ".join(registry()))}
             else:
                 ok = register(agent, os.getppid())
                 code, out = (0, {"status": "registered", "pid": os.getppid()}) if ok else (1, {"status": "failed", "why": "no such process"})
+        elif rainbow_receipts.acting_as(a.agent) and not a.dry_run:
+            code, out = 2, {"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}
         else:
             code, out = cmd_reap(a.agent.strip().lower(), a.dry_run, (a.session or "").strip() or None)
     except FileNotFoundError:

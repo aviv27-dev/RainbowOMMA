@@ -14,6 +14,7 @@ import argparse
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import zipfile
@@ -88,6 +89,8 @@ def main(argv=None) -> int:
     for name, row in agents.items():
         if a.only and name not in a.only:
             continue
+        if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", name):        # it becomes a file name under --out
+            report[name] = {"status": "invalid", "why": "not an agent name (a-z, 0-9, -)"}; continue
         src, swapped = make(name, row.get("label", name), row["color"], out)
         code, msg = run("validate", str(src))
         if code != 0:

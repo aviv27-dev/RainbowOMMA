@@ -15,13 +15,16 @@ import argparse
 import calendar
 import fcntl
 import json
+import hashlib
 import os
+import re
 import sys
 import time
 import urllib.request
 from pathlib import Path
 
 MAX_FIELD = 300
+NAME_RE = re.compile(r"[a-z][a-z0-9-]{1,30}")
 
 
 def path():
@@ -29,13 +32,27 @@ def path():
     return root / "logs" / "receipts.jsonl"
 
 
+def acting_as(agent):
+    """→ why an owner tool must not act as `agent` for this caller, or None. An agent acts as itself only — never as the
+    human, never as another agent (its name is RAINBOW_AGENT, which as-agent or its settings set)"""
+    agent = str(agent or "").strip().lower()
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if not NAME_RE.fullmatch(agent) or agent == "human" or agent.startswith("human-"):
+        return f"{agent!r} is not an agent's name"
+    if me and agent != me:
+        return f"you are {me}: this acts only as you, never as {agent}"
+    return None
+
+
 def write(tool, action, agent=None, by=None, status=None, **detail):
     rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "tool": tool, "action": action, "agent": agent, "by": by, "status": status}
     rec.update({k: (v[:MAX_FIELD] if isinstance(v, str) else v) for k, v in detail.items() if v not in (None, "", [], {})})
     try:
         p = path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as fh:
+        p.parent.parent.mkdir(parents=True, exist_ok=True, mode=0o700)           # receipts hold commands and messages: yours only
+        p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd = os.open(str(p), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
             fcntl.flock(fh, fcntl.LOCK_EX)
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             fcntl.flock(fh, fcntl.LOCK_UN)
@@ -94,7 +111,9 @@ def otlp_payload(recs):
 
 def export_otlp(url):
     """send the receipts written since the last export; the cursor moves only when the collector took them → (sent, error)"""
-    cursor = path().with_name("receipts.otlp-cursor")
+    default = (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or "").rstrip("/")
+    cursor = path().with_name("receipts.otlp-cursor" if url.rstrip("/") == default else
+                              f"receipts.otlp-cursor.{hashlib.sha256(url.rstrip('/').encode()).hexdigest()[:12]}")   # one per collector
     try:
         done = int(cursor.read_text().strip() or 0)
     except (OSError, ValueError):

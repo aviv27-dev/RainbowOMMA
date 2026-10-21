@@ -56,8 +56,9 @@ PGREP = None   # tests replace it: (app) -> pid | None
 def log(msg):
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+        fd = os.open(str(LOG), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {' '.join(str(msg).split())}\n")     # one line: a path can't forge more
     except OSError:
         pass
 
@@ -146,6 +147,8 @@ def leases():
     for f in sorted(LEASES.glob("*.json")) if LEASES.exists() else []:
         try:
             d = json.loads(f.read_text(encoding="utf-8"))
+            if not (isinstance(d, dict) and d.get("app") in APPS and isinstance(d.get("agent"), str) and isinstance(d.get("path"), str)):
+                continue                  # not a lease this tool wrote: never act on it (it could name the human's document)
             d["_file"] = str(f)
             out.append(d)
         except (OSError, ValueError):
@@ -480,6 +483,9 @@ def idle_quit(dry=False):
     """quit an app ONLY if the owner launched it (the same process), idle ≥ 10 min, no lease or conversion on it, no documents"""
     out, st = [], apps_state()
     for app, rec in list(st.items()):
+        if app not in APPS or not isinstance(rec, dict):
+            st.pop(app, None)
+            continue
         pid = app_pid(app)
         if pid is None:
             st.pop(app, None)                      # not running any more — forget it
@@ -552,6 +558,9 @@ def main(argv=None):
     pd = sub.add_parser("pdf"); pd.add_argument("--agent", required=True); pd.add_argument("--out"); pd.add_argument("--force", action="store_true"); pd.add_argument("file")
     sub.add_parser("apps")
     a = ap.parse_args(argv)
+    if getattr(a, "agent", None) is not None and rainbow_receipts.acting_as(a.agent):
+        print(json.dumps({"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}, ensure_ascii=False))
+        return 2
     if a.cmd in ("pdf", "xlsx"):            # NOT under the leases lock: conversions run in parallel (each its own copy)
         try:
             code, out = (cmd_pdf(a.agent.strip().lower(), a.file, a.out, a.force) if a.cmd == "pdf"

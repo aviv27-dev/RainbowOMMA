@@ -34,6 +34,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$BIN" in /*) ;; *) BIN="$(pwd)/$BIN" ;; esac
+[ -z "$ADAPTERS" ] || case "$BIN$HOME" in *[\\\"\|\&]*|*$'\n'*) echo "a folder with \\, \", |, & or a newline in its name can't go into the adapters' settings: $BIN" >&2; exit 2 ;; esac
+set -f
+for A in $ADAPTERS; do
+  case "$A" in ''|*[!a-z0-9-]*) echo "not an adapter name: $A (letters, digits and - only)" >&2; exit 2 ;; esac
+done
+set +f
 ROOT="${RAINBOW_HOME:-$HOME/.rainbowomma}"
 AGENTS_DIR="${RAINBOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"   # overridable for tests
 LABEL="com.rainbowomma.agent-office-sweep"
@@ -65,6 +71,7 @@ fi
 
 echo "→ state in $ROOT"
 run mkdir -p "$ROOT/logs" "$ROOT/state" "$ROOT/word-convert"
+run chmod 700 "$ROOT"     # receipts, approvals and document copies: readable by you only
 
 job() {   # job <label> <what> — write the launchd job from install/<label>.plist with absolute paths, and load it
   local label="$1" what="$2" plist="$AGENTS_DIR/$1.plist"
@@ -108,6 +115,7 @@ if [ "$MENUBAR" = 1 ]; then
   fi
 fi
 
+set -f   # the names were checked above; no globbing of them
 for A in $ADAPTERS; do
   SRC="$HERE/adapters/$A"
   if [ ! -d "$SRC" ]; then
@@ -123,6 +131,7 @@ for A in $ADAPTERS; do
     if [ -x "$SRC/$f" ]; then chmod +x "$DEST/$f"; fi
   done
 done
+set +f
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "note: $BIN is not on your PATH — call the tools by their full path, or add it." ;; esac
 cat <<EOF

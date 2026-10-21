@@ -14,8 +14,9 @@ browser-owner. It reads the hook payload on stdin and finds the shell command in
     preToolUse.parameters         Cline VS Code extension
 
 A blocked command: the reason on stderr and exit 2 (what all of the above treat as "deny"), or, with --format cline,
-{"cancel": true, "errorMessage": …} on stdout. Anything it can't read is let through: pattern rules only see the
-command text, and browser-owner's own checks stay the real protection.
+{"cancel": true, "errorMessage": …} on stdout. A payload that isn't JSON is let through (it carries no command); an
+error while judging one is a refusal ("can't tell" never means yes). The rules see the command text: they close the
+cheap ways around RainbowOMMA, not every way a program running as you could take — docs/ISOLATION.md says what does.
 
     rainbowomma-guard [--format exit2|cline] < payload.json
 """
@@ -48,18 +49,52 @@ WHY = {
     "human-screen": "the human took over the screen — no agent clicks or types until they hand it back; wait, or ask them",
     "paused": "the human paused all agents (the menu-bar stop) — nothing runs until they resume; wait, or ask them",
     "human": "only the human acts as the human: --by human (and the desktop controls) are the person's, never an agent's",
+    "kill-group": "kill -1, kill 0 and a negative id stop whole process groups — every process you own, the human's too; "
+                  "stop one process of yours: `proc-owner kill <pid> --by <you>`",
+    "xargs-kill": "`xargs kill` stops pids the guard can't see — stop your own one by one: `proc-owner kill <pid> --by <you>`",
+    "inline-kill": "killing from inline code (python -c, perl -e, node -e …) skips the ownership check — use `proc-owner kill <pid> --by <you>`",
+    "rainbow-state": "RainbowOMMA's own state (approvals, leases, process marks, the pause) changes only through its tools, and "
+                     "browsers.json is the human's to edit — never an agent's",
+    "rainbow-env": "RAINBOW_HOME, BROWSER_OWNER_REGISTRY, RAINBOW_AGENT and RAINBOW_TEST_* decide whose and where — an agent "
+                   "doesn't set them; its name comes from as-agent or its settings",
+    "human-chrome": "the human's own Chrome profile (Library/Application Support/Google/Chrome) holds their logins — an agent never "
+                    "reads or changes it",
+    "shell-script": "AppleScript's `do shell script` with a text built at run time can't be checked — run the shell command directly",
+    "chrome-script": "closing or quitting Chrome windows through AppleScript reaches the human's windows too — use `browser-owner`",
+    "guard-error": "the guard couldn't judge this command, and \"can't tell\" is a refusal",
 }
 HELP = ("Use the owner instead: `browser-owner start|recover <agent> --by <agent>` for your browser "
         "(stop when it answers refused / closed-by-person / blocked / profile-busy), `office-owner` for Word/Excel/Acrobat, "
         "`port-owner lease <agent>` for a port of your own (`port-owner who <port>` says whose a port is).")
 
 SEP = set(";&|()<>`")
-WRAPPERS = {"sudo": {"-u", "-g", "-h", "-p", "-c", "-r", "-t", "-d"}, "env": {"-u", "-s", "-c", "-p"}, "command": set(), "exec": {"-a"},
+WRAPPERS = {"sudo": {"-u", "-g", "-h", "-p", "-c", "-r", "-t", "-d"}, "env": {"-u", "-c", "-p"}, "command": set(), "exec": {"-a"},
             "nohup": set(), "time": set(), "nice": {"-n"}, "xargs": {"-n", "-i", "-l", "-p", "-s", "-e", "-j", "-r", "-d", "-a"},
-            "caffeinate": {"-w", "-t"}, "arch": set(), "builtin": set(), "doas": {"-u"}}
+            "caffeinate": {"-w", "-t"}, "arch": set(), "builtin": set(), "doas": {"-u"}, "setsid": set(), "stdbuf": set(),
+            "ionice": {"-c", "-n"}, "taskpolicy": {"-c", "-d", "-g", "-t", "-l"}, "chronic": set(), "unbuffer": set(),
+            "timeout": {"-s", "-k", "--signal", "--kill-after"}, "gtimeout": {"-s", "-k"}, "flock": {"-w", "-e", "-s", "-x", "-n", "-o"},
+            "watch": {"-n", "-d"}, "script": {"-t", "-T"}, "busybox": set()}
+TAKES_FIRST = {"timeout": 1, "gtimeout": 1, "flock": 1, "script": 1}       # wrapper WORD command …: the word isn't the command
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
-OWNER_TOOLS = {"browser-owner", "browser-owner.py", "office-owner", "agent-office", "agent-office.py"}
+OWNER_TOOLS = {"browser-owner", "browser-owner.py", "office-owner", "agent-office", "agent-office.py", "proc-owner", "proc-owner.py",
+               "port-owner", "port-owner.py", "sim-owner", "sim-owner.py", "screen-owner", "screen-owner.py", "rainbowomma-clip",
+               "rainbowomma-clip.py", "rainbowomma-approve", "rainbowomma-approve.py", "rainbowomma-pause", "rainbowomma-pause.py"}
 HUMAN_TOOLS = {"desk-browser.sh", "kill-chrome.sh", "human-chrome.sh"}
+# subcommands whose first argument is the agent acting: it must be the caller
+AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease", "release", "env"},
+             "sim-owner": {"lease", "release"}, "screen-owner": {"take", "release"}, "rainbowomma-clip": {"copy", "paste"},
+             "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config"}}
+HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
+INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
+INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")
+RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
+                         r"rainbow_human_idle_s|rainbow_human_present_s|rainbow_agent|rainbow_session)=")
+STATE_WORDS = re.compile(r"(\.rainbowomma|\$\{?rainbow_home\}?)/(state|logs)\b|proc-roots\.json|approvals\.json|approval-pending\.json|"
+                         r"paused\.json|screen\.json|ports\.json|browsers\.json|receipts\.jsonl")
+WRITERS = {"rm", "mv", "cp", "ln", "tee", "sed", "perl", "truncate", "touch", "chmod", "chflags", "dd", "install", "rsync", "ruby",
+           "node", "unlink", "rmdir", "mkdir", "ditto", "patch", "ed", "vi", "vim", "nano", "emacs", "shred", "srm", "trash",
+           "plutil", "sqlite3"}
+HUMAN_CHROME = re.compile(r"application(?:\\ | |%20)+support/google/chrome")
 CHROMES = {"google chrome", "chromium", "google chrome for testing", "google chrome canary", "google chrome beta"}
 ASSIGN = re.compile(r"^[a-z_][a-z0-9_]*=")
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([a-z_][a-z0-9_]*)\1")
@@ -68,18 +103,34 @@ CONTAINERS = {"docker", "podman", "nerdctl"}
 PORT_KILLERS = {"kill-port", "fkill", "fkill-cli"}
 
 
+def _unquoted(line, pos):
+    """is position pos of line outside quotes?"""
+    q = None
+    for c in line[:pos]:
+        if q:
+            q = None if c == q else q
+        elif c in "'\"":
+            q = c
+    return q is None
+
+
 def _drop_heredocs(text):
-    """a heredoc's body is data written to a file or a pipe, not commands"""
-    out, end = [], None
+    """a heredoc's body is data written to a file or a pipe — unless a shell or an interpreter reads it: then it runs"""
+    out, end, keep = [], None, False
     for line in text.split("\n"):
         if end is not None:
             if line.strip() == end:
                 end = None
+            elif keep:
+                out.append(line)
             continue
         out.append(line)
-        m = HEREDOC.search(line)
+        m = next((m for m in HEREDOC.finditer(line) if _unquoted(line, m.start())), None)
         if m:
             end = m.group(2)
+            words = re.split(r"[;&|(]", line[:m.start()])[-1].split()
+            first = next((os.path.basename(w) for w in words if not ASSIGN.match(w) and os.path.basename(w) not in WRAPPERS), "")
+            keep = first in SHELLS or first.startswith(("python", "perl", "ruby", "node", "osascript", "php"))
     return "\n".join(out)
 
 
@@ -122,15 +173,41 @@ def _one(words, depth):
             if name == "xargs":
                 found.append(("xargs", list(words)))
             while words and (words[0].startswith("-") or ASSIGN.match(words[0])):
+                if name == "env" and (words[0] in ("-s", "--split-string") or words[0].startswith(("-s", "--split-string="))) \
+                        and depth < 4:                                    # env -S 'cmd args': one more command line
+                    rest_ = words[0].split("=", 1)[1] if "=" in words[0] else words[0][2:] or (words[1] if len(words) > 1 else "")
+                    return found + [("=", assigns)] * bool(assigns) + _simple_commands(rest_ + " " + " ".join(words[2:]), depth + 1)
                 if ASSIGN.match(words[0]):
                     assigns.append(words[0])
+                elif name == "env" and words[0] in ("-u", "--unset") and len(words) > 1:
+                    assigns.append(words[1] + "=")                        # unsetting is setting to nothing
                 words = words[2:] if words[0] in takes else words[1:]
+            if words and words[0] == "--":
+                words = words[1:]
+            words = words[TAKES_FIRST.get(name, 0):]
             continue
+        if name == "as-agent":
+            found.append(("as-agent", words[1:2]))                         # as-agent NAME cmd …: judged as NAME, then cmd
+            words = words[2:]
+            continue
+        if name == "find" and depth < 4:
+            for i, w in enumerate(words):
+                if w in ("-exec", "-execdir", "-ok", "-okdir"):
+                    end = next((j for j in range(i + 1, len(words)) if words[j] in ("\\;", ";", "+", "{}+")), len(words))
+                    found += _one([x for x in words[i + 1:end] if x != "{}"], depth + 1)
+        base = re.sub(r"[\d.]+$", "", name)
+        if base in INLINE and base != "osascript":
+            flag = INLINE[base]
+            code = " ".join(words[i + 1] for i, w in enumerate(words[:-1]) if w == flag or (w.startswith("-") and not w.startswith("--")
+                                                                                            and flag and flag[1] in w[1:]))
+            if code and INLINE_KILL.search(code):
+                found.append(("inline-kill", [code]))
         if (name in SHELLS or name.startswith("python")) and len(words) > 1:
             rest = words[1:]
             for i, w in enumerate(rest):
                 if name in SHELLS and w.startswith("-") and "c" in w[1:] and not w.startswith("--") and i + 1 < len(rest) and depth < 4:
-                    return found + [("=", assigns)] * bool(assigns) + _simple_commands(rest[i + 1], depth + 1)
+                    j = i + 2 if rest[i + 1] == "--" and i + 2 < len(rest) else i + 1
+                    return found + [("=", assigns)] * bool(assigns) + _simple_commands(rest[j], depth + 1)
             i = next((i for i, w in enumerate(rest) if not w.startswith("-")), None)
             if i is not None and (rest[i].endswith((".sh", ".py")) or os.path.basename(rest[i]) in OWNER_TOOLS | HUMAN_TOOLS):
                 words = rest[i:]
@@ -147,14 +224,90 @@ def _one(words, depth):
     return found
 
 
+HERESTRING = re.compile(r"<<<\s*(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
+SHELL_STRING = re.compile(r'do shell script\s+(?:"((?:[^"\\]|\\.)*)"|(.))')
+
+
+def _me():
+    return (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+
+
+def owner_tool_verdict(name, args, me):
+    """an owner tool acts as the caller only: --by and the agent argument are the caller's own name, never the human's"""
+    base = name[:-3] if name.endswith(".py") else name
+    base = "office-owner" if base == "agent-office" else base
+    sub = next((a for a in args if not a.startswith("-")), "")
+    if (base, sub) in HUMAN_ONLY:
+        return WHY["human"]
+    named = []
+    for i, a in enumerate(args):
+        if a in ("--by", "--agent") and i + 1 < len(args):
+            named.append(args[i + 1].strip())
+        elif a.startswith(("--by=", "--agent=")):
+            named.append(a.split("=", 1)[1].strip())
+    if sub in AGENT_ARG.get(base, ()):
+        rest = args[args.index(sub) + 1:]
+        if rest and not rest[0].startswith("-"):
+            named.append(rest[0].strip())
+    for who in named:
+        if who == "human":
+            return WHY["human"]
+        if any(c in who for c in "$`*?[") or not who:
+            return f"`{base}` must name the agent literally — the guard can't see whose `{who}` is"
+        if me and who not in (me, "keepalive"):
+            return f"you are {me}: `{base}` acts only as you, never as {who}"
+    return None
+
+
 def verdict(command):
     """the reason a command is blocked, or None"""
     low = command.lower()
+    for m in HERESTRING.finditer(low):                 # bash <<< 'cmd': the string runs
+        if _unquoted(low, m.start()):
+            why = verdict(next(g for g in m.groups() if g is not None))
+            if why:
+                return why
     cmds = _simple_commands(low)
     names = {n for n, _ in cmds}
+    me = _me()
+    if any(n in SHELLS or n.startswith("python") for n, a in cmds if not [x for x in a if not x.startswith("-")]):
+        for n, a in cmds:                              # echo 'cmd' | sh: what the shell reads from its input runs
+            if n in ("echo", "printf") and a:
+                why = verdict(" ".join(x for x in a if not x.startswith("-")).replace("\\n", "\n"))
+                if why:
+                    return why
+    if HUMAN_CHROME.search(low):
+        return WHY["human-chrome"]
+    if STATE_WORDS.search(low) and (names & WRITERS or any(n.startswith(("python", "perl", "ruby", "node")) for n in names)
+                                    or re.search(r">\s*\S*(?:" + STATE_WORDS.pattern + ")", low)):
+        return WHY["rainbow-state"]
     for name, args in cmds:
+        if name == "inline-kill":
+            return WHY["inline-kill"]
+        if name in ("=", "export", "unset", "declare", "typeset", "set") and any(
+                RAINBOW_ENV.match(a if name != "unset" else a + "=") for a in args):
+            bad = [a for a in args if RAINBOW_ENV.match(a if name != "unset" else a + "=")]
+            if not all(me and b == f"rainbow_agent={me}" for b in bad):
+                return WHY["rainbow-env"]
+        if name == "as-agent" and me and args and args[0] != me:
+            return f"you are {me}: you can't start a command as {args[0]}"
         if name in ("pkill", "killall"):
             return WHY[name]
+        if name == "xargs" and "kill" in args:
+            return WHY["xargs-kill"]
+        if name == "osascript":
+            text = " ".join(args)
+            for m in SHELL_STRING.finditer(text):
+                inner = m.group(1)
+                if inner is None:
+                    return WHY["shell-script"]
+                why = verdict(inner.replace('\\"', '"').replace("\\\\", "\\"))
+                if why:
+                    return why
+            if "chrome" in text and re.search(r"\b(quit|close)\b", text):
+                return WHY["chrome-script"]
+            if re.search(r"tell application\s*\(", text) and re.search(r"\b(quit|close)\b", text):
+                return WHY["chrome-script"]
         if name == "osascript" and "quit" in " ".join(args) and "chrome" in " ".join(args):
             return WHY["osascript"]
         debug = any(a.startswith("--remote-debugging-port") for a in args)
@@ -162,14 +315,15 @@ def verdict(command):
             return WHY["debug-port"]
         if debug and name == "open" and any("chrom" in a for a in args):
             return WHY["debug-port"]
-        if name in OWNER_TOOLS and any(a == "--by=human" or (a == "--by" and i + 1 < len(args) and args[i + 1].strip() == "human")
-                                       for i, a in enumerate(args)):
-            return WHY["human"]
+        if name in OWNER_TOOLS:
+            why = owner_tool_verdict(name, args, me)
+            if why:
+                return why
         if name in HUMAN_TOOLS:
             return WHY["human"]
         if name == "rm" and _recursive(args) and any(_protected(x) for x in args if not x.startswith("-")):
             return WHY["rm-home"]
-        me_ = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+        me_ = me
         if me_ and (name in ("pbcopy", "pbpaste") or (name == "osascript" and "the clipboard" in " ".join(args))):
             return WHY["clipboard"]
         if me_ and (name == "simctl" or (name == "xcrun" and args[:1] == ["simctl"]) or name == "xcodebuild"):
@@ -179,7 +333,7 @@ def verdict(command):
         why = app_verdict(name, args)
         if why:
             return why
-        if name == "osascript" and _sends(" ".join(args)) and not _approved(command):
+        if name == "osascript" and _sends(" ".join(args)) and not _approved(command, me):
             return WHY["send"]
         if _gui_command(name, args):
             why = WHY["approval-up"] if _approval_up() else WHY["human-active"] if human_active() else screen_verdict(foreground=True)
@@ -195,6 +349,8 @@ def verdict(command):
                 return why
     if re.search(r"\blaunch_by=['\"]?human\b", low):          # export LAUNCH_BY=human; ./agent-launcher.sh
         return WHY["human"]
+    if killed_groups(cmds):
+        return WHY["kill-group"]
     killing = "kill" in names or any(n == "xargs" and "kill" in a for n, a in cmds)
     if killing and names & {"pgrep", "pidof", "ps", "lsof"}:
         return WHY["search-kill"]
@@ -220,9 +376,19 @@ def claimed_ports(low, cmds):
             elif name in CONTAINERS and a in ("-p", "--publish") and ":" in nxt:
                 parts = nxt.split(":")
                 got.add(parts[-2])                                   # [ip:]host:container → host
-            elif name.startswith("python") and a == "http.server" and nxt.isdigit():
+            elif name.startswith("python") and a == "http.server":
+                got |= {x for x in args[i + 1:] if x.isascii() and x.isdigit()}
+            elif name == "php" and a == "-s" and ":" in nxt:
+                got.add(nxt.rsplit(":", 1)[1])
+            elif name in ("nc", "ncat", "netcat", "socat") and a.isascii() and a.isdigit():
+                got.add(a)
+            elif name == "socat" and "listen:" in a:
+                got.add(re.split(r"[,:]", a.split("listen:", 1)[1])[0])
+            elif a in ("-p", "--listen", "-l") and nxt.isascii() and nxt.isdigit() and (
+                    name in ("next", "serve", "vite", "nuxt", "astro", "remix", "http-server", "live-server", "hugo", "jekyll")
+                    or (name in ("npx", "pnpx", "bunx") and args[:1] and args[0] in ("next", "serve", "vite", "http-server"))):
                 got.add(nxt)
-    return sorted({int(p) for p in got if str(p).isdigit() and 1 <= int(p) <= 65535})
+    return sorted({int(p) for p in got if str(p).isascii() and str(p).isdigit() and 1 <= int(p) <= 65535})
 
 
 def _port_owner():
@@ -242,6 +408,8 @@ def _load_beside(modname, file):
 
 PROTECTED = {"/", "/*", "~", "~/", "~/*", "$home", "$home/", "$home/*", "${home}", "${home}/", "${home}/*", "/users", "/users/*",
              "/system", "/library", "/applications", "/usr", "/bin", "/sbin", "/etc", "/var", "/private", "/opt"}
+HOME_DIRS = {"library", "documents", "desktop", "downloads", "pictures", "movies", "music", "applications", "bin", ".ssh",
+             ".rainbowomma", ".config", "icloud drive", "library/mobile documents"}
 
 
 def _recursive(args):
@@ -249,12 +417,17 @@ def _recursive(args):
 
 
 def _protected(target):
-    t = target.strip().rstrip("/") + ("/" if target.strip().endswith("/") and target.strip() != "/" else "")
-    return t in PROTECTED or target.strip() in PROTECTED or bool(re.fullmatch(r"/users/[^/]+/?\*?", target.strip()))
+    raw = re.sub(r"(/\.)+/?$", "/", target.strip())                    # ~/. and ~/./ are ~
+    raw = re.sub(r"/+", "/", raw)
+    t = raw.rstrip("/") + ("/" if raw.endswith("/") and raw != "/" else "")
+    if t in PROTECTED or raw in PROTECTED or re.fullmatch(r"/users/[^/]+/?\*?", raw):
+        return True
+    m = re.fullmatch(r"(?:~|\$home|\$\{home\}|/users/[^/]+)/(.+?)/?\*?", raw)
+    return bool(m and m.group(1).rstrip("/") in HOME_DIRS)
 
 
 GUI_WORDS = ("keystroke", "key code", " click", "click at", "set frontmost")
-READ_ONLY_ACTIONS = re.compile(r"(screenshot|^get_|^list_|_state$|^start_session$|^end_session$|^zoom$|^wait$)")
+READ_ONLY_ACTIONS = re.compile(r"^(screenshot|take_screenshot|get_\w+|list_\w+|\w+_state|start_session|end_session|zoom|wait)$")
 
 
 def _gui_command(name, args):
@@ -326,7 +499,7 @@ def browser_tool_verdict(event):
 
 def is_paused():
     root = os.path.expanduser(os.environ.get("RAINBOW_HOME") or os.path.join(os.path.expanduser("~"), ".rainbowomma"))
-    return os.path.exists(os.path.join(root, "state", "paused.json"))
+    return os.path.lexists(os.path.join(root, "state", "paused.json"))     # a planted dangling link still means paused
 
 
 def gui_tool_verdict(event):
@@ -417,9 +590,9 @@ def _sends(text):
     return bool(SEND.search(text))
 
 
-def _approved(command):
+def _approved(command, me=""):
     try:
-        return bool(_load_beside("rainbow_approve", "rainbowomma-approve.py").consume(command))
+        return bool(_load_beside("rainbow_approve", "rainbowomma-approve.py").consume(command, me))
     except Exception:
         return False
 
@@ -453,7 +626,7 @@ def screen_verdict(foreground):
             f"(an agent that drives in the background, like Cua, doesn't need it)")
 
 
-CDP_URL = re.compile(r"(?:127\.0\.0\.1|localhost):(92(?:2[2-9]|[3-9]\d))\b")
+CDP_URL = re.compile(r"[\w.\]-]:(92(?:2[2-9]|[3-9]\d))\b")         # any host: 127.1, [::1], 0.0.0.0, localhost. …
 
 
 def cdp_verdict(low):
@@ -473,33 +646,48 @@ def cdp_verdict(low):
     return None
 
 
+def _kill_targets(args):
+    """a kill's targets: after one signal option (-9, -TERM, -s SIG, -n N) or `--`, every word is a target — -1 too"""
+    i = 0
+    if i < len(args) and args[i].strip() in ("-s", "-n"):
+        i += 2
+    elif i < len(args) and args[i].strip().startswith("-") and args[i].strip() not in ("--", "-l", "-L"):
+        i += 1
+    if i < len(args) and args[i].strip() == "--":
+        i += 1
+    return [a.strip() for a in args[i:]]
+
+
+def killed_groups(cmds):
+    """kill -1, kill 0, kill -- -PGID: whole process groups"""
+    return any(t in ("0", "-1") or (t.startswith("-") and t[1:].isascii() and t[1:].isdigit())
+               for name, args in cmds if name == "kill" for t in _kill_targets(args))
+
+
 def killed_pids(cmds):
     """the literal process ids a plain `kill` names (signals and $VARIABLES are skipped)"""
-    got, skip = [], False
-    for name, args in cmds:
-        if name != "kill":
-            continue
-        for a in args:
-            if skip:
-                skip = False
-            elif a in ("-s", "-n"):
-                skip = True
-            elif a.isdigit():
-                got.append(int(a))
-    return got
+    return [int(t) for name, args in cmds if name == "kill" for t in _kill_targets(args) if t.isascii() and t.isdigit()]
 
 
 def kill_verdict(cmds):
     """with RAINBOW_AGENT set: only that agent's own processes. Without it: never another agent's"""
-    pids = killed_pids(cmds)
+    pids = []
+    for pid in killed_pids(cmds):
+        try:
+            os.kill(pid, 0)
+            pids.append(pid)
+        except ProcessLookupError:
+            continue                                  # no such process: kill fails on its own
+        except (PermissionError, OverflowError, ValueError):
+            pids.append(pid)
     if not pids:
         return None
     try:
         pc = _load_beside("rainbow_proc_owner", "proc-owner.py")
         reg = pc.registry()
         _, own = pc.ownership(reg)
-    except Exception:
-        return None
+    except Exception as exc:                          # whose it is can't be told: no
+        return f"whose process {pids[0]} is can't be checked ({type(exc).__name__}) — `proc-owner kill <pid> --by <you>`"
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     for pid in pids:
         if pid not in own:
@@ -548,6 +736,27 @@ def port_verdict(ports):
             return f"port {p} is not {me}'s — it is {whose}. Take one of yours: `port-owner lease {me}`"
         if not me and owner != "human":
             return f"port {p} belongs to agent {owner} ({why})"
+    return None
+
+
+FILE_KEYS = ("file_path", "path", "notebook_path", "filepath", "target_file", "filename")
+
+
+def file_verdict(event):
+    """a file tool (Write, Edit, Read …) aimed at RainbowOMMA's own state or the human's Chrome profile"""
+    ti = _maybe_json(event.get("tool_input"))
+    if not isinstance(ti, dict):
+        return None
+    for k in FILE_KEYS:
+        v = ti.get(k)
+        if not isinstance(v, str) or not v:
+            continue
+        low = os.path.realpath(os.path.expanduser(v)).lower() + " " + v.lower()
+        if HUMAN_CHROME.search(low):
+            return WHY["human-chrome"]
+        name = str(event.get("tool_name") or event.get("toolName") or "").lower()
+        if STATE_WORDS.search(low) and not re.fullmatch(r"(read|view|glob|grep|ls|search).*", name):
+            return WHY["rainbow-state"]
     return None
 
 
@@ -605,10 +814,18 @@ def main(argv=None):
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if me:
         track(me)
-    for cmd in [None] + commands(event):
-        why = (app_tool_verdict(event) or gui_tool_verdict(event) or browser_tool_verdict(event)) if cmd is None else verdict(cmd)
-        if cmd is None and not why and is_paused() and (commands(event) or event.get("tool_name") or event.get("toolName")):
-            why = WHY["paused"]
+    try:
+        cmds = commands(event)
+    except Exception:
+        cmds = []
+    for cmd in [None] + cmds:
+        try:
+            why = (file_verdict(event) or app_tool_verdict(event) or gui_tool_verdict(event) or browser_tool_verdict(event)) \
+                if cmd is None else verdict(cmd)
+            if cmd is None and not why and is_paused() and (cmds or event.get("tool_name") or event.get("toolName")):
+                why = WHY["paused"]
+        except Exception as exc:                       # can't tell → no
+            why = f"{WHY['guard-error']} ({type(exc).__name__})"
         if why:
             try:
                 import rainbow_receipts

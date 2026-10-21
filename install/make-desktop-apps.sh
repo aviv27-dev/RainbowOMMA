@@ -40,7 +40,7 @@ app() {   # app <name> <hex> <icon text> <act> <who> [confirm text]
   qn="$(asq "$name")"; qc="$(asq "$confirm")"; qb="$(asq "$BIN/desk-browser.sh")"
   qcancel="$(asq "$CANCEL")"; qclose="$(asq "$CLOSE")"; qerr="$(asq "$ERR")"
   {
-    echo "-- $name — made by RainbowOMMA/make-desktop-apps.sh; the work is $BIN/desk-browser.sh $act $who"
+    echo "-- $qn — made by RainbowOMMA/make-desktop-apps.sh; the work is $BIN/desk-browser.sh $act $who"
     echo "on run"
     if [ -n "$confirm" ]; then
       echo "  display dialog \"$qc\" with title \"$qn\" buttons {\"$qcancel\", \"$qclose\"} default button \"$qcancel\" cancel button \"$qcancel\" with icon caution"

@@ -113,6 +113,11 @@ def release(agent):
 
 
 def cmd_take(agent, minutes, wait):
+    bad = rainbow_receipts.acting_as(agent)
+    if bad:
+        return 2, {"status": "refused", "why": bad}
+    if not (0 < minutes <= 60 and 0 <= wait <= 120):          # also refuses nan and inf
+        return 2, {"status": "refused", "why": "minutes must be more than 0 and at most 60, --wait at most 120 seconds"}
     deadline = time.time() + wait
     while True:
         if human_active():
@@ -141,8 +146,11 @@ def main(argv=None):
     if a.cmd == "take":
         code, out = cmd_take(a.agent.strip().lower(), a.minutes, a.wait)
     elif a.cmd == "release":
-        ok = release(a.agent.strip().lower())
-        code, out = (0, {"status": "released"}) if ok else (0, {"status": "not-held"})
+        bad = rainbow_receipts.acting_as(a.agent)
+        ok = not bad and release(a.agent.strip().lower())
+        code, out = (2, {"status": "refused", "why": bad}) if bad else (0, {"status": "released"}) if ok else (0, {"status": "not-held"})
+    elif a.cmd == "takeover" and not 0 < a.minutes <= 24 * 60:
+        code, out = 2, {"status": "refused", "why": "minutes must be more than 0 and at most a day"}
     elif a.cmd == "takeover":
         with locked():                                  # the human never waits for an agent's lease
             _write({"holder": "human", "until": time.time() + a.minutes * 60, "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")})

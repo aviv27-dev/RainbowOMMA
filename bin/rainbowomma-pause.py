@@ -25,18 +25,26 @@ def flag():
 
 
 def paused():
-    """→ the pause record ({"at": …}) or None"""
-    try:
-        return json.loads(flag().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    """→ the pause record ({"at": …}) or None. Anything at the flag's place — even a broken link — means paused"""
+    if not os.path.lexists(flag()):
         return None
+    try:
+        d = json.loads(flag().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {"at": None}
+    except (OSError, ValueError):
+        return {"at": None}
 
 
 def set_paused(on):
     f = flag()
     if on:
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}), encoding="utf-8")
+        tmp = f.with_name(f".paused.{os.getpid()}.tmp")
+        tmp.unlink(missing_ok=True)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}))
+        os.replace(tmp, f)                       # replaces whatever was planted there, a link too
     else:
         try:
             f.unlink()

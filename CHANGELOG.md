@@ -5,6 +5,36 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+### Security
+- A security review of the whole code (guard, owners, installer, CI) and its fixes. The guard now refuses: `kill -1`,
+  `kill 0` and process groups; `xargs kill`; kill from inline code; commands hidden in heredocs, `| sh`, `<<<`,
+  `env -S`, `find -exec`, `timeout`/`setsid`/`stdbuf`/`flock`/`script`, `sh -c --` and AppleScript's `do shell script`;
+  an owner tool acting as another agent or the human (`--by`, its agent argument, `as-agent`); setting `RAINBOW_HOME`,
+  `BROWSER_OWNER_REGISTRY`, `RAINBOW_AGENT` or `RAINBOW_TEST_*`; writing RainbowOMMA's state or `browsers.json` (shell
+  and Write/Edit); the human's Chrome profile (shell and file tools); another agent's DevTools port on any host
+  (`127.1`, `[::1]`, `0.0.0.0`); quitting or closing Chrome through AppleScript; `rm -r` of `~/.`, `~/Library`,
+  `~/Documents` and the like; more ways to take a port (`php -S`, `nc -l`, `next -p`, `http.server -b`). An error while
+  judging, or no python3, is a refusal (it was a pass).
+- Every owner tool acts only as the caller (`RAINBOW_AGENT`): screen-owner, sim-owner, rainbowomma-clip, port-owner,
+  proc-owner, office-owner, browser-owner. `human` and `human-*` are never an agent's name; screen leases last at most
+  60 minutes.
+- Approvals: no environment variable answers for the human (`RAINBOW_TEST_APPROVE` is gone); an approval is the asking
+  agent's only and is used once even under parallel calls (locked); a command too long to read is refused, not cut; the
+  reason is one short line.
+- browser-owner: a link inside an agent's profile (to the human's) stops start, recover and heal; a theme folder with
+  anything but the theme in it is rebuilt (the human's too); lock and log files never open through a link; a CDP message
+  is capped at 32 MB; idle-stop needs a known start time; the browser MCP packages are pinned.
+- proc-owner: a Python framework is its own root, and nothing at or above tmux, a login, a terminal or an editor ever is;
+  a process under one agent's mark can't register as another.
+- The menu bar strips newlines and `|` (no injected `bash=` items); a planted link at the pause flag counts as paused;
+  receipts, approvals and state are yours only (0700/0600); an OTLP export to another URL keeps its own cursor; the
+  cursor proxy holds batches, calls without an id and unreadable lines while paused.
+- Installer: `--adapter` takes plain names only and paths are escaped; `uninstall.sh --purge` removes only a folder that is
+  RainbowOMMA's (never your home); the Dock tray empties only a folder named RainbowOMMA; labels can't break out of
+  AppleScript; the Claude Code adapter guards Write/Edit/Read too.
+- CI: actions pinned by commit, no persisted credentials, tools pinned; releases only from main, with a write token
+  only in the release job.
+
 ### Added
 - `receipts --export-otlp`: receipts to an OpenTelemetry collector (OTLP/HTTP JSON logs, `gen_ai.agent.name`).
 - Apps an agent never drives: `deniedApps` (default: terminals, System Settings, Keychain Access, Passwords, Activity

@@ -21,7 +21,8 @@ py() {   # the first python3 that works — never macOS's stub, which only asks 
   return 127
 }
 msg() { py -I "$BIN/rainbow_i18n.py" "$@" 2>/dev/null || echo "$1"; }
-notify() { osascript -e "display notification \"$1\" with title \"$(msg al.title name=Alpha)\"" >/dev/null 2>&1; }
+notify() { osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv)' -e 'end run' \
+  "$1" "$(msg al.title name=Alpha)" >/dev/null 2>&1; }
 
 alive() { curl -s --max-time 2 http://127.0.0.1:9222/json/version >/dev/null 2>&1; }
 

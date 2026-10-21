@@ -271,6 +271,10 @@ BRAVO_CMD = f"{CH} --user-data-dir={BRAVO_A['profile']} --remote-debugging-port=
 bo.processes = lambda: [(200, 1, HUMAN), (600, 1, BRAVO_CMD)]
 bo.terminate_tree = lambda t, grace=8.0: killed.append(set(t)) or []
 killed.clear()
+code0, out0 = bo.do_idle_stop(BRAVO_A, "bravo-reaper")
+check("idle-stop: a browser opened outside the owner (how long it's been idle can't be told) is not stopped",
+      code0 == 2 and not killed, out0)
+Path(BRAVO_A["state"]).write_text(json.dumps({"lastStart": {"at": "2020-01-01T00:00:00", "by": "bravo"}}))
 code, out = bo.do_idle_stop(BRAVO_A, "bravo-reaper")
 check("idle-stop: an agent with idleMinutes closes its own tree, and it is NOT recorded as 'the human closed it'",
       code == 0 and killed == [{600}] and not json.loads(Path(BRAVO_A["state"]).read_text()).get("offByHuman"), out)
@@ -1375,7 +1379,7 @@ check("mcp-config: Chrome DevTools MCP and Playwright MCP pointed at the agent's
 attach = ["npx chrome-devtools-mcp@latest --autoConnect", "npx @playwright/mcp@latest --extension",
           "npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9223", "curl -s http://localhost:9224/json/list"]
 check("guard: a browser MCP on the human's Chrome is refused; as Alpha, another agent's CDP port too — its own is fine",
-      [as_agent(c, "alpha") for c in attach] == [2, 2, 2, 2] and as_agent("npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222", "alpha") == 0,
+      [as_agent(c, "alpha") for c in attach] == [2, 2, 2, 2] and as_agent("npx chrome-devtools-mcp@1.11.0 --browserUrl http://127.0.0.1:9222", "alpha") == 0,
       [as_agent(c, "alpha") for c in attach])
 sreg = json.loads(REG.read_text()); sreg["sensitiveSites"] = ["bank.example", "*.gov.example"]; SREG = tmp / "sensitive.json"; SREG.write_text(json.dumps(sreg))
 def nav(url, idle, tool="mcp__alpha-browser__navigate_page"):
@@ -1403,12 +1407,20 @@ pflag = pm.ROOT / "state" / "paused.json"; pflag.parent.mkdir(parents=True, exis
 _pw = pm.PAUSE_WAIT_S; pm.PAUSE_WAIT_S = 2
 px2 = pm.Proxy.__new__(pm.Proxy); px2.agent, px2.themed, px2.ended = "alpha", {}, set()
 px2.proc = type("P", (), {"stdin": _Sink()})(); px2.out = io.BytesIO(); px2.theme_session = lambda label: None
+px2.out_lock = threading.Lock()
 pm.time.sleep, _sl = (lambda s: None), pm.time.sleep
 px2.pump_agent(io.BytesIO(b'{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"click","arguments":{}}}\n'
                           b'{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"screenshot","arguments":{}}}\n'))
+px3 = pm.Proxy.__new__(pm.Proxy); px3.agent, px3.themed, px3.ended = "alpha", {}, set(); px3.out_lock = threading.Lock()
+px3.proc = type("P", (), {"stdin": _Sink()})(); px3.out = io.BytesIO(); px3.theme_session = lambda label: None
+px3.pump_agent(io.BytesIO(b'[{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"click","arguments":{}}}]\n'
+                          b'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"click","arguments":{}}}\n'
+                          b'\xff{"method":"tools/call"}\n'))
 pm.time.sleep, pm.PAUSE_WAIT_S = _sl, _pw
 pflag.unlink()
 answered = [json.loads(x) for x in px2.out.getvalue().splitlines()]
+check("security: while paused, a batch, a call without an id and an unreadable line never reach the driver",
+      px3.proc.stdin.lines == [], px3.proc.stdin.lines)
 check("pause: the cursor proxy holds a click, then answers it with an error that never reaches the driver; a screenshot passes",
       [m["id"] for m in answered] == [7] and answered[0]["result"]["isError"] and len(px2.proc.stdin.lines) == 1
       and b'"id":8' in px2.proc.stdin.lines[0], (answered, px2.proc.stdin.lines))
@@ -1458,10 +1470,24 @@ check("screen: the cursor proxy holds actions while the human has taken over", h
 # approval before sending
 send = "osascript -e 'tell application \"Messages\" to send \"on my way\" to buddy \"+15550100\"'"
 mail = "osascript -e 'tell application \"Mail\" to make new outgoing message with properties {subject:\"x\"}'"
-def appr(answer, *cmd):
-    r = subprocess.run(["bash", str(HERE / "rainbowomma-approve"), "ask", "--agent", "alpha", "--why", "tell the client", "--", *cmd],
-                       capture_output=True, text=True, env=dict(cenv, RAINBOW_TEST_APPROVE=answer))
-    return r.returncode, json.loads(r.stdout)
+apm = load("rainbowomma-approve.py")
+def appr(answer, *cmd, agent="alpha", why="tell the client", me="alpha"):
+    saved = {k: os.environ.get(k) for k in ("RAINBOW_HOME", "RAINBOW_AGENT")}
+    os.environ["RAINBOW_HOME"] = cenv["RAINBOW_HOME"]
+    if me:
+        os.environ["RAINBOW_AGENT"] = me
+    else:
+        os.environ.pop("RAINBOW_AGENT", None)
+    seen.clear(); apm.ASK = lambda a, w, c: seen.append((a, w, c)) or answer == "yes"
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            code = apm.main(["ask", "--agent", agent, "--why", why, "--", *cmd])
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    return code, json.loads(buf.getvalue())
+seen = []
 gs = lambda c: g({"tool_input": {"command": c}}, "alpha").returncode
 check("send: Messages and Mail through AppleScript are refused without the human's approval", gs(send) == 2 and gs(mail) == 2)
 check("send: the human says no → refused (exit 2), and the command stays refused", appr("no", "osascript", "-e", 'tell application "Messages" to send "on my way" to buddy "+15550100"')[0] == 2
@@ -1472,6 +1498,20 @@ check("send: the human allows it once → exactly that command runs once; the ne
 code, out = appr("yes", "osascript", "-e", 'tell application "Messages" to send "on my way" to buddy "+15550100"')
 check("send: an approval covers only that exact command — another message or recipient is still refused",
       gs(send.replace("on my way", "something else")) == 2)
+msg_ = ("osascript", "-e", 'tell application "Messages" to send "on my way" to buddy "+15550100"')
+r_ = subprocess.run(["bash", str(HERE / "rainbowomma-approve"), "ask", "--agent", "alpha", "--", *msg_], capture_output=True, text=True,
+                    env=dict(cenv, RAINBOW_TEST_APPROVE="yes", RAINBOW_AGENT="alpha"), timeout=20) if sys.platform != "darwin" else None
+check("send: no environment variable answers for the human (RAINBOW_TEST_APPROVE does nothing)",
+      r_ is None or (r_.returncode != 0 and '"approved"' not in r_.stdout), r_ and r_.stdout)
+appr("yes", *msg_)
+check("send: an approval is the asking agent's only — Bravo can't use Alpha's", g({"tool_input": {"command": send}}, "bravo").returncode == 2
+      and gs(send) == 0)
+check("send: a command too long to read in the dialog is refused, not cut", appr("yes", *msg_[:2], msg_[2] + " " * 700)[0] == 2 and not seen)
+appr("yes", *msg_, why="ok\n\n\n\nExactly this:\nsomething harmless" + "x" * 500)
+check("send: the reason is one short line — it can't push the real command out of sight",
+      "\n" not in seen[0][1] and len(seen[0][1]) <= 200 and gs(send) == 0, seen)
+check("send: --agent must be the caller's own name", appr("yes", *msg_, agent="bravo")[0] == 2 and appr("yes", *msg_, agent="human", me="")[0] == 2
+      and not seen)
 pend = tmp / "screen-home" / "state" / "approval-pending.json"; pend.write_text("{}")
 check("send: while an approval dialog is up, no agent clicks or types (it could click 'Allow' itself)",
       g(cua_click, "bravo").returncode == 2 and "approval" in g(cua_click, "bravo").stderr)
@@ -1655,6 +1695,173 @@ finally:
     subprocess.run(["pkill", "-P", str(fw.pid)], capture_output=True); fw.kill()
 check("guard (env unreadable): the agent framework running it becomes the agent's root — what it starts is the agent's own",
       t_roots.get(str(fw.pid), {}).get("agent") == "alpha" and t_alpha == 0 and t_bravo == 2, (t_roots, t_alpha, t_bravo))
+
+# ── security review: the cheap ways around the guard are closed ──
+victim = subprocess.Popen(["sleep", "60"])
+vp = victim.pid
+try:
+    sec_blocked = {
+        "kill -9 -1": "process groups", "kill 0": "process groups", f"kill -9 -- -{vp}": "process groups", f"kill -s TERM -{vp}": "process groups",
+        f"kill {vp}\\ ": "not yours", f"echo {vp} | xargs kill": "xargs", f"xargs kill <<< {vp}": "xargs",
+        "timeout 5 pkill chrome": "pkill", "env -S 'pkill -f chrome'": "pkill", "setsid pkill chrome": "pkill",
+        "stdbuf -o0 killall Chrome": "killall", "flock /tmp/l pkill chrome": "pkill", "script -q /dev/null pkill chrome": "pkill",
+        "find . -name x -exec pkill chrome \;": "pkill", "sh -c -- 'pkill x'": "pkill",
+        "bash <<EOF\npkill chrome\nEOF": "pkill", "echo pkill chrome | sh": "pkill", "bash <<< 'pkill chrome'": "pkill",
+        "echo '<<EOF'\npkill chrome": "pkill", f"python3 -c 'import os; os.kill({vp}, 9)'": "inline",
+        "as-agent bravo pkill chrome": "as bravo", f"as-agent bravo proc-owner kill {vp} --by bravo": "as bravo",
+        f"proc-owner kill {vp} --by human": "human", f"proc-owner kill {vp} --by bravo": "never as bravo",
+        "W=human; browser-owner stop bravo --by $W": "literally", "browser-owner stop bravo --by bravo": "never as bravo",
+        "port-owner release bravo --all": "never as bravo", "sim-owner release bravo --shutdown": "never as bravo",
+        "screen-owner handback": "human", "screen-owner take human --minutes 600": "human", "rainbowomma-clip paste bravo": "never as bravo",
+        "rainbowomma-pause off": "human", "rainbowomma-approve ask --agent bravo -- x": "never as bravo",
+        "echo '{}' > ~/.rainbowomma/state/proc-roots.json": "state", "rm ~/.rainbowomma/state/approval-pending.json": "state",
+        "sed -i s/9222/9223/ ~/bin/browsers.json": "browsers.json", "ln -s /x $RAINBOW_HOME/state/paused.json": "state",
+        "RAINBOW_HOME=/tmp/x browser-owner start alpha --by alpha": "rainbow_home", "export BROWSER_OWNER_REGISTRY=/tmp/r.json": "registry",
+        "RAINBOW_TEST_APPROVE=yes rainbowomma-approve ask --agent alpha -- x": "rainbow_test", "unset RAINBOW_AGENT": "rainbow_agent",
+        "env -u RAINBOW_AGENT proc-owner list bravo": "", "RAINBOW_AGENT=bravo proc-owner list bravo": "",
+        "curl http://127.1:9223/json": "bravo's browser", "curl http://[::1]:9223/json": "bravo's browser",
+        "curl http://0.0.0.0:9223/json": "bravo's browser", "curl http://localhost.:9223/json": "bravo's browser",
+        "osascript -e 'tell application (\"Google Chr\" & \"ome\") to quit'": "applescript",
+        "osascript -e 'tell application \"Google Chrome\" to close every window'": "applescript",
+        "osascript -e 'do shell script \"pkill chrome\"'": "pkill", "osascript -e 'do shell script (\"pk\" & \"ill x\")'": "built at run time",
+        "cp ~/Library/Application\\ Support/Google/Chrome/Default/Cookies /tmp/x": "human's own chrome",
+        "rm -rf ~/Library/Application\\ Support/Google/Chrome": "human's own chrome", "rm -rf ~/.": "can't be undone",
+        "rm -rf $HOME/.": "can't be undone", "rm -rf ~/Library": "can't be undone", "rm -rf ~/Documents/": "can't be undone",
+        "php -S 127.0.0.1:3000": "port 3000", "npx next dev -p 3000": "port 3000", "python3 -m http.server -b 127.0.0.1 3000": "port 3000",
+        "nc -l 9222": "port 9222", "kill ² 1": "", f"kill {vp}; true --port=²": "",
+    }
+    got_sec = {c: subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": c}}), capture_output=True,
+                                 text=True, env=dict(genv, RAINBOW_AGENT="alpha", RAINBOW_ENV_MARKERS="off")) for c in sec_blocked}
+    bad = {c: (r.returncode, r.stderr[-160:]) for c, r in got_sec.items()
+           if r.returncode != 2 or (sec_blocked[c] and sec_blocked[c] not in r.stderr.lower())}
+    check(f"security: {len(sec_blocked)} ways around the guard are refused, each with its reason", not bad, bad)
+    sec_allowed = ["browser-owner start alpha --by alpha", "proc-owner list alpha", "port-owner lease alpha --name web", "kill %1",
+                   "cat ~/.rainbowomma/logs/receipts.jsonl", "python3 -c 'print(1)'", "find . -name '*.py' -exec grep -l x {} +",
+                   "timeout 5 npm test", "echo hi | sh", "rm -rf ~/work/build", "screen-owner take alpha --minutes 2",
+                   "browser-owner idle-stop alpha --by keepalive", "RAINBOW_AGENT=alpha npm test", "osascript -e 'display notification \"hi\"'",
+                   "cat <<EOF > notes.txt\npkill is a command\nEOF", "curl http://127.0.0.1:9222/json/version", "git log -p"]
+    ok_ = {c: as_agent(c, "alpha") for c in sec_allowed}
+    check("security: …while the agent's ordinary work goes on", all(v == 0 for v in ok_.values()), {c: v for c, v in ok_.items() if v})
+finally:
+    victim.kill()
+crash = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": "x"}, "tool_name": object.__name__}),
+                       capture_output=True, text=True, env=dict(genv, RAINBOW_AGENT="alpha"))
+g_mod = load("rainbowomma-guard.py"); g_mod.verdict = lambda c: 1 / 0
+buf_ = io.StringIO()
+with contextlib.redirect_stderr(buf_):
+    sys.stdin = io.StringIO(json.dumps({"tool_input": {"command": "ls"}})); rc_ = g_mod.main([]); sys.stdin = sys.__stdin__
+check("security: an error while judging is a refusal, never a pass", rc_ == 2 and "couldn't judge" in buf_.getvalue(), buf_.getvalue())
+fv = load("rainbowomma-guard.py")
+check("security: Write/Edit can't touch RainbowOMMA's state or browsers.json, and no file tool reads the human's Chrome profile",
+      fv.file_verdict({"tool_name": "Write", "tool_input": {"file_path": "~/.rainbowomma/state/approvals.json"}})
+      and fv.file_verdict({"tool_name": "Edit", "tool_input": {"file_path": "/Users/x/bin/browsers.json"}})
+      and fv.file_verdict({"tool_name": "Read", "tool_input": {"file_path": "/Users/x/Library/Application Support/Google/Chrome/Default/Cookies"}})
+      and not fv.file_verdict({"tool_name": "Read", "tool_input": {"file_path": "~/.rainbowomma/logs/receipts.jsonl"}})
+      and not fv.file_verdict({"tool_name": "Write", "tool_input": {"file_path": "/tmp/work/app.py"}}))
+trows = [(1, 0, "launchd"), (100, 1, "tmux new -s work"), (110, 100, "-zsh"), (120, 110, "python3 /opt/hermes/run.py"),
+         (130, 120, "/bin/bash -c guard"), (140, 130, "/usr/bin/python3 -I /x/rainbowomma-guard.py"), (150, 110, "vim notes.md"),
+         (200, 1, "/usr/bin/login -pf human"), (210, 200, "-zsh"), (220, 210, "/bin/sh -c guard")]
+check("security: a Python framework (Hermes) is its own root — never the tmux server, a login or the human's shell above it",
+      pc.framework_root(140, trows) == 120 and pc.framework_root(220, trows) is None)
+os.environ["RAINBOW_HOME"] = str(tmp / "imp-home"); ipc = load("proc-owner.py"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+irows = [(1, 0, "launchd"), (50, 1, "node claude"), (60, 50, "bash"), (70, 60, "bash as-agent alpha x")]
+ipc.register("bravo", 50, irows)
+check("security: a process under Bravo's mark can't register itself as Alpha (as-agent alpha from inside Bravo)",
+      ipc.register("alpha", 70, irows) is False and ipc.register("bravo", 70, irows) is True)
+lk_home = tmp / "lock-home"; (lk_home / "state").mkdir(parents=True); victim_f = tmp / "thesis.txt"; victim_f.write_text("my thesis")
+(lk_home / "state" / "proc-roots.lock").symlink_to(victim_f)
+os.environ["RAINBOW_HOME"] = str(lk_home); lpc = load("proc-owner.py"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+try:
+    with lpc.roots_locked():
+        pass
+    lk_ok = False
+except OSError:
+    lk_ok = True
+check("security: a lock file planted as a symlink is refused, and what it points to is never truncated",
+      lk_ok and victim_f.read_text() == "my thesis")
+sbo = load("browser-owner.py")
+human_prof = tmp / "human-chrome-default"; human_prof.mkdir(); (human_prof / "Preferences").write_text('{"profile": {"name": "Me"}}')
+evil_prof = tmp / "evil-profile"; evil_prof.mkdir(); (evil_prof / "Default").symlink_to(human_prof)
+check("security: a link inside an agent's profile (to the human's Default) stops start, recover and heal before anything is written",
+      bool(sbo.profile_unsafe({"profile": str(evil_prof)})) and not sbo.profile_unsafe({"profile": str(tmp / "bravo")})
+      and json.loads((human_prof / "Preferences").read_text())["profile"]["name"] == "Me")
+sbo.THEMES = tmp / "sec-themes"
+sbo.build_theme({"name": "alpha", "label": "Alpha", "color": "#E53935"})
+(sbo.THEMES / "alpha" / "x.js").write_text("steal()")
+mf = json.loads((sbo.THEMES / "alpha" / "manifest.json").read_text()); mf["content_scripts"] = [{"matches": ["<all_urls>"], "js": ["x.js"]}]
+(sbo.THEMES / "alpha" / "manifest.json").write_text(json.dumps(mf))
+dirty = sbo.theme_clean("alpha")
+sbo.build_theme({"name": "alpha", "label": "Alpha", "color": "#E53935"})
+check("security: a theme folder another agent added a script to is found, and rebuilding it leaves only the theme",
+      not dirty and sbo.theme_clean("alpha") and not (sbo.THEMES / "alpha" / "x.js").exists())
+rr_ = json.loads(REG.read_text())
+bad_regs = {"human": {**rr_["agents"]["alpha"], "port": 9240, "profile": str(tmp / "h1")},
+            "human-human": {**rr_["agents"]["alpha"], "port": 9241, "profile": str(tmp / "h2")},
+            "delta": {**rr_["agents"]["alpha"], "port": 9242, "profile": str(tmp / "h3"), "label": "x\n--y | bash=/tmp/evil"}}
+refused_ = []
+for nm, row in bad_regs.items():
+    rp = tmp / f"badreg-{nm}.json"; rp.write_text(json.dumps({"agents": {nm: row}}))
+    try:
+        sbo.registry(rp)
+    except ValueError:
+        refused_.append(nm)
+check("security: the names human and human-* are the human's, and a label can't carry a newline or a menu action",
+      refused_ == list(bad_regs), refused_)
+lk_t = tmp / "bo-thesis.txt"; lk_t.write_text("my thesis"); lk_l = tmp / "bo.lock"; lk_l.symlink_to(lk_t)
+try:
+    sbo.open_lock(lk_l); lk_ok2 = False
+except OSError:
+    lk_ok2 = True
+check("security: browser-owner's lock never opens through a planted link (the file it points to stays whole)", lk_ok2 and lk_t.read_text() == "my thesis")
+r_by = subprocess.run(["bash", str(HERE / "browser-owner"), "stop", "bravo", "--by", "human"], capture_output=True, text=True,
+                      env=dict(genv, RAINBOW_AGENT="alpha"))
+check("security: an agent can't act as the human or another agent in browser-owner, whatever the guard saw",
+      r_by.returncode == 2 and json.loads(r_by.stdout)["status"] == "refused", r_by.stdout)
+mbx = load("rainbowomma-menubar.py")
+evil = "x\n--allow | bash=/tmp/evil terminal=false"
+menu_txt = mbx.menu([{"agent": "alpha", "label": evil, "status": evil, "color": "#E53935", "up": True}], False,
+                    [{"at": "2026-10-21T10:00:00", "agent": evil, "tool": evil, "action": "a", "status": "s"}], {"holder": evil})
+check("security: a newline or | in a label, a holder or a receipt never becomes a menu item of its own (bash=…)",
+      all(ln.count("|") <= 1 for ln in menu_txt.splitlines())
+      and "/tmp/evil" not in "".join(ln.split("|")[1] for ln in menu_txt.splitlines() if "|" in ln), menu_txt)
+ph = tmp / "pause-sec-home"; (ph / "state").mkdir(parents=True); (ph / "state" / "paused.json").symlink_to(tmp / "nowhere" / "p")
+r_p = subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "status"], capture_output=True, text=True, env=dict(genv, RAINBOW_HOME=str(ph)))
+r_on = subprocess.run(["bash", str(HERE / "rainbowomma-pause"), "on"], capture_output=True, text=True, env=dict(genv, RAINBOW_HOME=str(ph)))
+gx = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": "ls"}}), capture_output=True, text=True,
+                    env=dict(genv, RAINBOW_HOME=str(ph)))
+check("security: a planted (broken) link at the pause flag counts as paused, and `pause on` replaces it instead of failing",
+      json.loads(r_p.stdout)["status"] == "paused" and json.loads(r_on.stdout)["status"] == "paused" and gx.returncode == 2
+      and not (ph / "state" / "paused.json").is_symlink(), (r_p.stdout, r_on.stdout, r_on.stderr[-200:]))
+own_env = dict(genv, RAINBOW_AGENT="alpha", RAINBOW_HOME=str(tmp / "own-home"))
+def tool(*argv):
+    r = subprocess.run(["bash", str(HERE / argv[0]), *argv[1:]], capture_output=True, text=True, env=own_env, input="")
+    return r.returncode
+others = {"screen-owner take bravo": tool("screen-owner", "take", "bravo"), "screen-owner take human": tool("screen-owner", "take", "human"),
+          "screen-owner take alpha --minutes 1e12": tool("screen-owner", "take", "alpha", "--minutes", "1e12"),
+          "sim-owner release bravo": tool("sim-owner", "release", "bravo", "--shutdown"), "rainbowomma-clip paste bravo": tool("rainbowomma-clip", "paste", "bravo"),
+          "port-owner release bravo": tool("port-owner", "release", "bravo", "--all"), "port-owner lease bravo": tool("port-owner", "lease", "bravo"),
+          "proc-owner kill 1 --by human": tool("proc-owner", "kill", "1", "--by", "human"), "proc-owner register bravo": tool("proc-owner", "register", "bravo"),
+          "office-owner close --agent bravo": tool("office-owner", "close", "--agent", "bravo", "/tmp/x.docx"),
+          "rainbowomma-approve ask --agent bravo": tool("rainbowomma-approve", "ask", "--agent", "bravo", "--", "x")}
+check("security: every owner tool acts only as the caller (RAINBOW_AGENT) — never as another agent or the human, and no endless lease",
+      all(v == 2 for v in others.values()), {k: v for k, v in others.items() if v != 2})
+check("…and as yourself it works", tool("screen-owner", "take", "alpha", "--minutes", "1") == 0 and tool("port-owner", "lease", "alpha") == 0)
+oh = tmp / "office-sec"; os.environ["RAINBOW_HOME"] = str(oh); aof = load("agent-office.py"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+aof.LEASES.mkdir(parents=True, exist_ok=True)
+(aof.LEASES / "bad1.json").write_text(json.dumps({"agent": "alpha", "app": "notanapp", "path": "/x"}))
+(aof.LEASES / "bad2.json").write_text(json.dumps({"app": "word", "path": "/x"}))
+(aof.LEASES / "bad3.json").write_text("[1, 2]")
+check("security: a planted lease file (unknown app, no agent, not a lease at all) is never acted on and never stops the sweep",
+      aof.leases() == [])
+rx = tmp / "otlp-home"; os.environ["RAINBOW_HOME"] = str(rx); rr2 = load("rainbow_receipts.py")
+rr2.write("t", "a", "alpha", "alpha", "ok")
+mode_ok = (rx.stat().st_mode & 0o077) == 0 and ((rx / "logs" / "receipts.jsonl").stat().st_mode & 0o077) == 0
+os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://127.0.0.1:1"
+rr2.export_otlp("http://127.0.0.1:2")
+other_cursor = [f.name for f in (rx / "logs").iterdir() if f.name.startswith("receipts.otlp-cursor")]
+os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+check("security: receipts are readable by you only (0700 / 0600), and an export to another URL never moves your collector's cursor",
+      mode_ok and "receipts.otlp-cursor" not in other_cursor, (mode_ok, other_cursor))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

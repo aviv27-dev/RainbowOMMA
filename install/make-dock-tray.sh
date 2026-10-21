@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
 done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${RAINBOW_DOCK_APPS:-$HOME/Applications/RainbowOMMA}"
+case "$(basename "$OUT")" in RainbowOMMA) ;; *) echo "the Dock apps go in a folder named RainbowOMMA (it is emptied on every run): $OUT" >&2; exit 2 ;; esac
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 I18N="$BIN/rainbow_i18n.py"; [ -f "$I18N" ] || I18N="$HERE/../bin/rainbow_i18n.py"

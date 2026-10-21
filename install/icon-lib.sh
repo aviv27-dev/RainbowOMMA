@@ -39,4 +39,4 @@ JS
   iconutil -c icns "$set" -o "$1"
 }
 
-asq() { local s="${1//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }   # text safe inside an AppleScript "string" (a label may hold " or \)
+asq() { local s="${1//[$'\r\n\t']/ }"; s="${s//\\/\\\\}"; printf '%s' "${s//\"/\\\"}"; }   # text safe inside an AppleScript "string" (a label may hold " or \; a newline would end it)
