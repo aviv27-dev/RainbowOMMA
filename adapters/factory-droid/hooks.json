@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Execute",
+        "matcher": "Execute|Read|Edit|Create|ApplyPatch",
         "hooks": [
           {
             "type": "command",

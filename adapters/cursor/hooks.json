@@ -1,6 +1,21 @@
 {
   "version": 1,
   "hooks": {
-    "beforeShellExecution": [{ "command": "/Users/you/bin/rainbowomma-guard" }]
+    "beforeShellExecution": [
+      {
+        "command": "/Users/you/bin/rainbowomma-guard"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "/Users/you/bin/rainbowomma-guard",
+        "matcher": "Write|Delete"
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "/Users/you/bin/rainbowomma-guard"
+      }
+    ]
   }
 }

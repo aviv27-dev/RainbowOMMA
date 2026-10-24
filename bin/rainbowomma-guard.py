@@ -767,23 +767,34 @@ def port_verdict(ports):
     return None
 
 
-FILE_KEYS = ("file_path", "path", "notebook_path", "filepath", "target_file", "filename")
+FILE_KEYS = ("file_path", "path", "notebook_path", "filepath", "target_file", "filename", "absolute_path", "dir_path")
+PATCH_FILE = re.compile(r"^\*\*\* (?:add file|update file|delete file|move to): (.+?)\s*$", re.I | re.M)   # Codex / Hermes patches
+READ_TOOL = re.compile(r"(read|view|glob|grep|ls|list|search|pre_read_code|beforereadfile).*")
+
+
+def _file_paths(event):
+    """every path a file tool names: its path fields (tool_input; Cursor's top level; Windsurf's tool_info) and the files
+    a patch adds, updates, deletes or moves to (apply_patch, Hermes patch — also a patch run through the shell)"""
+    got = []
+    for d in (_maybe_json(event.get("tool_input")), event, event.get("tool_info")):
+        if not isinstance(d, dict):
+            continue
+        got += [d[k] for k in FILE_KEYS if isinstance(d.get(k), str) and d[k]]
+        got += [m.group(1).strip() for v in d.values() if isinstance(v, str) and "*** " in v for m in PATCH_FILE.finditer(v)]
+    cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else None
+    return [os.path.join(cwd, os.path.expanduser(x)) if cwd and not os.path.isabs(os.path.expanduser(x)) else x for x in got]
 
 
 def file_verdict(event):
-    """a file tool (Write, Edit, Read …) aimed at RainbowOMMA's own state or the human's Chrome profile"""
-    ti = _maybe_json(event.get("tool_input"))
-    if not isinstance(ti, dict):
-        return None
-    for k in FILE_KEYS:
-        v = ti.get(k)
-        if not isinstance(v, str) or not v:
-            continue
+    """a file tool (Write, Edit, Read, a patch …) aimed at RainbowOMMA's own state or the human's Chrome profile"""
+    name = str(event.get("tool_name") or event.get("toolName") or event.get("agent_action_name")
+               or event.get("hook_event_name") or "").lower()
+    reading = bool(READ_TOOL.fullmatch(name))
+    for v in _file_paths(event):
         low = os.path.realpath(os.path.expanduser(v)).lower() + " " + v.lower()
         if HUMAN_CHROME.search(low):
             return WHY["human-chrome"]
-        name = str(event.get("tool_name") or event.get("toolName") or "").lower()
-        if STATE_WORDS.search(low) and not re.fullmatch(r"(read|view|glob|grep|ls|search).*", name):
+        if STATE_WORDS.search(low) and not reading:
             return WHY["rainbow-state"]
     return None
 

@@ -80,6 +80,27 @@ These three work for every agent, whatever its framework:
   same way as the cursor proxy below, e.g.
   `claude mcp add-json --scope user rainbowomma "{\"command\":\"$HOME/bin/rainbowomma-mcp\",\"args\":[\"--agent\",\"alpha\"]}"`.
 
+## File tools, not only the shell
+
+The guardrail also refuses an agent's file tools aimed at RainbowOMMA's own state or `browsers.json` (writing) and the
+human's Chrome profile (reading or writing). Each adapter sends its framework's file tools to it:
+
+| Framework | What the hook matches | Where the path is |
+|---|---|---|
+| Claude Code | `Bash\|Write\|Edit\|MultiEdit\|NotebookEdit\|Read\|Grep\|Glob\|WebFetch\|Task` | `file_path`, `path`, `notebook_path` |
+| Codex CLI | `Bash\|apply_patch` | the patch's `*** Add/Update/Delete File:` lines (also a patch run through the shell) |
+| Gemini CLI | `^(run_shell_command\|write_file\|replace\|read_file\|read_many_files)$` | `file_path` |
+| Qwen Code | `^(run_shell_command\|write_file\|edit\|read_file\|notebook_edit)$` | `file_path`, `notebook_path` |
+| Factory Droid | `Execute\|Read\|Edit\|Create\|ApplyPatch` | `file_path` (an ApplyPatch's own lines) |
+| Hermes Agent | `terminal\|write_file\|patch\|read_file` | `path`, or a V4A patch's lines |
+| Cursor | `beforeShellExecution`, `preToolUse` (`Write\|Delete`), `beforeReadFile` | `file_path` |
+| Windsurf | `pre_run_command`, `pre_read_code`, `pre_write_code` | `tool_info.file_path` |
+| Copilot (CLI, VS Code), Goose | every tool | `file_path`, `path` |
+
+Cursor's and Windsurf's payload shapes come from their documentation, not from their source; check a real payload if a
+file isn't refused. Devin Desktop replaced Cascade with Devin Local, whose hooks file (`.devin/hooks.v1.json`,
+`PreToolUse` with regex matchers) is not covered yet — `devin migrate hooks` copies the Windsurf one.
+
 ## Claude Code
 - Guardrail: merge [`adapters/claude-code/settings.json`](../adapters/claude-code/settings.json) into
   `~/.claude/settings.json` (or a project's `.claude/settings.json`).

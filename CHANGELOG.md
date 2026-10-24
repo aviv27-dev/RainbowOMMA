@@ -16,6 +16,9 @@ exit codes are an API and change only in a major version.
 - `auth-owner` (optional — `"authSites"` in `browsers.json` turns it on): one agent at a time signs in to a listed site
   (`lease`, `release`, `who`, `list`; the guard keeps the others' browser tools off it), and `code` asks the human for the
   one-time code and hands it to that agent only. MCP tools `take_login`, `ask_login_code`, `release_login`.
+- The guardrail reaches the file tools of Codex (`apply_patch`, read from the patch itself), Gemini CLI, Qwen Code,
+  Factory Droid, Hermes (also its V4A patches), Cursor (`preToolUse`, `beforeReadFile`) and Windsurf (`pre_read_code`,
+  `pre_write_code`), not only their shells; `docs/AGENTS.md` lists what each adapter matches.
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it
@@ -23,6 +26,9 @@ exit codes are an API and change only in a major version.
   then puts your files back; an older install without a manifest loses only files identical to RainbowOMMA's.
 
 ### Fixed
+- proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
+  start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
+  `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
 - proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
   start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
   `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
