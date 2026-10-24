@@ -46,7 +46,7 @@ case "$BIN" in /*) ;; *) BIN="$(pwd)/$BIN" ;; esac
 case "$CHANNEL" in ""|beta|dev|canary|cft) ;; *) echo "--agent-chrome is beta, dev, canary or cft, not $CHANNEL" >&2; exit 2 ;; esac
 set -f
 for A in $ADAPTERS; do
-  case "$A" in ''|*[!a-z0-9-]*) echo "not an adapter name: $A (letters, digits and - only)" >&2; exit 2 ;; esac
+  case "$A" in ''|*[!abcdefghijklmnopqrstuvwxyz0123456789-]*) echo "not an adapter name: $A (letters, digits and - only)" >&2; exit 2 ;; esac
 done
 set +f
 ROOT="${RAINBOW_HOME:-$HOME/.rainbowomma}"

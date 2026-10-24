@@ -19,6 +19,9 @@ exit codes are an API and change only in a major version.
 - The guardrail reaches the file tools of Codex (`apply_patch`, read from the patch itself), Gemini CLI, Qwen Code,
   Factory Droid, Hermes (also its V4A patches), Cursor (`preToolUse`, `beforeReadFile`) and Windsurf (`pre_read_code`,
   `pre_write_code`), not only their shells; `docs/AGENTS.md` lists what each adapter matches.
+- `install/isolate-agent.sh`: an agent of its own macOS user — `create` (a hidden standard user, a sudoers rule for you
+  only, a shared work folder, RainbowOMMA in its home), `run AGENT -- COMMAND`, `status`, `remove`; a dry run unless
+  `--apply`.
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it

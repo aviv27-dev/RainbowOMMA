@@ -16,6 +16,13 @@ macOS lets one Mac run at most **two** macOS VMs at a time, so a VM per agent do
 session stays the normal case, and why the tiers mix well: one risky agent in a VM, the rest on the shared Mac.
 
 ### Its own macOS user
+- **The quick way:** `install/isolate-agent.sh create alpha` prints what it would do; add `--apply` to do it: a hidden
+  standard user `rainbow-alpha` (no password anyone keeps), a sudoers rule that lets only you run commands as it
+  (`/etc/sudoers.d/rainbowomma-alpha`, checked with `visudo`), a work folder you and it share
+  (`/Users/Shared/rainbowomma/alpha`, nobody else), and RainbowOMMA in its home. Then
+  `install/isolate-agent.sh run alpha -- claude` runs the agent as that user; `status` lists them; `remove alpha --apply`
+  takes the user and the rule out and keeps the work folder. Its browser runs headless there (another user can't open
+  windows on your screen) — keep computer use with agents of your own user.
 - Create a standard user per agent (System Settings → Users & Groups), log it in with Fast User Switching, and run the
   agent there. GUI computer use works only in the session that is on screen; shell and browser (CDP) work in the
   background.
