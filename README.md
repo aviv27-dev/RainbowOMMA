@@ -193,6 +193,14 @@ summary a day and a notification for every tab it closes.
 [docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
 virtual display of its own, and how to keep its credentials apart (1Password, Keychain).
 
+### 🔑 One agent at a time signs in (optional)
+Two agents signing in to the same account at once log each other out, and a one-time code typed into the wrong
+window is lost. List the sites in `browsers.json` (`"authSites": ["accounts.example.com"]`) and an agent takes one before
+it signs in: `auth-owner lease alpha accounts.example.com` (refused while another agent holds it, `--wait` to queue),
+`auth-owner code alpha accounts.example.com` asks you for the code in a dialog and hands it to that agent only, and
+`auth-owner release …` gives it back (10 minutes at most). The guardrail keeps the other agents' browser tools off the
+site meanwhile. MCP tools: `take_login`, `ask_login_code`, `release_login`. Without `authSites` nothing changes.
+
 ### 🔒 Sensitive sites need you there
 List them as `"sensitiveSites": ["bank.example", "*.gov.example"]` at the top of `browsers.json`. An agent's browser tool
 (Chrome DevTools MCP, Playwright MCP, any `navigate`/`open` tool) may go there only while you're at the Mac: you used the
@@ -232,6 +240,7 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
 | `port-owner lease <agent> [--name N] [--prefer P]` · `env` · `who <port>` · `release` · `list` | a free port from the agent's own range, held for it · as `PORT=…` for `eval` · whose a port is and who listens on it · give it back · ranges and leases |
 | `proc-owner whose <pid>` · `kill <pid> --by <who> [--force]` · `list <agent>` · `reap <agent> [--session ID] [--dry-run]` · `register <agent>` | whose a process is · stop only your own · an agent's processes and their ports · after a session: its orphaned servers stop, its idle leases go back · mark the calling shell as the agent's root (`as-agent` does it) |
+| `auth-owner lease <agent> <site> [--wait S]` · `code <agent> <site>` · `release` · `who <site>` · `list` | (optional, `authSites`) one agent at a time signs in to a site · the human's one-time code to that agent only |
 | `screen-owner take <agent> [--minutes M] [--wait S]` · `release` · `takeover` · `handback` · `who` | the screen lease: an agent holds it to drive the foreground; the human takes it over and hands it back |
 | `rainbowomma-approve ask --agent A --why … -- <command>` · `list` | the human allows one exact irreversible command (Messages, Mail) once |
 | `sim-owner lease <agent> [--device "iPhone 16"]` · `who <udid>` · `release` · `list` | an iOS Simulator of the agent's own, and its UDID |

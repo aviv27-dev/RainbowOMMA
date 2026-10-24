@@ -1041,7 +1041,7 @@ check("mcp: initialize answers the client's protocol version; the notification g
       [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == "2025-06-18", got[:1])
 check("mcp: the tools — ports, processes, the agent's own browser",
       {"lease_port", "release_port", "who_port", "whose_process", "stop_process", "my_processes", "browser_status", "start_my_browser",
-       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval"} == set(names), names)
+       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval", "take_login", "ask_login_code", "release_login"} == set(names), names)
 lp = got[2]["result"]
 check("mcp lease_port: a port from Alpha's own range, as structured JSON", not lp["isError"] and 41000 <= lp["structuredContent"]["port"] <= 41099, lp)
 check("mcp who_port: 3000 is the human's", got[3]["result"]["structuredContent"]["owner"] == "human")
@@ -2049,6 +2049,34 @@ subprocess.run(["bash", str(HERE.parent / "uninstall.sh"), "--bin", str(lh / "bi
                env=dict(menv, HOME=str(lh), RAINBOW_HOME=str(lh / ".rainbowomma")))
 check("uninstall without a manifest (an older install) removes only files identical to RainbowOMMA's",
       sorted(x.name for x in (lh / "bin").iterdir()) == ["receipts"])
+
+# ── auth-owner: one agent at a time signs in to a site (optional: authSites) ──
+ah = tmp / "auth-home"; os.environ["RAINBOW_HOME"] = str(ah); aom = load("auth-owner.py")
+check("auth: a site from a URL or a host — scheme, port, path and www. dropped", aom.site_of("https://www.Accounts.Example.com:443/x?y") == "accounts.example.com"
+      and aom.covered("login.accounts.example.com", ["accounts.example.com"]) == "accounts.example.com" and not aom.covered("example.com", ["accounts.example.com"]))
+a1 = aom.cmd_lease("alpha", "accounts.example.com", 10, 0); b1 = aom.cmd_lease("bravo", "accounts.example.com", 10, 0)
+check("auth: Alpha signs in; Bravo is refused while Alpha holds the site, and told who", a1[0] == 0 and b1[0] == 2 and b1[1]["holder"] == "alpha", b1)
+aom.ASK = lambda agent, site, why: "123456"
+cb = aom.cmd_code("bravo", "accounts.example.com", ""); ca = aom.cmd_code("alpha", "accounts.example.com", "")
+check("auth: the human's code goes only to the agent holding the site", cb[0] == 2 and ca == (0, {"status": "given", "site": "accounts.example.com", "code": "123456"}))
+check("auth: the code itself never goes into the receipts", "123456" not in (ah / "logs" / "receipts.jsonl").read_text())
+aom.cmd_release("alpha", "accounts.example.com")
+check("auth: released, Bravo may sign in", aom.cmd_lease("bravo", "accounts.example.com", 10, 0)[0] == 0)
+check("auth: no endless lease", aom.cmd_lease("alpha", "x.example", float("inf"), 0)[0] == 2 and aom.cmd_lease("alpha", "x.example", 600, 0)[0] == 2)
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+areg2 = json.loads(REG.read_text()); areg2["authSites"] = ["accounts.example.com"]; AREG2 = tmp / "auth-reg.json"; AREG2.write_text(json.dumps(areg2))
+aenv = dict(genv, RAINBOW_HOME=str(ah), BROWSER_OWNER_REGISTRY=str(AREG2))
+nav = lambda agent, url: subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_name": "mcp__chrome-devtools__navigate_page",
+                                         "tool_input": {"url": url}}), capture_output=True, text=True, env=dict(aenv, RAINBOW_AGENT=agent))
+check("auth (guard): with authSites set, only the agent holding the site opens it — Bravo holds it, Alpha is refused, a site not listed is free",
+      nav("bravo", "https://accounts.example.com/signin").returncode == 0 and nav("alpha", "https://accounts.example.com/signin").returncode == 2
+      and "bravo is signing in" in nav("alpha", "https://accounts.example.com/").stderr and nav("alpha", "https://docs.example/").returncode == 0)
+check("auth (guard): without authSites it is off — nothing is refused for it",
+      subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_name": "mcp__chrome-devtools__navigate_page",
+                     "tool_input": {"url": "https://accounts.example.com/"}}), capture_output=True, text=True,
+                     env=dict(genv, RAINBOW_HOME=str(ah), RAINBOW_AGENT="alpha")).returncode == 0)
+check("auth (guard): an agent takes, releases and asks for codes only as itself", as_agent("auth-owner lease bravo accounts.example.com", "alpha") == 2
+      and as_agent("auth-owner code bravo accounts.example.com", "alpha") == 2 and as_agent("auth-owner lease alpha accounts.example.com", "alpha") == 0)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

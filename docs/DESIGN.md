@@ -267,6 +267,14 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
 - **Dry run first.** `tabSweep.mode` is `dry-run` unless set to `apply`; `--apply` acts once, by hand. An agent may sweep
   its own browser only (owner and guard).
 
+## 16. auth-owner — one agent at a time signs in (optional)
+- **Off by default.** Only sites under `"authSites"` in `browsers.json` count (a host or any subdomain of it).
+- **The lease.** `lease AGENT SITE` (≤ 60 min, default 10; `--wait` ≤ 600 s queues) in `$RAINBOW_HOME/state/auth.json`,
+  under a lock; the same agent renews; `release` gives it back. The guard refuses an agent's browser tools (and `open`,
+  a Chrome command line) on a listed site unless that agent holds it; an agent without a name is refused there.
+- **The code.** `code AGENT SITE` works only for the holder: a dialog asks the human for the one-time code, which goes
+  back in that agent's answer and never into a receipt or a log.
+
 ## 14. Wave D: simulators, clipboards, Linux
 - **Simulators.** `sim-owner` keeps one simulator per agent, named `rainbowomma-<agent>` (created with `simctl create`
   the first time, booted on lease). Ownership comes from the name, so nothing else needs storing. With `RAINBOW_AGENT`

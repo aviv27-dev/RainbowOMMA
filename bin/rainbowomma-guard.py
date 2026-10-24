@@ -78,11 +78,12 @@ TAKES_FIRST = {"timeout": 1, "gtimeout": 1, "flock": 1, "script": 1}       # wra
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "fish"}
 OWNER_TOOLS = {"browser-owner", "browser-owner.py", "office-owner", "agent-office", "agent-office.py", "proc-owner", "proc-owner.py",
                "port-owner", "port-owner.py", "sim-owner", "sim-owner.py", "screen-owner", "screen-owner.py", "rainbowomma-clip",
-               "rainbowomma-clip.py", "rainbowomma-approve", "rainbowomma-approve.py", "rainbowomma-pause", "rainbowomma-pause.py"}
+               "rainbowomma-clip.py", "rainbowomma-approve", "rainbowomma-approve.py", "rainbowomma-pause", "rainbowomma-pause.py",
+               "auth-owner", "auth-owner.py"}
 HUMAN_TOOLS = {"desk-browser.sh", "kill-chrome.sh", "human-chrome.sh"}
 # subcommands whose first argument is the agent acting: it must be the caller
 AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease", "release", "env"},
-             "sim-owner": {"lease", "release"}, "screen-owner": {"take", "release"}, "rainbowomma-clip": {"copy", "paste"},
+             "sim-owner": {"lease", "release"}, "auth-owner": {"lease", "release", "code"}, "screen-owner": {"take", "release"}, "rainbowomma-clip": {"copy", "paste"},
              "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config", "tabs"}}
 HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
 INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
@@ -90,7 +91,7 @@ INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killal
 RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
                          r"rainbow_human_idle_s|rainbow_human_present_s|rainbow_agent|rainbow_session)=")
 STATE_WORDS = re.compile(r"(\.rainbowomma|\$\{?rainbow_home\}?)/(state|logs)\b|proc-roots\.json|approvals\.json|approval-pending\.json|"
-                         r"paused\.json|screen\.json|ports\.json|browsers\.json|receipts\.jsonl")
+                         r"paused\.json|screen\.json|ports\.json|auth\.json|browsers\.json|receipts\.jsonl")
 WRITERS = {"rm", "mv", "cp", "ln", "tee", "sed", "perl", "truncate", "touch", "chmod", "chflags", "dd", "install", "rsync", "ruby",
            "node", "unlink", "rmdir", "mkdir", "ditto", "patch", "ed", "vi", "vim", "nano", "emacs", "shred", "srm", "trash",
            "plutil", "sqlite3"}
@@ -471,10 +472,37 @@ def human_present():
     return idle is not None and idle < float(os.environ.get("RAINBOW_HUMAN_PRESENT_S") or 120)
 
 
+def auth_verdict(hosts):
+    """authSites (optional): one agent at a time signs in — another agent's browser stays off the site until it is free"""
+    try:
+        sites = _port_owner().BO.auth_sites()
+        if not sites:
+            return None
+        ao = _load_beside("rainbow_auth_owner", "auth-owner.py")
+    except Exception:
+        return None
+    me = _me()
+    for h in hosts:
+        site = ao.covered(h, sites)
+        if not site:
+            continue
+        held = ao.holder(site)
+        if not me:
+            return f"{site} is signed in to by one agent at a time — this agent has no name (as-agent <name> …)"
+        if held != me:
+            return (f"{held} is signing in to {site} right now — wait, `auth-owner lease {me} {site} --wait 120`" if held else
+                    f"{site} is signed in to by one agent at a time — take it first: `auth-owner lease {me} {site}`, "
+                    f"and `auth-owner release {me} {site}` when you're done")
+    return None
+
+
 def _sensitive_verdict(urls):
     hosts = [m.group(1) for u in urls for m in [URL_HOST.match(u.strip())] if m]
     if not hosts:
         return None
+    why = auth_verdict(hosts)
+    if why:
+        return why
     try:
         sites = _port_owner().BO.sensitive_sites()
     except Exception:
