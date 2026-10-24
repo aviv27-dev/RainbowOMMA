@@ -13,16 +13,19 @@ exit codes are an API and change only in a major version.
 - `browser-owner tabs` measures each agent browser's GPU process too (`SystemInfo.getProcessInfo`, `gpu` in its answer):
   it can't be pinned to one tab, so it is reported, with one notification when it stays above `gpuPercent` (15%) for
   `hotMinutes`.
-
-### Fixed
-- proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
-  start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
-  `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
+- `auth-owner` (optional — `"authSites"` in `browsers.json` turns it on): one agent at a time signs in to a listed site
+  (`lease`, `release`, `who`, `list`; the guard keeps the others' browser tools off it), and `code` asks the human for the
+  one-time code and hands it to that agent only. MCP tools `take_login`, `ask_login_code`, `release_login`.
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it
   would replace (`$RAINBOW_HOME/backup/`). `uninstall.sh` removes only what it installed and you did not change since,
   then puts your files back; an older install without a manifest loses only files identical to RainbowOMMA's.
+
+### Fixed
+- proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
+  start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
+  `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
 
 ## [0.2.0] — 2026-10-24
 

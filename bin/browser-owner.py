@@ -109,6 +109,15 @@ def sensitive_sites(path=None):
     return [str(x).strip().lower().lstrip("*.") for x in got if str(x).strip()] if isinstance(got, list) else []
 
 
+def auth_sites(path=None):
+    """domains where one agent at a time signs in (auth-owner): "authSites" at the top of browsers.json — none, it's off"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("authSites")
+    except (OSError, ValueError):
+        got = None
+    return [str(x).strip().lower().lstrip("*.") for x in got if str(x).strip()] if isinstance(got, list) else []
+
+
 def registry(path=None):
     raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))["agents"]
     out, ports, profiles, states, ranges = {}, {}, {}, {}, {}
