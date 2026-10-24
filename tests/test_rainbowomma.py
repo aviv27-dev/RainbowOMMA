@@ -2103,6 +2103,19 @@ check("auth (guard): without authSites it is off — nothing is refused for it",
                      env=dict(genv, RAINBOW_HOME=str(ah), RAINBOW_AGENT="alpha")).returncode == 0)
 check("auth (guard): an agent takes, releases and asks for codes only as itself", as_agent("auth-owner lease bravo accounts.example.com", "alpha") == 2
       and as_agent("auth-owner code bravo accounts.example.com", "alpha") == 2 and as_agent("auth-owner lease alpha accounts.example.com", "alpha") == 0)
+iso = str(HERE.parent / "install" / "isolate-agent.sh")
+ienv = dict(os.environ, RAINBOW_ISOLATE_ANY_OS="1", RAINBOW_ISOLATE_SUDOERS=str(tmp / "sudoers"), RAINBOW_ISOLATE_SHARED=str(tmp / "shared"))
+ic = subprocess.run(["bash", iso, "create", "alpha"], capture_output=True, text=True, env=ienv)
+if os.geteuid() == 0:
+    check("isolate: never run with sudo (the rule is for you, not root)", ic.returncode == 2 and "not with sudo" in ic.stderr, ic.stderr)
+else:
+    check("isolate: a dry run by default — the user, the sudoers rule (checked by visudo), the shared folder, printed, nothing changed",
+          ic.returncode == 0 and "dry run" in ic.stdout and "sysadminctl -addUser rainbow-alpha" in ic.stdout and "visudo -cf" in ic.stdout
+          and "<random, not kept>" in ic.stdout and not (tmp / "sudoers").exists() and not (tmp / "shared").exists(), ic.stdout[-500:])
+bad_iso = [subprocess.run(["bash", iso, "create", n], capture_output=True, text=True, env=ienv).returncode for n in ("human", "../x", "Alpha", "")]
+check("isolate: only agent names — never human, a path or an empty name", bad_iso == [2, 2, 2, 2], bad_iso)
+ir = subprocess.run(["bash", iso, "remove", "alpha"], capture_output=True, text=True, env=ienv)
+check("isolate: remove is a dry run too, and keeps the agent's work folder", ir.returncode == 0 and "dry run" in ir.stdout and "kept:" in ir.stdout, ir.stdout)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
