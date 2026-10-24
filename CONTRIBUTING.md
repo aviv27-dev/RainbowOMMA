@@ -25,3 +25,12 @@ Open an issue with your macOS and Chrome versions, the command you ran, and the 
 
 A guardrail adapter goes in `adapters/<framework>/` with a short README, and gets a test that feeds it the blocked and
 allowed commands the existing adapters are tested with.
+
+## Releasing
+
+1. Move the `[Unreleased]` notes in `CHANGELOG.md` under `## [X.Y.Z] — date`, add its link at the bottom, and bump the
+   plugin versions in `adapters/` (openclaw, goose); merge that.
+2. Actions → **release** → Run workflow on `main` with the version. It tests, then tags and publishes the release
+   with that section as its notes.
+3. Homebrew: point `Formula/rainbowomma.rb` at the new tag and its checksum —
+   `curl -sL https://github.com/aviv27-dev/RainbowOMMA/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256` — and merge.
