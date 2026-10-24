@@ -60,15 +60,33 @@ fi
 command -v python3 >/dev/null 2>&1 || { echo "python3 is needed (macOS: xcode-select --install)" >&2; exit 1; }
 
 run() { if [ "$DRY" = 1 ]; then echo "would: $*"; else "$@"; fi; }
+sum() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
+MANIFEST="$ROOT/installed.txt"      # "<sha256>  <path>" for every file this installer put in place — uninstall.sh reads it
+BACKUPS="$ROOT/backups.txt"         # "<path>\t<backup>" for a file of yours it replaced — uninstall.sh puts it back
+BACKUP_DIR="$ROOT/backup/$(date +%Y%m%d-%H%M%S)"
+NEW_ENTRIES="$(mktemp)"; trap 'rm -f "$NEW_ENTRIES"' EXIT
+ours() { [ -f "$MANIFEST" ] && cut -d' ' -f3- "$MANIFEST" | grep -qxF "$1"; }     # a path this installer wrote before
+place() {   # place SRC DEST — a file of yours already at DEST (not one this installer put there) is saved first
+  local src="$1" dest="$2"
+  if [ "$DRY" = 1 ]; then echo "would: cp -p $src $dest"; return; fi
+  if [ -e "$dest" ] && ! cmp -s "$src" "$dest" && ! ours "$dest"; then
+    mkdir -p "$BACKUP_DIR" && cp -p "$dest" "$BACKUP_DIR/$(basename "$dest")"
+    printf '%s\t%s\n' "$dest" "$BACKUP_DIR/$(basename "$dest")" >> "$BACKUPS"
+    echo "   your own $(basename "$dest") was there — saved in $BACKUP_DIR (uninstall.sh puts it back)"
+  fi
+  cp -p "$src" "$dest"
+  printf '%s  %s\n' "$(sum "$dest")" "$dest" >> "$NEW_ENTRIES"
+}
 
 echo "→ tools into $BIN"
 run mkdir -p "$BIN"
+[ "$DRY" = 1 ] || mkdir -p "$ROOT"
 for f in "$HERE"/bin/*; do
   name="$(basename "$f")"
   case "$name" in
     browsers.json|__pycache__) continue ;;
   esac
-  run cp -p "$f" "$BIN/$name"
+  place "$f" "$BIN/$name"
 done
 
 if [ -e "$BIN/browsers.json" ]; then
@@ -140,6 +158,7 @@ if [ "$MENUBAR" = 1 ]; then
     printf '#!/bin/bash\n# <swiftbar.title>RainbowOMMA</swiftbar.title>\n# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>\nexec %q\n' \
       "$BIN/rainbowomma-menubar" > "$PLUGINS/rainbowomma.10s.sh"
     chmod +x "$PLUGINS/rainbowomma.10s.sh"
+    printf '%s  %s\n' "$(sum "$PLUGINS/rainbowomma.10s.sh")" "$PLUGINS/rainbowomma.10s.sh" >> "$NEW_ENTRIES"
     if [ "$PLUGINS" = "$ROOT/swiftbar" ]; then
       echo "   install SwiftBar (brew install --cask swiftbar) and choose $PLUGINS as its plugin folder"
     fi
@@ -163,6 +182,11 @@ for A in $ADAPTERS; do
   done
 done
 set +f
+
+if [ "$DRY" != 1 ]; then          # the manifest: what is in it now, newest first for a path written again
+  { [ -f "$MANIFEST" ] && cat "$MANIFEST"; cat "$NEW_ENTRIES"; } | awk '{ path = substr($0, index($0, "  ") + 2); last[path] = $0; order[path] = NR }
+    END { for (p in last) print order[p] "\t" last[p] }' | sort -n | cut -f2- > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
+fi
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "note: $BIN is not on your PATH — call the tools by their full path, or add it." ;; esac
 cat <<EOF
