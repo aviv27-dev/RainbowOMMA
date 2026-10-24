@@ -5,6 +5,12 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+### Added
+- Tab housekeeping: `browser-owner tabs` measures the CPU of every tab in the agents' own browsers (through their CDP
+  ports) and, for a stale tab hot for 30 minutes, reloads it, then closes it if it stays hot — never the last tab, one
+  an agent drives, an excluded or `managedBy` browser, or the human's Chrome; nothing is killed. A dry run until
+  `tabSweep.mode` is `apply`. `install.sh --with-tab-sweep`: every 15 minutes, a daily summary, a notification per close.
+
 ### Security
 - A security review of the whole code (guard, owners, installer, CI) and its fixes. The guard now refuses: `kill -1`,
   `kill 0` and process groups; `xargs kill`; kill from inline code; commands hidden in heredocs, `| sh`, `<<<`,

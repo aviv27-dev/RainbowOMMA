@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
+import rainbow_tabs  # noqa: E402
 from rainbow_i18n import direction, t  # noqa: E402
 
 HOME = Path.home()
@@ -630,75 +631,91 @@ def set_front(pid):
         return False
 
 
-def _cdp_browser_calls(port, calls, timeout=5.0):
+class Cdp:
     """a tiny standard-library WebSocket client for the browser's own CDP endpoint (browser-owner runs on whatever python3 is
-    there, with -I — no websocket package). calls = [(method, params)] → their results, in order. Raises on any failure."""
-    import base64
-    import socket
-    import struct
-    with LOCAL.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
-        url = json.loads(r.read())["webSocketDebuggerUrl"]
-    path = "/" + url.split("/", 3)[3]
-    sk = socket.create_connection(("127.0.0.1", port), timeout=timeout)
-    try:
-        key = base64.b64encode(os.urandom(16)).decode()
-        sk.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                    f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
-        buf = b""
-        while b"\r\n\r\n" not in buf:
-            chunk = sk.recv(4096)
+    there, with -I — no websocket package). One connection: flattened sessions (Target.attachToTarget) live as long as it."""
+    def __init__(self, port, timeout=5.0):
+        import base64
+        import socket
+        with LOCAL.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
+            url = json.loads(r.read())["webSocketDebuggerUrl"]
+        path = "/" + url.split("/", 3)[3]
+        self.sk, self.rest, self.ids = socket.create_connection(("127.0.0.1", port), timeout=timeout), b"", 0
+        try:
+            key = base64.b64encode(os.urandom(16)).decode()
+            self.sk.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                             f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = self.sk.recv(4096)
+                if not chunk or len(buf) > 65536:
+                    raise OSError("cdp: handshake closed")
+                buf += chunk
+            if b" 101 " not in buf.split(b"\r\n", 1)[0]:
+                raise OSError("cdp: handshake refused")
+            self.rest = buf.split(b"\r\n\r\n", 1)[1]
+        except BaseException:
+            self.sk.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.sk.close()
+
+    def _recv_exact(self, n):
+        while len(self.rest) < n:
+            chunk = self.sk.recv(65536)
             if not chunk:
-                raise OSError("cdp: handshake closed")
-            buf += chunk
-        if b" 101 " not in buf.split(b"\r\n", 1)[0]:
-            raise OSError("cdp: handshake refused")
-        rest = buf.split(b"\r\n\r\n", 1)[1]
-
-        def recv_exact(n):
-            nonlocal rest
-            while len(rest) < n:
-                chunk = sk.recv(65536)
-                if not chunk:
-                    raise OSError("cdp: closed")
-                rest += chunk
-            out, rest = rest[:n], rest[n:]
-            return out
-
-        def send(obj):
-            data = json.dumps(obj).encode()
-            n = len(data)
-            hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else
-                                   bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
-            mask = os.urandom(4)
-            sk.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
-
-        def recv_msg():
-            while True:
-                b1, b2 = recv_exact(2)
-                n = b2 & 0x7F
-                if n == 126:
-                    n = struct.unpack(">H", recv_exact(2))[0]
-                elif n == 127:
-                    n = struct.unpack(">Q", recv_exact(8))[0]
-                if n > 32 * 1024 * 1024:
-                    raise OSError("cdp: a message larger than 32 MB")          # a squatter on the port can't make us read forever
-                payload = recv_exact(n)
-                if b1 & 0x0F == 1:
-                    return json.loads(payload.decode("utf-8"))
-
-        out = []
-        for i, (method, params) in enumerate(calls, 1):
-            send({"id": i, "method": method, "params": params or {}})
-            while True:
-                m = recv_msg()
-                if m.get("id") == i:
-                    if "error" in m:
-                        raise OSError(f"cdp {method}: {m['error'].get('message')}")
-                    out.append(m.get("result") or {})
-                    break
+                raise OSError("cdp: closed")
+            self.rest += chunk
+        out, self.rest = self.rest[:n], self.rest[n:]
         return out
-    finally:
-        sk.close()
+
+    def _send(self, obj):
+        import struct
+        data = json.dumps(obj).encode()
+        n = len(data)
+        hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else
+                               bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+        mask = os.urandom(4)
+        self.sk.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    def _recv_msg(self):
+        import struct
+        while True:
+            b1, b2 = self._recv_exact(2)
+            n = b2 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", self._recv_exact(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", self._recv_exact(8))[0]
+            if n > 32 * 1024 * 1024:
+                raise OSError("cdp: a message larger than 32 MB")          # a squatter on the port can't make us read forever
+            payload = self._recv_exact(n)
+            if b1 & 0x0F == 1:
+                return json.loads(payload.decode("utf-8"))
+
+    def call(self, method, params=None, session=None):
+        """one CDP command (in a flattened session when given) → its result; events in between are skipped. Raises on an error"""
+        self.ids += 1
+        msg = {"id": self.ids, "method": method, "params": params or {}}
+        if session:
+            msg["sessionId"] = session
+        self._send(msg)
+        while True:
+            m = self._recv_msg()
+            if m.get("id") == self.ids:
+                if "error" in m:
+                    raise OSError(f"cdp {method}: {m['error'].get('message')}")
+                return m.get("result") or {}
+
+
+def _cdp_browser_calls(port, calls, timeout=5.0):
+    """calls = [(method, params)] on one connection → their results, in order. Raises on any failure."""
+    with Cdp(port, timeout) as c:
+        return [c.call(method, params) for method, params in calls]
 
 
 def restore_windows(a):
@@ -1013,14 +1030,73 @@ def mcp_config(a, tool="devtools", fmt="json"):
     return {"status": "ok", "name": name, "mcpServers": {name: server}}
 
 
+def tabs(reg, only=None, apply=None, scheduled=False):
+    """tab housekeeping across the agents' own browsers (rainbow_tabs): a tab hot for long and stale is reloaded, then closed.
+    apply=None → the registry's tabSweep.mode (dry-run unless it says apply)"""
+    try:
+        raw = json.loads(Path(REGISTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    cfg = rainbow_tabs.config(raw)
+    apply = cfg["mode"] == "apply" if apply is None else apply
+    results = []
+    for name, a in reg.items():
+        if only and name != only:
+            continue
+        if a.get("managedBy") or a.get("tabSweep") is False or name in cfg["exclude"]:
+            results.append({"agent": name, "status": "excluded", "tabs": []})
+            continue
+        try:
+            lk = open_lock(a["lock"])
+        except OSError:
+            results.append({"agent": name, "status": "busy", "tabs": []})
+            continue
+        with lk:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                results.append({"agent": name, "status": "busy", "tabs": []})     # starting or stopping right now
+                continue
+            try:
+                r = rainbow_tabs.sweep_agent(a, cfg, apply, view, SHARED, Cdp)
+            except Exception as exc:
+                r = {"agent": name, "status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200], "tabs": []}
+        for tab in r["tabs"]:
+            if not tab.get("action"):
+                continue
+            what = f"tab {tab['action']}{'' if tab.get('done') else ' (dry run)' if tab['action'] in ('reload', 'close') else ''}: " \
+                   f"{rainbow_tabs.host(tab['url'])} at {tab['cpu']}% for {tab['hotForMinutes']} min, seen {tab['seenForHours']} h"
+            log(a, what)
+            if tab.get("done"):
+                rainbow_receipts.write("browser-owner", f"tab-{tab['action']}", name, "tab-sweep", "done",
+                                       site=rainbow_tabs.host(tab["url"]), cpu=tab["cpu"], minutes=tab["hotForMinutes"])
+                if tab["action"] == "close":
+                    notify("RainbowOMMA", f"{a['label']}: closed a tab that kept a CPU core busy — {rainbow_tabs.host(tab['url'])} "
+                                          f"({tab['cpu']}% for {tab['hotForMinutes']} min, after a reload)")
+        results.append(r)
+    counts = rainbow_tabs.summarize(results, cfg["cpuPercent"])
+    out = {"status": "swept", "mode": "apply" if apply else "dry-run", "counts": counts, "agents": results}
+    if scheduled:
+        prev = rainbow_tabs.daily(SHARED, counts)
+        if prev and any(prev[k] for k in ("reloaded", "closed", "wouldReload", "wouldClose")):
+            line = (f"tabs on {prev['day']}: {prev['reloaded']} reloaded, {prev['closed']} closed"
+                    + (f" · dry run: would reload {prev['wouldReload']}, close {prev['wouldClose']}" if prev["wouldReload"] or prev["wouldClose"] else ""))
+            notify("RainbowOMMA", line)
+            out["daily"] = prev
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme"])
+    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
+                                    "tabs"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
     ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
     ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
     ap.add_argument("--format", choices=["json", "claude"], default="json", help="mcp-config: an mcpServers entry, or a claude mcp add-json line")
+    ap.add_argument("--apply", action="store_true", help="tabs: act now (reload / close), whatever tabSweep.mode says")
+    ap.add_argument("--scheduled", action="store_true", help="tabs: the launchd run — tabSweep.mode decides, one summary a day")
     a = ap.parse_args(argv)
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if me and a.by.strip().lower() not in (me, "agent", "keepalive"):        # an agent acts as itself — never as the human or a peer
@@ -1041,6 +1117,20 @@ def main(argv=None):
                         title=t("bo.human_title"))
         print(json.dumps({"status": "built", "folder": str(d)}, ensure_ascii=False))
         return 0
+    if a.cmd == "tabs":
+        only = (a.agent or "").strip().lower() or None
+        if me and only != me:                                     # an agent sweeps its own browser only
+            print(json.dumps({"status": "refused", "why": f"you are {me}: `browser-owner tabs {me}` sweeps your own tabs only"}))
+            return 2
+        if only and only not in reg:
+            print(json.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(only), names=", ".join(reg))}, ensure_ascii=False))
+            return 1
+        try:
+            print(json.dumps(tabs(reg, only, True if a.apply else None, a.scheduled), ensure_ascii=False))
+            return 0
+        except Exception as exc:   # one JSON answer, always
+            print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
     if a.cmd == "heal":
         try:
             res = heal(reg)

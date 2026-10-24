@@ -17,6 +17,7 @@
 | `bin/browser-owner(.py)` | the owner. `list · names · status · start · stop [--allow-reopen] · idle-stop · recover · front · human-theme`, `--by WHO` |
 | `browsers.json` (beside the tools; `install.sh` creates it from `examples/browsers.example.json`) | the registry: one row per agent — `port` (9222–9299, unique), `profile` (unique real path, no spaces, never a personal Chrome dir), `color`, `label`; optional `launcher`, `managedBy`, `idleMinutes`, `noTheme`, `ports` (`"41000-41099"`), `chrome` (`stable` · `beta` · `dev` · `canary` · `cft` · a path to a Chrome `.app`); top-level `humanPorts` |
 | `bin/port-owner(.py)` | every agent's ports: a range per agent (`ports` in the registry, default 41000 + 100 × (CDP port − 9222)), leases inside it, `humanPorts` never leased: `lease · env · who · release · list` — §8 |
+| `bin/rainbow_tabs.py` | tab housekeeping for `browser-owner tabs`: per-tab CPU through CDP, the reload-then-close rule — §15 |
 | `bin/proc-owner(.py)` | whose a process is (a mark the agent wrote — its registered root or a process seen under it —, `RAINBOW_AGENT` where the OS shows environments, or the agent's Chrome tree; else not provably any agent's): `whose · kill --by · list · reap · register` — §9 |
 | `bin/as-agent`, `bin/rainbowomma-session-end` | run any agent as a named agent (`RAINBOW_AGENT` + `RAINBOW_SESSION`, reap on exit) · the session-end hook adapters run — §9 |
 | `bin/rainbowomma-mcp(.py)` | the owners as MCP tools for any MCP agent (stdio, standard library only) — §10 |
@@ -248,6 +249,22 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   unless that exact command (its shell words) was approved: `rainbowomma-approve ask` shows the human a dialog with
   the command, "Allow once" stores its hash for 5 minutes, and the guard consumes it. While the dialog is up
   (`approval-pending.json`), no agent may click or type, so it can't press "Allow" itself.
+
+## 15. Tab housekeeping (`browser-owner tabs`, `bin/rainbow_tabs.py`)
+- **Measure.** One CDP connection per agent browser, on its own port only (the browser must be `up`: its listener is its
+  own tree). Every page tab is attached in a flattened session; `Performance.getMetrics` twice, `sampleSeconds` apart:
+  ΔTaskDuration / ΔTimestamp is the share of one core its renderer's main thread spent. GPU-process time isn't
+  attributed per tab, but a reload or close takes it with the tab.
+- **The rule** (`plan()`, no I/O): hot = ≥ `cpuPercent`. A tab hot in every run for `hotMinutes` and stale (seen for
+  `minAgeHours`, or on the same URL for `idleMinutes`) is reloaded (`Page.reload`); still hot `hotMinutes` after that,
+  it is closed (`Target.closeTarget`). A navigation starts its clock over; cooling down for `hotMinutes` re-arms the
+  reload. Never: the browser's last tab, a tab another client is attached to (an agent driving it), an agent with
+  `"tabSweep": false`, in `tabSweep.exclude` or `managedBy`. No process is signalled.
+- **State and reports.** `$RAINBOW_HOME/state/tabs-AGENT.json` (first seen, URL since, hot since, reloaded), the
+  agent's lock while it runs; each action a log line, each done one a receipt (the site's host only); a notification
+  for every close; with `--scheduled` (the launchd job), the day's totals, and one summary notification the next day.
+- **Dry run first.** `tabSweep.mode` is `dry-run` unless set to `apply`; `--apply` acts once, by hand. An agent may sweep
+  its own browser only (owner and guard).
 
 ## 14. Wave D: simulators, clipboards, Linux
 - **Simulators.** `sim-owner` keeps one simulator per agent, named `rainbowomma-<agent>` (created with `simctl create`

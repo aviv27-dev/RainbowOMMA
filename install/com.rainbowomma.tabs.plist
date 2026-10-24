@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.rainbowomma.tabs</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>~/bin/browser-owner</string>
+    <string>tabs</string>
+    <string>--scheduled</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>LANG</key><string>en_US.UTF-8</string><key>LC_ALL</key><string>en_US.UTF-8</string></dict>
+  <key>StartInterval</key><integer>900</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>~/.rainbowomma/logs/tabs.out.log</string>
+  <key>StandardErrorPath</key><string>~/.rainbowomma/logs/tabs.err.log</string>
+</dict>
+</plist>

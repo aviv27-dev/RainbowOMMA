@@ -31,7 +31,7 @@ AGENTS_DIR="${RAINBOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"
 
 run() { if [ "$DRY" = 1 ]; then echo "would: $*"; else "$@"; fi; }
 
-for label in com.rainbowomma.agent-office-sweep com.rainbowomma.heal; do
+for label in com.rainbowomma.agent-office-sweep com.rainbowomma.heal com.rainbowomma.tabs; do
   plist="$AGENTS_DIR/$label.plist"
   [ -e "$plist" ] || continue
   echo "→ job $label"
