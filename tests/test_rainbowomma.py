@@ -1862,6 +1862,27 @@ other_cursor = [f.name for f in (rx / "logs").iterdir() if f.name.startswith("re
 os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
 check("security: receipts are readable by you only (0700 / 0600), and an export to another URL never moves your collector's cursor",
       mode_ok and "receipts.otlp-cursor" not in other_cursor, (mode_ok, other_cursor))
+os.environ["RAINBOW_HOME"] = str(tmp / "start-home"); spc = load("proc-owner.py"); os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+spc.PO.REGISTRY = REG; spc.MARKERS = lambda: {}
+srows = [(1, 0, "launchd"), (300, 1, "node server.js")]
+spc.STARTS = lambda: {300: "Sat Oct 24 09:00:00 2026"}
+spc.register("alpha", 300, srows)
+same_ = spc.known_marks(srows)
+spc.STARTS = lambda: {300: "Sat Oct 24 11:30:00 2026"}            # the pid came back for another node server.js
+reused_ = spc.known_marks(srows)
+check("proc-owner: a pid that came back with the same command line but a later start is never the agent's",
+      same_ == {300: "alpha"} and reused_ == {})
+spc.STARTS = lambda: {}
+check("…and where start times can't be read, the command line alone decides (as before)", spc.known_marks(srows) == {300: "alpha"})
+spc.PROCESSES = lambda: [(400, 1, "/usr/bin/vim notes RAINBOW_AGENT=bravo")]
+_sub = spc.subprocess.run
+spc.subprocess.run = lambda *a, **k: type("R", (), {"stdout": "400 /usr/bin/vim notes RAINBOW_AGENT=bravo HOME=/Users/x\n"})()
+_pd = spc.Path
+spc.Path = lambda p: _pd("/nonexistent-proc") if p == "/proc" else _pd(p)
+env_marks = spc._env_tags()[0]
+spc.subprocess.run, spc.Path = _sub, _pd
+check("proc-owner (macOS ps -E): RAINBOW_AGENT=… written in a command's own arguments is not a mark — only its environment",
+      env_marks == {}, env_marks)
 
 # ── tab housekeeping: a tab that keeps a core busy long after anyone used it is reloaded, then closed ──
 import rainbow_tabs as rt
