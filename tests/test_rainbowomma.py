@@ -492,7 +492,6 @@ code, out = ao.cmd_pdf("bravo", str(src), out=str(tmp / "agent" / "x.docx"))
 check("pdf --out must end in .pdf", code == 1 and not calls, out)
 ao.RUN = osa
 
-
 # ── English + Hebrew: the message catalog, the frame's side, one configurable root ──
 import subprocess
 sys.path.insert(0, str(HERE))
@@ -756,7 +755,6 @@ with contextlib.redirect_stdout(buf):
     rc = bo.main(["list"])
 bo.REGISTRY = _reg
 check("no browsers.json → one JSON answer that says how to create it", rc == 1 and "install.sh" in json.loads(buf.getvalue())["why"], buf.getvalue())
-
 
 # ── the second review's findings stay fixed ──
 # 1–3: the guard reads the shell line (words, pipes, $( ), sh -c), not the raw text
@@ -1705,7 +1703,7 @@ try:
         f"kill {vp}\\ ": "not yours", f"echo {vp} | xargs kill": "xargs", f"xargs kill <<< {vp}": "xargs",
         "timeout 5 pkill chrome": "pkill", "env -S 'pkill -f chrome'": "pkill", "setsid pkill chrome": "pkill",
         "stdbuf -o0 killall Chrome": "killall", "flock /tmp/l pkill chrome": "pkill", "script -q /dev/null pkill chrome": "pkill",
-        "find . -name x -exec pkill chrome \;": "pkill", "sh -c -- 'pkill x'": "pkill",
+        "find . -name x -exec pkill chrome \\;": "pkill", "sh -c -- 'pkill x'": "pkill",
         "bash <<EOF\npkill chrome\nEOF": "pkill", "echo pkill chrome | sh": "pkill", "bash <<< 'pkill chrome'": "pkill",
         "echo '<<EOF'\npkill chrome": "pkill", f"python3 -c 'import os; os.kill({vp}, 9)'": "inline",
         "as-agent bravo pkill chrome": "as bravo", f"as-agent bravo proc-owner kill {vp} --by bravo": "as bravo",
@@ -2031,6 +2029,26 @@ r_bad = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--bin", str(ic
 check("install --agent-chrome canary: every agent of a new registry runs as Chrome Canary (and the registry still loads); a made-up channel is refused",
       set(chans.values()) == {"canary"} and all(a["chrome_app"].endswith("Canary.app") for a in bo.registry(ich / "bin" / "browsers.json").values())
       and r_bad.returncode == 2, (r_ch.stdout[-300:], r_ch.stderr[-300:]))
+
+mh = tmp / "manifest-home"; (mh / "bin").mkdir(parents=True); (mh / "bin" / "receipts").write_text("my own receipts tool\n")
+menv = dict(os.environ, HOME=str(mh), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(mh / ".rainbowomma"))
+inst = lambda *a: subprocess.run(["bash", str(HERE.parent / a[0]), "--bin", str(mh / "bin"), *a[1:]], capture_output=True, text=True, env=menv)
+r1 = inst("install.sh"); saved_once = "saved in" in r1.stdout
+r2 = inst("install.sh")
+(mh / "bin" / "port-owner").write_text((mh / "bin" / "port-owner").read_text() + "# my change\n")
+r3 = inst("uninstall.sh")
+left_ = sorted(x.name for x in (mh / "bin").iterdir())
+check("install keeps a file of yours it replaces, and uninstall removes only what it put there unchanged — then puts yours back",
+      saved_once and "saved in" not in r2.stdout and left_ == ["browsers.json", "port-owner", "receipts"]
+      and (mh / "bin" / "receipts").read_text() == "my own receipts tool\n", (left_, r3.stdout[-400:]))
+lh = tmp / "legacy-home"; (lh / "bin").mkdir(parents=True)
+for f in ("browser-owner", "receipts"):
+    (lh / "bin" / f).write_bytes((HERE / f).read_bytes())
+(lh / "bin" / "receipts").write_text("another version\n")
+subprocess.run(["bash", str(HERE.parent / "uninstall.sh"), "--bin", str(lh / "bin")], capture_output=True, text=True,
+               env=dict(menv, HOME=str(lh), RAINBOW_HOME=str(lh / ".rainbowomma")))
+check("uninstall without a manifest (an older install) removes only files identical to RainbowOMMA's",
+      sorted(x.name for x in (lh / "bin").iterdir()) == ["receipts"])
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

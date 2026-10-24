@@ -19,6 +19,11 @@ exit codes are an API and change only in a major version.
   start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
   `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
 
+### Changed
+- `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it
+  would replace (`$RAINBOW_HOME/backup/`). `uninstall.sh` removes only what it installed and you did not change since,
+  then puts your files back; an older install without a manifest loses only files identical to RainbowOMMA's.
+
 ## [0.2.0] — 2026-10-24
 
 ### Added
