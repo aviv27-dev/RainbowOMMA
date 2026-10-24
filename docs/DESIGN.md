@@ -253,8 +253,9 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
 ## 15. Tab housekeeping (`browser-owner tabs`, `bin/rainbow_tabs.py`)
 - **Measure.** One CDP connection per agent browser, on its own port only (the browser must be `up`: its listener is its
   own tree). Every page tab is attached in a flattened session; `Performance.getMetrics` twice, `sampleSeconds` apart:
-  ΔTaskDuration / ΔTimestamp is the share of one core its renderer's main thread spent. GPU-process time isn't
-  attributed per tab, but a reload or close takes it with the tab.
+  ΔTaskDuration / ΔTimestamp is the share of one core its renderer's main thread spent. The GPU process
+  (`SystemInfo.getProcessInfo`, its cpuTime over the same window) can't be pinned to a tab: it is reported per browser,
+  with one notification per hot spell (≥ `gpuPercent` for `hotMinutes`); a reload or close takes its load with the tab.
 - **The rule** (`plan()`, no I/O): hot = ≥ `cpuPercent`. A tab hot in every run for `hotMinutes` and stale (seen for
   `minAgeHours`, or on the same URL for `idleMinutes`) is reloaded (`Page.reload`); still hot `hotMinutes` after that,
   it is closed (`Target.closeTarget`). A navigation starts its clock over; cooling down for `hotMinutes` re-arms the
