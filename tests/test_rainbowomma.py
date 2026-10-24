@@ -2022,6 +2022,15 @@ formula = (HERE.parent / "Formula" / "rainbowomma.rb").read_text()
 latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", (HERE.parent / "CHANGELOG.md").read_text(), re.M).group(1)
 check("Homebrew: the formula points at the latest release in CHANGELOG.md, with a checksum",
       f"/v{latest}.tar.gz" in formula and re.search(r'sha256 "[0-9a-f]{64}"', formula), latest)
+ich = tmp / "chan-home"; ich.mkdir()
+r_ch = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--bin", str(ich / "bin"), "--agent-chrome", "canary"], capture_output=True,
+                      text=True, env=dict(os.environ, HOME=str(ich), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(ich / ".rainbowomma")))
+chans = {k: v.get("chrome") for k, v in json.loads((ich / "bin" / "browsers.json").read_text())["agents"].items()} if r_ch.returncode == 0 else {}
+r_bad = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--bin", str(ich / "bin"), "--agent-chrome", "nightly"], capture_output=True,
+                       text=True, env=dict(os.environ, HOME=str(ich), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(ich / ".rainbowomma")))
+check("install --agent-chrome canary: every agent of a new registry runs as Chrome Canary (and the registry still loads); a made-up channel is refused",
+      set(chans.values()) == {"canary"} and all(a["chrome_app"].endswith("Canary.app") for a in bo.registry(ich / "bin" / "browsers.json").values())
+      and r_bad.returncode == 2, (r_ch.stdout[-300:], r_ch.stderr[-300:]))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

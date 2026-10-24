@@ -6,6 +6,8 @@ exit codes are an API and change only in a major version.
 ## [Unreleased]
 
 ### Added
+- `install.sh --agent-chrome beta|dev|canary|cft`: a new `browsers.json` gives every agent a Chrome of its own (the
+  human's ⌘Q, ⌘-Tab and updates never reach it); the installer says when that Chrome isn't installed yet.
 - Homebrew: the repository is its own tap (`brew tap aviv27-dev/rainbowomma https://github.com/aviv27-dev/RainbowOMMA`,
   `brew install rainbowomma`); `rainbowomma-install` and `rainbowomma-uninstall` run the same installer into your folder.
 - `browser-owner tabs` measures each agent browser's GPU process too (`SystemInfo.getProcessInfo`, `gpu` in its answer):

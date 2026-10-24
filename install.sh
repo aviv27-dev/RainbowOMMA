@@ -2,9 +2,11 @@
 # RainbowOMMA installer — copies the tools into one folder, creates the registry from the example (never overwrites yours),
 # creates the state folders, and optionally loads the launchd sweep for office-owner with absolute paths.
 #
-#   ./install.sh [--bin DIR] [--with-sweep] [--with-heal] [--with-tab-sweep] [--with-menubar] [--adapter AGENT …] [--dry-run]
+#   ./install.sh [--bin DIR] [--agent-chrome CHANNEL] [--with-sweep] [--with-heal] [--with-tab-sweep] [--with-menubar] [--adapter AGENT …] [--dry-run]
 #
 #   --bin DIR      where the tools go (default: ~/bin). They look for each other in the same folder.
+#   --agent-chrome C  the agents' browsers run as a Chrome of their own: beta, dev, canary or cft (Chrome for Testing) —
+#                  the human's ⌘Q, ⌘-Tab and Chrome updates then never reach them (a new browsers.json only)
 #   --with-sweep   install + load the launchd job that sweeps stale document leases every 15 minutes
 #   --with-heal    install + load the launchd job that puts back agent colors Chrome Sync took (every 30 min, at login)
 #   --with-tab-sweep  the job that finds agent tabs burning CPU for long (every 15 min) — a dry run until browsers.json
@@ -20,6 +22,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="$HOME/bin"
 SWEEP=0
 HEAL=0
+CHANNEL=""
 TABS=0
 MENUBAR=0
 ADAPTERS=""
@@ -29,16 +32,18 @@ while [ $# -gt 0 ]; do
     --bin) BIN="${2:?--bin needs a folder}"; shift 2 ;;
     --with-sweep) SWEEP=1; shift ;;
     --with-heal) HEAL=1; shift ;;
+    --agent-chrome) CHANNEL="${2:?--agent-chrome needs beta, dev, canary or cft}"; shift 2 ;;
     --with-tab-sweep) TABS=1; shift ;;
     --with-menubar) MENUBAR=1; shift ;;
     --adapter) ADAPTERS="$ADAPTERS ${2:?--adapter needs an agent framework, e.g. claude-code}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
 case "$BIN" in /*) ;; *) BIN="$(pwd)/$BIN" ;; esac
 [ -z "$ADAPTERS" ] || case "$BIN$HOME" in *[\\\"\|\&]*|*$'\n'*) echo "a folder with \\, \", |, & or a newline in its name can't go into the adapters' settings: $BIN" >&2; exit 2 ;; esac
+case "$CHANNEL" in ""|beta|dev|canary|cft) ;; *) echo "--agent-chrome is beta, dev, canary or cft, not $CHANNEL" >&2; exit 2 ;; esac
 set -f
 for A in $ADAPTERS; do
   case "$A" in ''|*[!a-z0-9-]*) echo "not an adapter name: $A (letters, digits and - only)" >&2; exit 2 ;; esac
@@ -68,9 +73,30 @@ done
 
 if [ -e "$BIN/browsers.json" ]; then
   echo "→ $BIN/browsers.json exists — kept as it is"
+  [ -z "$CHANNEL" ] || echo "   --agent-chrome: add \"chrome\": \"$CHANNEL\" to each agent in it yourself (an existing registry is never rewritten)"
 else
   echo "→ $BIN/browsers.json created from the example — edit it: one row per agent"
   run cp "$HERE/examples/browsers.example.json" "$BIN/browsers.json"
+  if [ -n "$CHANNEL" ] && [ "$DRY" != 1 ]; then
+    python3 -I - "$BIN/browsers.json" "$CHANNEL" <<'PY'
+import json, sys
+path, channel = sys.argv[1:]
+d = json.load(open(path, encoding="utf-8"))
+for row in d["agents"].values():
+    row["chrome"] = channel
+open(path, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=1) + "\n")
+PY
+    echo "   every agent's browser runs as Chrome $CHANNEL"
+  fi
+fi
+if [ -n "$CHANNEL" ]; then
+  case "$CHANNEL" in beta) APP="Google Chrome Beta" ;; dev) APP="Google Chrome Dev" ;; canary) APP="Google Chrome Canary" ;;
+    cft) APP="Google Chrome for Testing" ;; esac
+  if [ ! -d "/Applications/$APP.app" ]; then
+    if [ "$CHANNEL" = cft ]; then HOW="npx @puppeteer/browsers install chrome@stable, then move it to /Applications"
+    else HOW="google.com/chrome, or: brew install --cask google-chrome@$CHANNEL"; fi
+    echo "   note: /Applications/$APP.app isn't installed yet — $HOW"
+  fi
 fi
 
 echo "→ state in $ROOT"
