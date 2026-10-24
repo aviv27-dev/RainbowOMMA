@@ -54,6 +54,7 @@ MARKERS = None                              # tests replace it: () -> {pid: agen
 SESSIONS = None                             # tests replace it: () -> {pid: session id}
 KILL = None                                 # tests replace it: (pid, sig) -> None
 ALIVE = None                                # tests replace it: (pid) -> bool
+STARTS = None                               # tests replace it: () -> {pid: start time text}
 
 
 def processes():
@@ -79,12 +80,17 @@ def _env_tags():
         return agents, sessions
     try:                                    # macOS: ps -E appends the environment to the command
         out = subprocess.run(["ps", "-axEww", "-o", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
+        plain = {pid: c for pid, _, c in processes()}
     except Exception:
         return agents, sessions
     for line in out.splitlines():
         pid, _, rest = line.strip().partition(" ")
         if not pid.isdigit():
             continue
+        cmd = plain.get(int(pid))
+        if cmd is None or not rest.startswith(cmd):
+            continue                        # can't tell the command from its environment: no mark
+        rest = rest[len(cmd):]              # only the environment — never words in the command line itself
         m, s = MARK.search(rest), SESSION.search(rest)
         if m:
             agents[int(pid)] = m.group(1)
@@ -140,10 +146,34 @@ def roots_locked():
         os.close(fd)
 
 
-def known_marks(rows, roots=None):
-    """{pid: agent} for every recorded root or descendant that is still the same process (pid and command line)"""
+def start_times():
+    """{pid: when it started} — with the command line, what makes a recorded pid the same process (a reused pid isn't)"""
+    if STARTS:
+        return STARTS()
+    try:
+        out = subprocess.run(["ps", "-A", "-o", "pid=,lstart="], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return {}
+    got = {}
+    for line in out.splitlines():
+        pid, _, when = line.strip().partition(" ")
+        if pid.isdigit():
+            got[int(pid)] = " ".join(when.split())
+    return got
+
+
+def same_process(pid, rec, cmd, starts):
+    """the recorded process is still this one: the same command line and, when both are known, the same start time"""
+    if cmd.get(pid) != rec.get("cmd"):
+        return False
+    return not (rec.get("start") and starts.get(pid)) or rec["start"] == starts[pid]
+
+
+def known_marks(rows, roots=None, starts=None):
+    """{pid: agent} for every recorded root or descendant that is still the same process (pid, command line, start)"""
     cmd = {pid: c for pid, _, c in rows}
-    return {pid: r["agent"] for pid, r in (load_roots() if roots is None else roots).items() if cmd.get(pid) == r.get("cmd")}
+    starts = start_times() if starts is None else starts
+    return {pid: r["agent"] for pid, r in (load_roots() if roots is None else roots).items() if same_process(pid, r, cmd, starts)}
 
 
 def register(agent, pid, rows=None):
@@ -155,14 +185,15 @@ def register(agent, pid, rows=None):
         return False
     with roots_locked():
         roots = load_roots()
-        if roots.get(pid, {}).get("cmd") == cmd:
+        starts = start_times()
+        if pid in roots and same_process(pid, roots[pid], {pid: cmd}, starts):
             return roots[pid].get("agent") == agent       # the same live process: the first claim stands
-        marks, parent, p = known_marks(rows, roots), {x: pp for x, pp, _ in rows}, parent_of(pid, rows)
+        marks, parent, p = known_marks(rows, roots, starts), {x: pp for x, pp, _ in rows}, parent_of(pid, rows)
         while p and p > 1:                                # under another agent's mark: that agent can't become this one
             if marks.get(p, agent) != agent:
                 return False
             p = parent.get(p)
-        roots[pid] = {"agent": agent, "cmd": cmd, "root": True}
+        roots[pid] = {"agent": agent, "cmd": cmd, "root": True, "start": starts.get(pid)}
         save_roots(roots)
     return True
 
@@ -193,12 +224,12 @@ def framework_root(start_pid, rows):
 def remember(own, rows):
     """keep every process an agent owns by ancestry, so it stays the agent's after its session ends (re-parented to
     launchd, its ancestry is gone); entries whose process is gone or changed are dropped"""
-    cmd = {pid: c for pid, _, c in rows}
+    cmd, starts = {pid: c for pid, _, c in rows}, start_times()
     with roots_locked():
-        roots = {pid: r for pid, r in load_roots().items() if cmd.get(pid) == r.get("cmd")}
+        roots = {pid: r for pid, r in load_roots().items() if same_process(pid, r, cmd, starts)}
         for pid, (agent, via) in own.items():
             if via in ("ancestor", "env", "mark") and pid not in roots:
-                roots[pid] = {"agent": agent, "cmd": cmd[pid], "root": False}
+                roots[pid] = {"agent": agent, "cmd": cmd[pid], "root": False, "start": starts.get(pid)}
         save_roots(roots)
 
 

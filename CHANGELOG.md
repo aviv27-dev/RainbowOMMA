@@ -5,6 +5,11 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+### Fixed
+- proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
+  start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
+  `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
+
 ## [0.2.0] — 2026-10-24
 
 ### Added
