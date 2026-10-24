@@ -5,6 +5,8 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-24
+
 ### Added
 - Tab housekeeping: `browser-owner tabs` measures the CPU of every tab in the agents' own browsers (through their CDP
   ports) and, for a stale tab hot for 30 minutes, reloads it, then closes it if it stays hot — never the last tab, one
@@ -172,4 +174,5 @@ First public release.
 - Desktop open/close icons, the human's Chrome theme, and `kill-chrome.sh` that spares every agent browser.
 - Tests on macOS in CI (fakes only — never a real browser or app).
 
+[0.2.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.2.0
 [0.1.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.1.0
