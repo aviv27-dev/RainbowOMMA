@@ -8,6 +8,9 @@ exit codes are an API and change only in a major version.
 ### Added
 - Homebrew: the repository is its own tap (`brew tap aviv27-dev/rainbowomma https://github.com/aviv27-dev/RainbowOMMA`,
   `brew install rainbowomma`); `rainbowomma-install` and `rainbowomma-uninstall` run the same installer into your folder.
+- `browser-owner tabs` measures each agent browser's GPU process too (`SystemInfo.getProcessInfo`, `gpu` in its answer):
+  it can't be pinned to one tab, so it is reported, with one notification when it stays above `gpuPercent` (15%) for
+  `hotMinutes`.
 
 ### Fixed
 - proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its

@@ -1956,6 +1956,9 @@ class FakeTabsCDP(FakeCDP):
                     res = {"metrics": [{"name": "Timestamp", "value": ts}, {"name": "TaskDuration", "value": td}]}
                 elif m == "Target.closeTarget":
                     self.pages.pop(prm["targetId"], None); res = {"success": True}
+                elif m == "SystemInfo.getProcessInfo":
+                    self.gpu_t = getattr(self, "gpu_t", 0.0) + getattr(self, "gpu_rate", 0.0) * 10
+                    res = {"processInfo": [{"type": "browser", "id": 1, "cpuTime": 5.0}, {"type": "GPU", "id": 2, "cpuTime": self.gpu_t}]}
                 else:
                     res = {}
                 send({"id": msg["id"], "result": res})
@@ -1984,6 +1987,12 @@ st_ = rt.load_state(sp_t); st_["tabs"]["hot"]["hotSince"] = T0 - 3600; rt.save_s
 rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp, now=T0 + 60, sleep=lambda s: None)
 check("tabs (CDP): still hot after its reload → closed through CDP, and it drops out of the record",
       ("Target.closeTarget", {"targetId": "hot"}, None) in fk.calls and "hot" not in fk.pages and "hot" not in rt.load_state(sp_t)["tabs"])
+fk.gpu_rate = 0.18; gst = tmp / "gpu-home"
+g_runs = [rt.sweep_agent(ag_t, cfg_t, False, lambda a: {"status": "up"}, gst, tbo.Cdp, now=T0 + k * 900, sleep=lambda s: None)
+          for k in range(4)]
+check("tabs: the browser's GPU process is measured too (18% of a core), with one alert after 30 min hot — not again",
+      [r["gpu"] for r in g_runs] == [18.0] * 4 and [r["gpuAlert"] for r in g_runs] == [False, False, True, False], [(r["gpu"], r["gpuAlert"]) for r in g_runs])
+fk.gpu_rate = 0.0
 tbo.view = lambda a: {"status": "blocked"}
 check("tabs: a browser whose port isn't its own (blocked, down, hung) is never swept",
       rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp)["status"] == "blocked")

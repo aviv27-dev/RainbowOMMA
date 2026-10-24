@@ -1073,6 +1073,10 @@ def tabs(reg, only=None, apply=None, scheduled=False):
                 if tab["action"] == "close":
                     notify("RainbowOMMA", f"{a['label']}: closed a tab that kept a CPU core busy — {rainbow_tabs.host(tab['url'])} "
                                           f"({tab['cpu']}% for {tab['hotForMinutes']} min, after a reload)")
+        if r.get("gpuAlert"):
+            log(a, f"GPU process at {r['gpu']}% of a core for {r['gpuHotMinutes']} min")
+            notify("RainbowOMMA", f"{a['label']}: its browser's GPU process has used {r['gpu']}% of a core for "
+                                  f"{r['gpuHotMinutes']} min — a tab with animation or video? `browser-owner tabs {name}`")
         results.append(r)
     counts = rainbow_tabs.summarize(results, cfg["cpuPercent"])
     out = {"status": "swept", "mode": "apply" if apply else "dry-run", "counts": counts, "agents": results}

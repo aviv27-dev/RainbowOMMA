@@ -15,7 +15,9 @@ reloaded, and if it stays hot, closed. Run by `browser-owner tabs` (and its laun
 
 Settings (browsers.json, top level, all optional):
     "tabSweep": {"mode": "dry-run", "cpuPercent": 10, "hotMinutes": 30, "minAgeHours": 6, "idleMinutes": 120,
-                 "sampleSeconds": 10, "exclude": ["delta"]}
+                 "sampleSeconds": 10, "gpuPercent": 15, "exclude": ["delta"]}
+The browser's GPU process is measured too (SystemInfo.getProcessInfo): it can't be told per tab, so it is only reported,
+with one notification when it stays above gpuPercent for hotMinutes.
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ import time
 from urllib.parse import urlsplit
 
 DEFAULTS = {"mode": "dry-run", "cpuPercent": 10.0, "hotMinutes": 30.0, "minAgeHours": 6.0, "idleMinutes": 120.0,
-            "sampleSeconds": 10.0, "exclude": []}
+            "sampleSeconds": 10.0, "gpuPercent": 15.0, "exclude": []}
 SKIP_URLS = ("devtools://", "chrome://", "chrome-extension://", "chrome-untrusted://", "about:blank")
 
 
@@ -52,10 +54,20 @@ def host(url):
         return url[:40]
 
 
+def gpu_time(cdp):
+    """the browser's GPU process CPU time so far (seconds), or None — it can't be told per tab, only per browser"""
+    try:
+        procs = cdp.call("SystemInfo.getProcessInfo").get("processInfo", [])
+        return sum(float(x.get("cpuTime") or 0) for x in procs if x.get("type") == "GPU") if procs else None
+    except OSError:
+        return None
+
+
 def sample(cdp, seconds, sleep=time.sleep):
-    """→ [{"id", "url", "title", "attached", "cpu"}] for every page tab (cpu: % of one core over the window, None when
-    unknown). One connection, flattened sessions; detached again at the end."""
+    """→ ([{"id", "url", "title", "attached", "cpu"}] for every page tab, the number of page tabs, the GPU process's % of
+    one core) — cpu: % over the window, None when unknown. One connection, flattened sessions; detached at the end."""
     infos = cdp.call("Target.getTargets").get("targetInfos", [])
+    g1, t1 = gpu_time(cdp), time.monotonic()
     pages = [t for t in infos if t.get("type") == "page" and not str(t.get("url", "")).startswith(SKIP_URLS)]
     first = {}
     for t in pages:
@@ -65,8 +77,10 @@ def sample(cdp, seconds, sleep=time.sleep):
             first[t["targetId"]] = (sid, _metrics(cdp.call("Performance.getMetrics", {}, sid)))
         except OSError:
             continue
-    if first:
+    if first or g1 is not None:
         sleep(seconds)
+    g2, wall_g = gpu_time(cdp), max(time.monotonic() - t1, seconds)
+    gpu = round(max(0.0, g2 - g1) / wall_g * 100, 1) if g1 is not None and g2 is not None else None
     out = []
     for t in pages:
         cpu, sid = None, None
@@ -81,7 +95,7 @@ def sample(cdp, seconds, sleep=time.sleep):
                 pass
         out.append({"id": t["targetId"], "url": str(t.get("url", "")), "title": str(t.get("title", ""))[:80],
                     "attached": bool(t.get("attached")), "cpu": cpu, "session": sid})
-    return out, len([t for t in infos if t.get("type") == "page"])
+    return out, len([t for t in infos if t.get("type") == "page"]), gpu
 
 
 def _metrics(res):
@@ -154,7 +168,7 @@ def sweep_agent(a, cfg, apply, view, shared, cdp_class, now=None, sleep=time.sle
     sp = state_path(shared, a["name"])
     st = load_state(sp)
     with cdp_class(a["port"], timeout=10) as cdp:
-        tabs, pages = sample(cdp, cfg["sampleSeconds"], sleep)
+        tabs, pages, gpu = sample(cdp, cfg["sampleSeconds"], sleep)
         planned, recs = plan(tabs, st.get("tabs") or {}, cfg, now, pages)
         for t in planned:
             t["done"] = False
@@ -178,15 +192,22 @@ def sweep_agent(a, cfg, apply, view, shared, cdp_class, now=None, sleep=time.sle
                     pass
     st["tabs"] = recs                                    # tabs that are gone drop out with it
     save_state(sp, st)
-    return {"agent": a["name"], "status": "swept",
+    st["gpuHotSince"] = (st.get("gpuHotSince") or now) if gpu is not None and gpu >= cfg["gpuPercent"] else None
+    alert = bool(st["gpuHotSince"]) and now - st["gpuHotSince"] >= cfg["hotMinutes"] * 60 and not st.get("gpuAlerted")
+    st["gpuAlerted"] = bool(st["gpuHotSince"]) and (alert or bool(st.get("gpuAlerted")))     # once per hot spell
+    save_state(sp, st)
+    return {"agent": a["name"], "status": "swept", "gpu": gpu, "gpuAlert": alert,
+            "gpuHotMinutes": int((now - st["gpuHotSince"]) / 60) if st.get("gpuHotSince") else 0,
             "tabs": [{k: x[k] for k in ("id", "url", "title", "cpu", "action", "done", "hotForMinutes", "seenForHours", "attached")}
                      | ({"error": x["error"]} if "error" in x else {}) for x in planned]}
 
 
 def summarize(results, cpu_percent):
     """counts across agents → {"reloaded", "closed", "wouldReload", "wouldClose", "hot"}"""
-    c = {"reloaded": 0, "closed": 0, "wouldReload": 0, "wouldClose": 0, "hot": 0}
+    c = {"reloaded": 0, "closed": 0, "wouldReload": 0, "wouldClose": 0, "hot": 0, "gpuHot": 0}
     for r in results:
+        if r.get("gpuHotMinutes"):
+            c["gpuHot"] += 1
         for t in r.get("tabs", []):
             if (t.get("cpu") or 0) >= cpu_percent:
                 c["hot"] += 1
