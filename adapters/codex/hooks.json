@@ -1,7 +1,7 @@
 {
   "hooks": {
     "PreToolUse": [
-      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard", "timeout": 10 }] }
+      { "matcher": "Bash|apply_patch", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard", "timeout": 10 }] }
     ]
   }
 }

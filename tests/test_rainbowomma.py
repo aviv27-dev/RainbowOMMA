@@ -2049,6 +2049,32 @@ subprocess.run(["bash", str(HERE.parent / "uninstall.sh"), "--bin", str(lh / "bi
                env=dict(menv, HOME=str(lh), RAINBOW_HOME=str(lh / ".rainbowomma")))
 check("uninstall without a manifest (an older install) removes only files identical to RainbowOMMA's",
       sorted(x.name for x in (lh / "bin").iterdir()) == ["receipts"])
+fv2 = load("rainbowomma-guard.py")
+ST = "/Users/x/.rainbowomma/state/approvals.json"; HC = "/Users/x/Library/Application Support/Google/Chrome/Default/Cookies"
+shapes = {   # each framework's file-tool payload (from its own source or docs) → refused?
+    "codex apply_patch": ({"tool_name": "apply_patch", "tool_input": {"command": f"*** Begin Patch\n*** Update File: {ST}\n@@\n-x\n+y\n*** End Patch"}}, True),
+    "codex patch in the shell": ({"tool_name": "Bash", "tool_input": {"command": f"apply_patch <<'EOF'\n*** Begin Patch\n*** Add File: {ST}\n+{{}}\n*** End Patch\nEOF"}}, True),
+    "codex relative path": ({"tool_name": "apply_patch", "cwd": "/Users/x/.rainbowomma", "tool_input": {"command": "*** Begin Patch\n*** Delete File: state/paused.json\n*** End Patch"}}, True),
+    "gemini write_file": ({"tool_name": "write_file", "tool_input": {"file_path": ST, "content": "{}"}}, True),
+    "gemini replace": ({"tool_name": "replace", "tool_input": {"file_path": "/Users/x/bin/browsers.json", "old_string": "a", "new_string": "b"}}, True),
+    "gemini read_file (state: fine)": ({"tool_name": "read_file", "tool_input": {"file_path": ST}}, False),
+    "gemini read_file (human Chrome)": ({"tool_name": "read_file", "tool_input": {"file_path": HC}}, True),
+    "qwen notebook_edit": ({"tool_name": "notebook_edit", "tool_input": {"notebook_path": ST}}, True),
+    "factory Create": ({"tool_name": "Create", "tool_input": {"file_path": ST, "content": "{}"}}, True),
+    "hermes patch (V4A)": ({"tool_name": "patch", "tool_input": {"mode": "patch", "patch": f"*** Begin Patch\n*** Update File: {ST}\n*** End Patch"}}, True),
+    "hermes write_file": ({"tool_name": "write_file", "tool_input": {"path": ST, "content": "{}"}}, True),
+    "cursor beforeReadFile": ({"hook_event_name": "beforeReadFile", "file_path": HC, "content": "…"}, True),
+    "cursor beforeReadFile (state: fine)": ({"hook_event_name": "beforeReadFile", "file_path": ST, "content": "…"}, False),
+    "windsurf pre_write_code": ({"agent_action_name": "pre_write_code", "tool_info": {"file_path": ST}}, True),
+    "windsurf pre_read_code": ({"agent_action_name": "pre_read_code", "tool_info": {"file_path": HC}}, True),
+    "an ordinary edit": ({"tool_name": "apply_patch", "tool_input": {"command": "*** Begin Patch\n*** Update File: src/app.py\n*** End Patch"}}, False),
+}
+wrong = {k: bool(fv2.file_verdict(ev)) for k, (ev, want) in shapes.items() if bool(fv2.file_verdict(ev)) != want}
+check("guard: file tools of every framework — Codex/Hermes patches, Gemini/Qwen/Factory/Hermes paths, Cursor and Windsurf events", not wrong, wrong)
+mt = {"codex/hooks.json": "apply_patch", "gemini-cli/settings.json": "write_file", "qwen-code/settings.json": "notebook_edit",
+      "factory-droid/hooks.json": "ApplyPatch", "hermes/hooks.yaml": "patch", "cursor/hooks.json": "beforeReadFile", "windsurf/hooks.json": "pre_write_code"}
+check("the adapters send their framework's file tools to the guard too", all(w in (AD / f).read_text() for f, w in mt.items()),
+      [f for f, w in mt.items() if w not in (AD / f).read_text()])
 
 # ── auth-owner: one agent at a time signs in to a site (optional: authSites) ──
 ah = tmp / "auth-home"; os.environ["RAINBOW_HOME"] = str(ah); aom = load("auth-owner.py")

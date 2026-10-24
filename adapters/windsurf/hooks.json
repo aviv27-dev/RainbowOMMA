@@ -1,5 +1,22 @@
 {
   "hooks": {
-    "pre_run_command": [{ "command": "/Users/you/bin/rainbowomma-guard", "show_output": true }]
+    "pre_run_command": [
+      {
+        "command": "/Users/you/bin/rainbowomma-guard",
+        "show_output": true
+      }
+    ],
+    "pre_read_code": [
+      {
+        "command": "/Users/you/bin/rainbowomma-guard",
+        "show_output": true
+      }
+    ],
+    "pre_write_code": [
+      {
+        "command": "/Users/you/bin/rainbowomma-guard",
+        "show_output": true
+      }
+    ]
   }
 }

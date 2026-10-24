@@ -2,7 +2,7 @@
   "permissions": { "deny": ["Bash(pkill *)", "Bash(killall *)"] },
   "hooks": {
     "PreToolUse": [
-      { "matcher": "run_shell_command", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard" }] }
+      { "matcher": "^(run_shell_command|write_file|edit|read_file|notebook_edit)$", "hooks": [{ "type": "command", "command": "/Users/you/bin/rainbowomma-guard" }] }
     ]
   }
 }

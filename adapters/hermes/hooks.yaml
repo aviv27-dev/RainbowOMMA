@@ -1,9 +1,9 @@
-# Hermes Agent — profile config.yaml. A pre-tool hook on the terminal tool: rainbowomma-guard reads the command and
+# Hermes Agent — profile config.yaml. A pre-tool hook on the terminal and file tools: rainbowomma-guard reads the command and
 # refuses it with the reason. Hermes asks once before a new hook runs; unattended (gateway / non-TTY) runs need
 # hooks_auto_accept, or the hook stays unregistered.
 hooks:
   pre_tool_call:
-    - matcher: "terminal"
+    - matcher: "terminal|write_file|patch|read_file"
       command: "/Users/you/bin/rainbowomma-guard"
       fail_closed: true
 hooks_auto_accept: true

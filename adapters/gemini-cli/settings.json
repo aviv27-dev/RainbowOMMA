@@ -2,7 +2,7 @@
   "hooks": {
     "BeforeTool": [
       {
-        "matcher": "run_shell_command",
+        "matcher": "^(run_shell_command|write_file|replace|read_file|read_many_files)$",
         "hooks": [
           {
             "name": "rainbowomma",
