@@ -1863,5 +1863,131 @@ os.environ.pop("OTEL_EXPORTER_OTLP_ENDPOINT"); os.environ["RAINBOW_HOME"] = str(
 check("security: receipts are readable by you only (0700 / 0600), and an export to another URL never moves your collector's cursor",
       mode_ok and "receipts.otlp-cursor" not in other_cursor, (mode_ok, other_cursor))
 
+# ── tab housekeeping: a tab that keeps a core busy long after anyone used it is reloaded, then closed ──
+import rainbow_tabs as rt
+cfg_t = rt.config({})
+T0 = 1_000_000.0
+old = {"firstSeen": T0 - 7 * 3600, "url": "https://news.example/live", "urlSince": T0 - 7 * 3600}
+def tab_(cpu, tid="a", url="https://news.example/live", attached=False):
+    return {"id": tid, "url": url, "title": "", "attached": attached, "cpu": cpu, "session": "s-" + tid}
+recs, acts = {"a": dict(old)}, []
+for k in range(3):                                   # three runs, 15 min apart, hot each time
+    planned, recs = rt.plan([tab_(25.0), tab_(1.0, "b")], recs, cfg_t, T0 + k * 900, 2)
+    acts.append(planned[0]["action"])
+check("tabs: a stale tab hot (25% of a core) in every run for 30 min is reloaded — not before, and a cool one never",
+      acts == [None, None, "reload"] and planned[1]["action"] is None, acts)
+recs["a"].update(reloaded=True, hotSince=None)
+acts2 = []
+for k in range(3):
+    planned, recs = rt.plan([tab_(25.0), tab_(1.0, "b")], recs, cfg_t, T0 + 3600 + k * 900, 2)
+    acts2.append(planned[0]["action"])
+check("tabs: still hot for another 30 min after the reload → closed", acts2 == [None, None, "close"], acts2)
+planned, _ = rt.plan([tab_(25.0)], recs, cfg_t, T0 + 3600 + 2 * 900, 1)
+check("tabs: never the browser's last tab", planned[0]["action"] == "skip-last-tab", planned[0]["action"])
+r_new, acts3 = {}, []
+for k in range(3):
+    planned, r_new = rt.plan([tab_(40.0, "n")], r_new, cfg_t, T0 + k * 900, 2)
+    acts3.append(planned[0]["action"])
+check("tabs: a tab first seen half an hour ago, on a page that just loaded, is not stale — left alone however hot", acts3 == [None, None, None])
+r_use = {"a": dict(old, hotSince=T0 - 3600)}
+planned, _ = rt.plan([tab_(50.0, attached=True)], r_use, cfg_t, T0, 2)
+check("tabs: a tab another client is attached to (an agent driving it) is never touched", planned[0]["action"] == "skip-in-use")
+r_nav = {"a": dict(old, hotSince=T0 - 3600)}
+planned, r_nav = rt.plan([tab_(50.0, url="https://news.example/other")], r_nav, cfg_t, T0, 2)
+check("tabs: a tab that navigated since the last run is in use — its clock starts over",
+      planned[0]["action"] is None and r_nav["a"]["urlSince"] == T0)
+check("tabs: settings from browsers.json, nonsense ignored, dry run unless it says apply",
+      rt.config({"tabSweep": {"cpuPercent": 20, "hotMinutes": -5, "mode": "yes", "exclude": ["Delta"]}}) ==
+      {**rt.DEFAULTS, "cpuPercent": 20.0, "exclude": ["delta"]})
+
+class FakeTabsCDP(FakeCDP):
+    """a browser with page tabs that burn a given share of a core (Performance.getMetrics TaskDuration)"""
+    def __init__(self, pages):
+        self.pages, self.sessions, self.clock = pages, {}, {}               # {targetId: (url, cpu fraction, attached)}
+        super().__init__({})
+    def ws(self, c):
+        def recv(n):
+            b = b""
+            while len(b) < n:
+                x = c.recv(n - len(b))
+                if not x:
+                    raise OSError
+                b += x
+            return b
+        def send(obj):
+            d = json.dumps(obj).encode()
+            c.sendall(bytes([0x81]) + (bytes([len(d)]) if len(d) < 126 else bytes([126]) + struct.pack(">H", len(d))) + d)
+        try:
+            while True:
+                b1, b2 = recv(2); n = b2 & 0x7F
+                n = struct.unpack(">H", recv(2))[0] if n == 126 else n
+                mask = recv(4); msg = json.loads(bytes(x ^ mask[i % 4] for i, x in enumerate(recv(n))))
+                m, prm, sid = msg["method"], msg.get("params") or {}, msg.get("sessionId")
+                self.calls.append((m, prm, sid))
+                if m == "Target.getTargets":
+                    res = {"targetInfos": [{"targetId": t, "type": "page", "url": u, "title": "x", "attached": att}
+                                           for t, (u, f, att) in self.pages.items()] + [{"targetId": "sw", "type": "service_worker"}]}
+                elif m == "Target.attachToTarget":
+                    sid_ = "S" + prm["targetId"]; self.sessions[sid_] = prm["targetId"]; res = {"sessionId": sid_}
+                elif m == "Performance.getMetrics":
+                    tid = self.sessions[sid]; ts, td = self.clock.get(tid, (0.0, 0.0))
+                    ts, td = ts + 1.0, td + self.pages[tid][1]; self.clock[tid] = (ts, td)
+                    res = {"metrics": [{"name": "Timestamp", "value": ts}, {"name": "TaskDuration", "value": td}]}
+                elif m == "Target.closeTarget":
+                    self.pages.pop(prm["targetId"], None); res = {"success": True}
+                else:
+                    res = {}
+                send({"id": msg["id"], "result": res})
+        except OSError:
+            c.close()
+
+fk = FakeTabsCDP({"hot": ("https://news.example/live", 0.25, False), "calm": ("https://docs.example/", 0.01, False),
+                  "inuse": ("https://app.example/", 0.6, True)})
+tbo = load("browser-owner.py"); tbo.SHARED = tmp / "tabs-home"; tbo.view = lambda a: {"status": "up"}
+ag_t = {"name": "alpha", "port": fk.port, "label": "Alpha"}
+sp_t = rt.state_path(tbo.SHARED, "alpha")
+seed = {"tabs": {t: {"firstSeen": T0 - 8 * 3600, "url": u, "urlSince": T0 - 8 * 3600, "hotSince": T0 - 3600}
+                 for t, (u, f, att) in fk.pages.items()}}
+rt.save_state(sp_t, seed)
+dry = rt.sweep_agent(ag_t, cfg_t, False, tbo.view, tbo.SHARED, tbo.Cdp, now=T0, sleep=lambda s: None)
+byid = {x["id"]: x for x in dry["tabs"]}
+check("tabs (CDP): each tab's CPU is measured over the window — the hot one 25%, the calm one 1%; the dry run touches nothing",
+      byid["hot"]["cpu"] == 25.0 and byid["calm"]["cpu"] == 1.0 and byid["hot"]["action"] == "reload" and not byid["hot"]["done"]
+      and not any(c[0] in ("Page.reload", "Target.closeTarget") for c in fk.calls), dry)
+check("tabs (CDP): the tab an agent is attached to stays, however hot", byid["inuse"]["action"] == "skip-in-use")
+rt.save_state(sp_t, seed); fk.calls.clear()
+done = rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp, now=T0, sleep=lambda s: None)
+check("tabs (CDP): applied, the hot tab is reloaded in its own session — no process is signalled",
+      ("Page.reload", {"ignoreCache": False}, "Shot") in fk.calls and rt.load_state(sp_t)["tabs"]["hot"]["reloaded"], fk.calls[-6:])
+st_ = rt.load_state(sp_t); st_["tabs"]["hot"]["hotSince"] = T0 - 3600; rt.save_state(sp_t, st_); fk.calls.clear()
+rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp, now=T0 + 60, sleep=lambda s: None)
+check("tabs (CDP): still hot after its reload → closed through CDP, and it drops out of the record",
+      ("Target.closeTarget", {"targetId": "hot"}, None) in fk.calls and "hot" not in fk.pages and "hot" not in rt.load_state(sp_t)["tabs"])
+tbo.view = lambda a: {"status": "blocked"}
+check("tabs: a browser whose port isn't its own (blocked, down, hung) is never swept",
+      rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp)["status"] == "blocked")
+treg = tmp / "tabs-reg.json"
+treg.write_text(json.dumps({"tabSweep": {"exclude": ["charlie"]}, "agents": {
+    "alpha": {"label": "A", "port": 9222, "profile": str(tmp / "ta"), "color": "#E53935"},
+    "bravo": {"label": "B", "port": 9223, "profile": str(tmp / "tb"), "color": "#26A69A", "tabSweep": False},
+    "charlie": {"label": "C", "port": 9224, "profile": str(tmp / "tc"), "color": "#1E88E5"},
+    "delta": {"label": "D", "port": 9225, "profile": str(tmp / "td"), "color": "#FDD835", "managedBy": "x.py"}}}))
+tbo.REGISTRY = treg; tbo.view = lambda a: {"status": "down"}
+res_t = tbo.tabs(tbo.registry(treg))
+check("tabs: an agent with tabSweep false, one in tabSweep.exclude, and one managedBy another tool are never swept; dry run by default",
+      {x["agent"]: x["status"] for x in res_t["agents"]} == {"alpha": "down", "bravo": "excluded", "charlie": "excluded", "delta": "excluded"}
+      and res_t["mode"] == "dry-run", res_t)
+dd = tmp / "tabs-daily"
+rt.daily(dd, {"reloaded": 1, "closed": 0, "wouldReload": 0, "wouldClose": 2, "hot": 3}, today="2026-10-23")
+rt.daily(dd, {"reloaded": 1, "closed": 1, "wouldReload": 0, "wouldClose": 0, "hot": 1}, today="2026-10-23")
+prev_d = rt.daily(dd, {"reloaded": 0, "closed": 0, "wouldReload": 0, "wouldClose": 0, "hot": 0}, today="2026-10-24")
+check("tabs: one summary a day — yesterday's totals, when the day changes", prev_d and prev_d["day"] == "2026-10-23"
+      and prev_d["reloaded"] == 2 and prev_d["closed"] == 1 and prev_d["wouldClose"] == 2, prev_d)
+r_tb = subprocess.run(["bash", str(HERE / "browser-owner"), "tabs", "bravo", "--apply"], capture_output=True, text=True,
+                      env=dict(genv, RAINBOW_AGENT="alpha"))
+check("tabs: an agent sweeps its own browser only (owner and guard)",
+      r_tb.returncode == 2 and as_agent("browser-owner tabs bravo --apply", "alpha") == 2 and as_agent("browser-owner tabs alpha", "alpha") == 0,
+      r_tb.stdout)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

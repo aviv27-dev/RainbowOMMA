@@ -175,6 +175,16 @@ AppleScript, `open -a` or a computer-use tool aimed at them. Change the list wit
 `receipts --export-otlp http://localhost:4318` sends every receipt not sent yet to an OpenTelemetry collector (OTLP/HTTP
 JSON logs, tagged `gen_ai.agent.name`), so Langfuse, Honeycomb or Grafana show what each agent did on your Mac.
 
+### 🧹 Tabs that keep a core busy get cleaned up
+A tab an agent left open can burn a CPU core for days — a live page, an ad loop — and nobody notices.
+`browser-owner tabs` measures every tab of every agent's own browser through its CDP port (the renderer's main-thread
+time over a few seconds). A tab that stays hot (≥ 10% of a core) for 30 minutes and is stale (open for 6 hours, or on
+the same page for 2) is reloaded; if it stays hot for another 30 minutes, it is closed — never the last tab, never one
+an agent is attached to, never the human's Chrome or a browser in `tabSweep.exclude` / `managedBy`. Nothing is killed:
+reload and close go through CDP. It is a **dry run** until `browsers.json` says `"tabSweep": {"mode": "apply"}`: it
+reports what it would do, in its answer and in the log. `install.sh --with-tab-sweep` runs it every 15 minutes, with one
+summary a day and a notification for every tab it closes.
+
 ### 🧱 When one shared Mac isn't enough
 [docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
 virtual display of its own, and how to keep its credentials apart (1Password, Keychain).
@@ -212,6 +222,7 @@ why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office
 | `browser-owner recover <agent> --by <who>` | restarts a hung browser after three probes; never one the human closed |
 | `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
 | `browser-owner front <agent>` | brings the agent's browser to the front for you, un-minimizing it through its own CDP port (`restored` says how many windows) |
+| `browser-owner tabs [<agent>] [--apply]` | the agents' tabs and how much CPU each burns; a stale tab hot for long is reloaded, then closed — a dry run unless `--apply` or `tabSweep.mode` is `apply`. `install.sh --with-tab-sweep` runs it every 15 minutes |
 | `browser-owner heal` | puts back the colors Chrome Sync took: now for a closed browser, on its next start for an open one (with one notification); notes a Chrome update. `install.sh --with-heal` runs it every 30 minutes |
 | `browser-owner mcp-config <agent> [--tool devtools\|playwright] [--format json\|claude]` | a Chrome DevTools MCP or Playwright MCP entry that drives the agent's own browser (its CDP port), never yours |
 | `browser-owner names` · `human-theme` | the agents it may stop (for scripts) · builds the "HUMAN · free to use" theme for your own Chrome |
