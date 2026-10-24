@@ -24,7 +24,7 @@ or as the human (`--by`, an owner tool's agent argument, `as-agent`, `RAINBOW_AG
 or `browsers.json`, reading the human's Chrome profile, reaching another agent's DevTools port, sending without the
 human's approval. When it can't judge a command, it refuses.
 
-It is not a sandbox. A program that runs as you can, with enough effort, do anything you can — the guard only sees what
+For the browsers, `"cdp": "pipe"` closes the open DevTools port (`cdp-broker`). It is not a sandbox. A program that runs as you can, with enough effort, do anything you can — the guard only sees what
 goes through the agent's tool calls. For a hard boundary, give each agent its own macOS user or a VM
 ([docs/ISOLATION.md](docs/ISOLATION.md)). A way around the guard that is cheap to use is still a bug we want to hear about.
 

@@ -168,7 +168,13 @@ def registry(path=None):
                 raise ValueError(f"{name}: ports {lo}-{hi} overlap {other}'s {olo}-{ohi}")
         ranges[name] = (lo, hi)
         a["ports"] = (lo, hi)
-        a["port_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
+        a["cdp"] = str(r.get("cdp") or "port").strip().lower()
+        if a["cdp"] not in ("port", "pipe"):
+            raise ValueError(f"{name}: cdp must be port or pipe, not {a['cdp']!r}")
+        if a["cdp"] == "pipe" and a.get("launcher"):
+            raise ValueError(f"{name}: cdp pipe starts Chrome itself — it can't go with a launcher")
+        a["tcp_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
+        a["port_re"] = re.compile(r"(?:^|\s)--remote-debugging-pipe(?:\s|$)") if a["cdp"] == "pipe" else a["tcp_re"]
         a["dir_re"] = re.compile(r"(?:^|\s)--user-data-dir=" + re.escape(a["profile"]) + r"(?:\s|$)")
         out[name] = a
     return out
@@ -240,6 +246,13 @@ def save(a, st):
 
 
 def healthy(a, timeout=2.0):
+    if a.get("cdp") == "pipe":                    # no port: the broker's socket answers for it
+        try:
+            with cdp_for(a, timeout) as c:
+                c.call("Browser.getVersion")
+            return True
+        except Exception:
+            return False
     try:
         with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/version", timeout=timeout) as r:
             json.loads(r.read())
@@ -282,7 +295,7 @@ def listener(a):
 
 def foreign_roots(a, rows):
     """Chromes on this agent's port with ANOTHER profile — someone launched a browser outside the owner"""
-    return [pid for pid, _, cmd in rows if CHROME_ANY.search(cmd) and " --type=" not in cmd and a["port_re"].search(cmd) and not a["dir_re"].search(cmd)]
+    return [pid for pid, _, cmd in rows if CHROME_ANY.search(cmd) and " --type=" not in cmd and a["tcp_re"].search(cmd) and not a["dir_re"].search(cmd)]
 
 
 def tree_of(a, rows):
@@ -595,7 +608,24 @@ def chrome_args(a):
             "--restore-last-session", "--hide-crash-restore-bubble", f"--window-name={a['label']}-CDP"]
 
 
+def launch_pipe(a):
+    """pipe mode: the cdp-broker starts Chrome on a pipe and stays its only CDP client"""
+    Path(a["profile"]).mkdir(parents=True, exist_ok=True)
+    log_path = SHARED / "logs" / f"cdp-broker-{a['name']}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as out:
+        subprocess.Popen([sys.executable, "-I", str(HERE / "cdp-broker.py"), a["name"]], stdout=out, stderr=out,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(25):
+        if healthy(a):
+            return 0, "CDP up on its pipe (cdp-broker)"
+        time.sleep(1)
+    return 1, t("bo.port_silent", port=a["port"])
+
+
 def launch(a):
+    if a.get("cdp") == "pipe":
+        return launch_pipe(a)
     if a.get("launcher"):
         if not Path(a["launcher"]).exists():
             return 1, t("bo.launcher_missing", path=a["launcher"])
@@ -643,16 +673,27 @@ def set_front(pid):
 class Cdp:
     """a tiny standard-library WebSocket client for the browser's own CDP endpoint (browser-owner runs on whatever python3 is
     there, with -I — no websocket package). One connection: flattened sessions (Target.attachToTarget) live as long as it."""
-    def __init__(self, port, timeout=5.0):
+    def __init__(self, port, timeout=5.0, unix=None):
         import base64
         import socket
-        with LOCAL.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
-            url = json.loads(r.read())["webSocketDebuggerUrl"]
-        path = "/" + url.split("/", 3)[3]
-        self.sk, self.rest, self.ids = socket.create_connection(("127.0.0.1", port), timeout=timeout), b"", 0
+        if unix:                                     # the cdp-broker's socket (pipe mode): no port, no /json
+            path, host = "/devtools/browser/rainbowomma", "localhost"
+            self.sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sk.settimeout(timeout)
+            try:
+                self.sk.connect(unix)
+            except OSError:
+                self.sk.close()
+                raise
+        else:
+            with LOCAL.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
+                url = json.loads(r.read())["webSocketDebuggerUrl"]
+            path, host = "/" + url.split("/", 3)[3], f"127.0.0.1:{port}"
+            self.sk = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        self.rest, self.ids = b"", 0
         try:
             key = base64.b64encode(os.urandom(16)).decode()
-            self.sk.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+            self.sk.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                              f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
             buf = b""
             while b"\r\n\r\n" not in buf:
@@ -721,6 +762,13 @@ class Cdp:
                 return m.get("result") or {}
 
 
+def cdp_for(a, timeout=5.0):
+    """a CDP connection to the agent's own browser: its port, or in pipe mode the broker's socket"""
+    if a.get("cdp") == "pipe":
+        return Cdp(None, timeout, unix=str(SHARED / "cdp" / a["name"] / "cdp.sock"))
+    return Cdp(a["port"], timeout)
+
+
 def _cdp_browser_calls(port, calls, timeout=5.0):
     """calls = [(method, params)] on one connection → their results, in order. Raises on any failure."""
     with Cdp(port, timeout) as c:
@@ -728,28 +776,34 @@ def _cdp_browser_calls(port, calls, timeout=5.0):
 
 
 def restore_windows(a):
-    """activating an app never un-minimizes its windows: through the agent's own CDP port, every minimized window of its
+    """activating an app never un-minimizes its windows: through the agent's own CDP, every minimized window of its
     browser goes back to normal, and the tab already shown is activated (never another tab). → windows restored (0 also when
     CDP did not answer)"""
     try:
-        targets = _cdp_browser_calls(a["port"], [("Target.getTargets", {})])[0].get("targetInfos", [])
-        wins = {}
-        for tid in [x["targetId"] for x in targets if x.get("type") == "page"]:
-            try:
-                r = _cdp_browser_calls(a["port"], [("Browser.getWindowForTarget", {"targetId": tid})])[0]
-                wins[r["windowId"]] = (r.get("bounds") or {}).get("windowState")
+        with cdp_for(a) as c:
+            targets = c.call("Target.getTargets").get("targetInfos", [])
+            wins = {}
+            for tid in [x["targetId"] for x in targets if x.get("type") == "page"]:
+                try:
+                    r = c.call("Browser.getWindowForTarget", {"targetId": tid})
+                    wins[r["windowId"]] = (r.get("bounds") or {}).get("windowState")
+                except Exception:
+                    continue
+            todo = [w for w, state in wins.items() if state == "minimized"]
+            for w in todo:
+                c.call("Browser.setWindowBounds", {"windowId": w, "bounds": {"windowState": "normal"}})
+        shown = []
+        if a.get("cdp") != "pipe":
+            try:                                 # Chrome lists the most recently active page first: the one already shown
+                with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/list", timeout=3) as r:
+                    shown = [x["id"] for x in json.loads(r.read()) if x.get("type") == "page"][:1]
             except Exception:
-                continue
-        todo = [w for w, state in wins.items() if state == "minimized"]
-        if todo:
-            _cdp_browser_calls(a["port"], [("Browser.setWindowBounds", {"windowId": w, "bounds": {"windowState": "normal"}}) for w in todo])
-        try:                                     # Chrome lists the most recently active page first: the one already shown
-            with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/list", timeout=3) as r:
-                shown = [x["id"] for x in json.loads(r.read()) if x.get("type") == "page"][:1]
-        except Exception:
-            shown = []
+                shown = []
+        else:
+            shown = [x["targetId"] for x in targets if x.get("type") == "page"][:1]
         if shown:                                # on macOS this also de-miniaturizes that window (Chrome's windowState can lag the Dock)
-            _cdp_browser_calls(a["port"], [("Target.activateTarget", {"targetId": shown[0]})])
+            with cdp_for(a) as c:
+                c.call("Target.activateTarget", {"targetId": shown[0]})
         return len(todo)
     except Exception:
         return 0
@@ -801,7 +855,7 @@ def view(a, st=None, rows=None):
     else:
         status = "hung" if roots else "down"
     return {"agent": a["name"], "label": a["label"], "color": a["color"], "port": a["port"], "status": status, "up": status == "up",
-            "roots": roots, "processes": len(tree), "foreignRoots": foreign, "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")),
+            "roots": roots, "processes": len(tree), "foreignRoots": foreign, "cdp": a.get("cdp", "port"), "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")),
             "offAt": st.get("offAt"), "lastExitType": last_exit_type(a), "lastStart": st.get("lastStart"),
             "lastStop": st.get("lastStop"), "managedBy": a.get("managedBy")}
 
@@ -1024,6 +1078,16 @@ def heal(reg):
     return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps}
 
 
+def _broker():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("rainbow_cdp_broker", str(HERE / "cdp-broker.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
 MCP_TOOLS = {   # the browser MCP servers an agent can point at ITS OWN browser — never the human's (no --autoConnect, no extension)
     "devtools": lambda port: ["-y", "chrome-devtools-mcp@1.11.0", "--browserUrl", f"http://127.0.0.1:{port}"],     # pinned: it drives
     "playwright": lambda port: ["-y", "@playwright/mcp@0.0.83", "--cdp-endpoint", f"http://127.0.0.1:{port}"],      # a browser's CDP
@@ -1031,8 +1095,14 @@ MCP_TOOLS = {   # the browser MCP servers an agent can point at ITS OWN browser 
 
 
 def mcp_config(a, tool="devtools", fmt="json"):
-    """a ready-made MCP server entry that drives the agent's own browser through its CDP port"""
+    """a ready-made MCP server entry that drives the agent's own browser through its CDP port (in pipe mode: the
+    broker's WebSocket, with the agent's token in its path)"""
     server = {"command": "npx", "args": MCP_TOOLS[tool](a["port"])}
+    if a.get("cdp") == "pipe":
+        tok = _broker().ensure_token(SHARED, a["name"])
+        ws = f"ws://127.0.0.1:{a['port']}/devtools/browser/{tok}"
+        server["args"] = [x if not x.startswith("http://127.0.0.1:") else ws for x in server["args"]]
+        server["args"] = ["--wsEndpoint" if x == "--browserUrl" else x for x in server["args"]]
     name = f"{a['name']}-browser"
     if fmt == "claude":
         return {"status": "ok", "name": name, "command": f"claude mcp add-json --scope user {name} '{json.dumps(server)}'"}
@@ -1067,7 +1137,7 @@ def tabs(reg, only=None, apply=None, scheduled=False):
                 results.append({"agent": name, "status": "busy", "tabs": []})     # starting or stopping right now
                 continue
             try:
-                r = rainbow_tabs.sweep_agent(a, cfg, apply, view, SHARED, Cdp)
+                r = rainbow_tabs.sweep_agent(a, cfg, apply, view, SHARED, cdp_for)
             except Exception as exc:
                 r = {"agent": name, "status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200], "tabs": []}
         for tab in r["tabs"]:

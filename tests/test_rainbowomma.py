@@ -1971,29 +1971,29 @@ sp_t = rt.state_path(tbo.SHARED, "alpha")
 seed = {"tabs": {t: {"firstSeen": T0 - 8 * 3600, "url": u, "urlSince": T0 - 8 * 3600, "hotSince": T0 - 3600}
                  for t, (u, f, att) in fk.pages.items()}}
 rt.save_state(sp_t, seed)
-dry = rt.sweep_agent(ag_t, cfg_t, False, tbo.view, tbo.SHARED, tbo.Cdp, now=T0, sleep=lambda s: None)
+dry = rt.sweep_agent(ag_t, cfg_t, False, tbo.view, tbo.SHARED, tbo.cdp_for, now=T0, sleep=lambda s: None)
 byid = {x["id"]: x for x in dry["tabs"]}
 check("tabs (CDP): each tab's CPU is measured over the window — the hot one 25%, the calm one 1%; the dry run touches nothing",
       byid["hot"]["cpu"] == 25.0 and byid["calm"]["cpu"] == 1.0 and byid["hot"]["action"] == "reload" and not byid["hot"]["done"]
       and not any(c[0] in ("Page.reload", "Target.closeTarget") for c in fk.calls), dry)
 check("tabs (CDP): the tab an agent is attached to stays, however hot", byid["inuse"]["action"] == "skip-in-use")
 rt.save_state(sp_t, seed); fk.calls.clear()
-done = rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp, now=T0, sleep=lambda s: None)
+done = rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.cdp_for, now=T0, sleep=lambda s: None)
 check("tabs (CDP): applied, the hot tab is reloaded in its own session — no process is signalled",
       ("Page.reload", {"ignoreCache": False}, "Shot") in fk.calls and rt.load_state(sp_t)["tabs"]["hot"]["reloaded"], fk.calls[-6:])
 st_ = rt.load_state(sp_t); st_["tabs"]["hot"]["hotSince"] = T0 - 3600; rt.save_state(sp_t, st_); fk.calls.clear()
-rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp, now=T0 + 60, sleep=lambda s: None)
+rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.cdp_for, now=T0 + 60, sleep=lambda s: None)
 check("tabs (CDP): still hot after its reload → closed through CDP, and it drops out of the record",
       ("Target.closeTarget", {"targetId": "hot"}, None) in fk.calls and "hot" not in fk.pages and "hot" not in rt.load_state(sp_t)["tabs"])
 fk.gpu_rate = 0.18; gst = tmp / "gpu-home"
-g_runs = [rt.sweep_agent(ag_t, cfg_t, False, lambda a: {"status": "up"}, gst, tbo.Cdp, now=T0 + k * 900, sleep=lambda s: None)
+g_runs = [rt.sweep_agent(ag_t, cfg_t, False, lambda a: {"status": "up"}, gst, tbo.cdp_for, now=T0 + k * 900, sleep=lambda s: None)
           for k in range(4)]
 check("tabs: the browser's GPU process is measured too (18% of a core), with one alert after 30 min hot — not again",
       [r["gpu"] for r in g_runs] == [18.0] * 4 and [r["gpuAlert"] for r in g_runs] == [False, False, True, False], [(r["gpu"], r["gpuAlert"]) for r in g_runs])
 fk.gpu_rate = 0.0
 tbo.view = lambda a: {"status": "blocked"}
 check("tabs: a browser whose port isn't its own (blocked, down, hung) is never swept",
-      rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.Cdp)["status"] == "blocked")
+      rt.sweep_agent(ag_t, cfg_t, True, tbo.view, tbo.SHARED, tbo.cdp_for)["status"] == "blocked")
 treg = tmp / "tabs-reg.json"
 treg.write_text(json.dumps({"tabSweep": {"exclude": ["charlie"]}, "agents": {
     "alpha": {"label": "A", "port": 9222, "profile": str(tmp / "ta"), "color": "#E53935"},
@@ -2116,6 +2116,107 @@ bad_iso = [subprocess.run(["bash", iso, "create", n], capture_output=True, text=
 check("isolate: only agent names — never human, a path or an empty name", bad_iso == [2, 2, 2, 2], bad_iso)
 ir = subprocess.run(["bash", iso, "remove", "alpha"], capture_output=True, text=True, env=ienv)
 check("isolate: remove is a dry run too, and keeps the agent's work folder", ir.returncode == 0 and "dry run" in ir.stdout and "kept:" in ir.stdout, ir.stdout)
+
+# ── cdp-broker: an agent's Chrome on a pipe, no open DevTools port (a fake Chrome speaking CDP on fds 3/4) ──
+fake_chrome = tmp / "fake-chrome.py"
+fake_chrome.write_text("""import json, os, sys
+buf = b""
+def send(m):
+    os.write(4, (json.dumps(m) + "\\0").encode())
+while True:
+    c = os.read(3, 65536)
+    if not c:
+        sys.exit(0)
+    buf += c
+    while b"\\0" in buf:
+        one, buf = buf.split(b"\\0", 1)
+        m = json.loads(one); meth, sid = m["method"], m.get("sessionId")
+        if meth == "Browser.close":
+            send({"id": m["id"], "result": {}}); sys.exit(0)
+        if meth == "Target.attachToTarget":
+            send({"method": "Target.attachedToTarget", "params": {"sessionId": "S-" + m["params"]["targetId"]}})
+            send({"id": m["id"], "result": {"sessionId": "S-" + m["params"]["targetId"]}}); continue
+        if meth == "Page.enable" and sid:
+            send({"method": "Page.frameNavigated", "sessionId": sid, "params": {}})
+        res = {"product": "FakeChrome/1"} if meth == "Browser.getVersion" else {"echo": meth, "session": sid}
+        send({"id": m["id"], "result": res})
+""")
+cbm = load("cdp-broker.py")
+cbm.CHROME_CMD = lambda a: [sys.executable, "-I", str(fake_chrome)]
+bshared = tmp / "broker-home"
+_fs = socket.socket(); _fs.bind(("127.0.0.1", 0)); bport = _fs.getsockname()[1]; _fs.close()
+brow = {"name": "alpha", "port": bport, "label": "Alpha", "profile": str(tmp / "pa"), "cdp": "pipe"}
+bt = threading.Thread(target=cbm.run, args=(brow, bshared), daemon=True); bt.start()
+sockp = cbm.socket_path(bshared, "alpha")
+for _ in range(100):
+    if sockp.exists():
+        break
+    threading.Event().wait(0.05)
+cbo = load("browser-owner.py"); cbo.SHARED = bshared
+class Seen(cbo.Cdp):
+    def __init__(self, *a, **k):
+        self.seen = []; super().__init__(*a, **k)
+    def _recv_msg(self):
+        m = super()._recv_msg(); self.seen.append(m); return m
+ca, cb2 = Seen(None, 5, unix=str(sockp)), Seen(None, 5, unix=str(sockp))
+va, vb = ca.call("Browser.getVersion"), cb2.call("Browser.getVersion")
+sid = ca.call("Target.attachToTarget", {"targetId": "T1", "flatten": True})["sessionId"]
+pe = ca.call("Page.enable", {}, sid); cb2.call("Runtime.enable")
+check("broker: two clients share the one pipe, each its own answers (ids mapped)", va == vb == {"product": "FakeChrome/1"} and pe == {"echo": "Page.enable", "session": "S-T1"})
+check("broker: a session's events go to the client that opened it, not to the others",
+      any(m.get("method") == "Page.frameNavigated" for m in ca.seen) and not any(m.get("method") == "Page.frameNavigated" for m in cb2.seen))
+check("broker: the socket and its folder are yours only (0600 / 0700)",
+      (sockp.stat().st_mode & 0o077) == 0 and (sockp.parent.stat().st_mode & 0o077) == 0 and (cbm.token_path(bshared, "alpha").stat().st_mode & 0o077) == 0)
+def raw_http(path, upgrade=True):
+    s_ = socket.create_connection(("127.0.0.1", bport), timeout=5)
+    s_.sendall((f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n" + ("Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n" if upgrade else "") + "\r\n").encode())
+    line = s_.recv(4096).split(b"\r\n", 1)[0].decode(); s_.close(); return line
+tok = cbm.read_token(bshared, "alpha")
+check("broker: on the TCP port, /json/* and a WebSocket without the agent's token are refused; with it, the MCP server connects",
+      " 403 " in raw_http("/json/version", False) and " 403 " in raw_http("/json/list", False) and " 403 " in raw_http("/devtools/browser/wrong")
+      and " 101 " in raw_http(f"/devtools/browser/{tok}"), (raw_http("/json/version", False), raw_http(f"/devtools/browser/{tok}")))
+mc = cbo.mcp_config({**brow, "cdp": "pipe"})
+check("broker: mcp-config hands the MCP server the token's WebSocket (no --browserUrl, no plain port)",
+      f"ws://127.0.0.1:{bport}/devtools/browser/{tok}" in mc["mcpServers"]["alpha-browser"]["args"]
+      and "--wsEndpoint" in mc["mcpServers"]["alpha-browser"]["args"], mc)
+check("broker: healthy() asks through the socket in pipe mode", cbo.healthy({**brow, "cdp": "pipe"}))
+try:
+    ca.call("Browser.close")
+except OSError:
+    pass
+bt.join(10)
+check("broker: when Chrome exits the broker exits and takes its socket away (the token stays for the next start)",
+      not bt.is_alive() and not sockp.exists() and cbm.read_token(bshared, "alpha") == tok)
+for c_ in (ca, cb2):
+    try:
+        c_.__exit__()
+    except OSError:
+        pass
+preg = json.loads(REG.read_text()); preg["agents"]["alpha"]["cdp"] = "pipe"; preg["agents"]["alpha"].pop("launcher", None); PREG = tmp / "pipe-reg.json"; PREG.write_text(json.dumps(preg))
+pa_ = bo.registry(PREG)["alpha"]
+pipe_cmd = f"{CH} --user-data-dir={pa_['profile']} --remote-debugging-pipe --no-first-run"
+check("broker (registry): a pipe-mode agent's Chrome is known by its profile and the pipe — not by a port",
+      bo.is_root(pa_, pipe_cmd) and not bo.is_root(pa_, f"{CH} --user-data-dir={pa_['profile']} --no-first-run"))
+breg = json.loads(REG.read_text()); breg["agents"]["alpha"]["cdp"] = "socket"; BREG = tmp / "bad-cdp.json"; BREG.write_text(json.dumps(breg))
+try:
+    bo.registry(BREG); bad_cdp = False
+except ValueError:
+    bad_cdp = True
+lreg = json.loads(REG.read_text()); lreg["agents"]["alpha"].update(cdp="pipe", launcher="/x/launch.sh"); LREG = tmp / "pipe-launcher.json"
+LREG.write_text(json.dumps(lreg))
+try:
+    bo.registry(LREG); bad_l = False
+except ValueError:
+    bad_l = True
+check("broker (registry): cdp is port or pipe — nothing else, and pipe doesn't go with a launcher", bad_cdp and bad_l)
+kc_mark = re.search(r"^CDP_MARK='([^']+)'", (HERE / "kill-chrome.sh").read_text(), re.M).group(1)
+check("kill-chrome spares every agent browser — on a CDP port, and on a pipe (cdp-broker); the human's own Chrome isn't spared",
+      re.search(kc_mark, pipe_cmd) and re.search(kc_mark, f"{CH} --user-data-dir=/x --remote-debugging-port=9223")
+      and not re.search(kc_mark, f"{CH} --profile-directory=Default"))
+check("guard: an agent reads its own broker token, never another agent's (it opens that agent's browser)",
+      as_agent("cat ~/.rainbowomma/cdp/bravo/token", "alpha") == 2 and as_agent("cat ~/.rainbowomma/cdp/alpha/token", "alpha") == 0
+      and as_agent("cat ~/.rainbowomma/cdp/alpha/token", None) == 2
+      and bool(load("rainbowomma-guard.py").file_verdict({"tool_name": "Read", "tool_input": {"file_path": "/Users/x/.rainbowomma/cdp/bravo/token"}})))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

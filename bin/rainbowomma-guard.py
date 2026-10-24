@@ -90,7 +90,7 @@ INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript":
 INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")
 RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
                          r"rainbow_human_idle_s|rainbow_human_present_s|rainbow_agent|rainbow_session)=")
-STATE_WORDS = re.compile(r"(\.rainbowomma|\$\{?rainbow_home\}?)/(state|logs)\b|proc-roots\.json|approvals\.json|approval-pending\.json|"
+STATE_WORDS = re.compile(r"(\.rainbowomma|\$\{?rainbow_home\}?)/(state|logs|cdp)\b|proc-roots\.json|approvals\.json|approval-pending\.json|"
                          r"paused\.json|screen\.json|ports\.json|auth\.json|browsers\.json|receipts\.jsonl")
 WRITERS = {"rm", "mv", "cp", "ln", "tee", "sed", "perl", "truncate", "touch", "chmod", "chflags", "dd", "install", "rsync", "ruby",
            "node", "unlink", "rmdir", "mkdir", "ditto", "patch", "ed", "vi", "vim", "nano", "emacs", "shred", "srm", "trash",
@@ -233,6 +233,17 @@ def _me():
     return (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
 
 
+CDP_DIR = re.compile(r"(?:\.rainbowomma|\$\{?rainbow_home\}?)/cdp/([a-z][a-z0-9-]*)")
+
+
+def cdp_dir_verdict(text, me):
+    """an agent's broker token and socket ($RAINBOW_HOME/cdp/AGENT) are that agent's alone — they open its browser"""
+    for m in CDP_DIR.finditer(text.lower()):
+        if m.group(1) != me:
+            return f"{m.group(0)} holds {m.group(1)}'s browser key — {'yours is ' + me + chr(39) + 's' if me else 'an agent without a name has none'}"
+    return None
+
+
 def owner_tool_verdict(name, args, me):
     """an owner tool acts as the caller only: --by and the agent argument are the caller's own name, never the human's"""
     base = name[:-3] if name.endswith(".py") else name
@@ -279,6 +290,9 @@ def verdict(command):
                     return why
     if HUMAN_CHROME.search(low):
         return WHY["human-chrome"]
+    why = cdp_dir_verdict(low, me)
+    if why:
+        return why
     if STATE_WORDS.search(low) and (names & WRITERS or any(n.startswith(("python", "perl", "ruby", "node")) for n in names)
                                     or re.search(r">\s*\S*(?:" + STATE_WORDS.pattern + ")", low)):
         return WHY["rainbow-state"]
@@ -794,6 +808,9 @@ def file_verdict(event):
         low = os.path.realpath(os.path.expanduser(v)).lower() + " " + v.lower()
         if HUMAN_CHROME.search(low):
             return WHY["human-chrome"]
+        why = cdp_dir_verdict(low, _me())
+        if why:
+            return why
         if STATE_WORDS.search(low) and not reading:
             return WHY["rainbow-state"]
     return None

@@ -18,10 +18,11 @@ msg() { py -I "$I18N" "$@" 2>/dev/null || echo "$1"; }
 KILL_CDP="${KILL_CDP:-0}"
 [ "${1:-}" = "--all" ] && KILL_CDP=1
 
-CDP_MARK='(^| )--remote-debugging-port=92(2[2-9]|[3-9][0-9])( |$)'
+CDP_MARK='(^| )(--remote-debugging-port=92(2[2-9]|[3-9][0-9])|--remote-debugging-pipe)( |$)'   # an agent's, on a port or a pipe
 
 OWNER_NOTE=""
 KEEP_PORTS=""
+KEEP_PIPE=0
 if [ "$KILL_CDP" = "1" ]; then
   NAMES=""
   if [ -x "$DIR/browser-owner" ]; then
@@ -42,8 +43,10 @@ $(msg kc.owner_silent)"
       case "$OWNER_OUT" in *'"processes": 0'*) ;; *) OWNER_NOTE="$OWNER_NOTE
 $(msg kc.agent_closed name="$NAME")" ;; esac
     else
-      PORT=$("$DIR/browser-owner" status "$NAME" 2>/dev/null | sed -n 's/.*"port": \([0-9]*\).*/\1/p')
+      STATUS=$("$DIR/browser-owner" status "$NAME" 2>/dev/null)
+      PORT=$(printf '%s' "$STATUS" | sed -n 's/.*"port": \([0-9]*\).*/\1/p')
       [ -n "$PORT" ] && KEEP_PORTS="$KEEP_PORTS $PORT"
+      case "$STATUS" in *'"cdp": "pipe"'*) KEEP_PIPE=1 ;; esac
       OWNER_NOTE="$OWNER_NOTE
 $(msg kc.agent_kept name="$NAME" out="$OWNER_OUT")"
     fi
@@ -54,8 +57,8 @@ spare_pids() {
   # PIDs of the CDP browser and every descendant of it. With --all: only browsers whose owner stop failed (KEEP_PORTS).
   local roots kids mark="$CDP_MARK"
   if [ "$KILL_CDP" = "1" ]; then
-    [ -z "${KEEP_PORTS// }" ] && return 0
-    mark="(^| )--remote-debugging-port=($(echo $KEEP_PORTS | tr ' ' '|'))( |$)"
+    [ -z "${KEEP_PORTS// }" ] && [ "$KEEP_PIPE" = 0 ] && return 0
+    mark="(^| )(--remote-debugging-port=($(echo ${KEEP_PORTS:-0} | tr ' ' '|'))$([ "$KEEP_PIPE" = 1 ] && echo '|--remote-debugging-pipe'))( |$)"
   fi
   roots=$(pgrep -f -- "$mark" 2>/dev/null | tr '\n' ' ')
   [ -z "${roots// }" ] && return 0

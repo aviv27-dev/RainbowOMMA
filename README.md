@@ -189,6 +189,14 @@ reload and close go through CDP. It is a **dry run** until `browsers.json` says 
 reports what it would do, in its answer and in the log. `install.sh --with-tab-sweep` runs it every 15 minutes, with one
 summary a day and a notification for every tab it closes.
 
+### 🔐 No open DevTools port (optional: `"cdp": "pipe"`)
+Chrome's DevTools port answers any program on the Mac that connects to it. Give an agent `"cdp": "pipe"` in
+`browsers.json` and its Chrome starts with `--remote-debugging-pipe` behind `cdp-broker`, the only one holding the pipe:
+RainbowOMMA's tools reach it through a socket only you can open (`$RAINBOW_HOME/cdp/<agent>/`), and its MCP server
+through the usual port — but only at a WebSocket path with the agent's own token, which `browser-owner mcp-config
+<agent>` puts in the entry (`--wsEndpoint`). `/json/*` on that port answers nobody. It keeps out other users, other
+programs and web pages; an agent running as you could still read the token file, which the guardrail refuses.
+
 ### 🧱 When one shared Mac isn't enough
 [docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
 virtual display of its own, and how to keep its credentials apart (1Password, Keychain).

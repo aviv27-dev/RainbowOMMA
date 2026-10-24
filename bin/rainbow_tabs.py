@@ -160,14 +160,14 @@ def save_state(path, d):
 
 def sweep_agent(a, cfg, apply, view, shared, cdp_class, now=None, sleep=time.sleep):
     """one agent's browser → {"agent", "status", "tabs": [...]}; acts only when apply. view, shared and cdp_class are
-    browser-owner's (its picture of the browser, $RAINBOW_HOME, its CDP client)"""
+    browser-owner's (its picture of the browser, $RAINBOW_HOME, cdp_for: its CDP connection to the agent)"""
     now = time.time() if now is None else now
     v = view(a)
     if v["status"] != "up":                              # down, hung, blocked (a foreign listener on its port) …: nothing to do
         return {"agent": a["name"], "status": v["status"], "tabs": []}
     sp = state_path(shared, a["name"])
     st = load_state(sp)
-    with cdp_class(a["port"], timeout=10) as cdp:
+    with cdp_class(a, timeout=10) as cdp:
         tabs, pages, gpu = sample(cdp, cfg["sampleSeconds"], sleep)
         planned, recs = plan(tabs, st.get("tabs") or {}, cfg, now, pages)
         for t in planned:
