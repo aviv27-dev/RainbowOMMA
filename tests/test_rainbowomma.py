@@ -2009,6 +2009,10 @@ r_tb = subprocess.run(["bash", str(HERE / "browser-owner"), "tabs", "bravo", "--
 check("tabs: an agent sweeps its own browser only (owner and guard)",
       r_tb.returncode == 2 and as_agent("browser-owner tabs bravo --apply", "alpha") == 2 and as_agent("browser-owner tabs alpha", "alpha") == 0,
       r_tb.stdout)
+formula = (HERE.parent / "Formula" / "rainbowomma.rb").read_text()
+latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", (HERE.parent / "CHANGELOG.md").read_text(), re.M).group(1)
+check("Homebrew: the formula points at the latest release in CHANGELOG.md, with a checksum",
+      f"/v{latest}.tar.gz" in formula and re.search(r'sha256 "[0-9a-f]{64}"', formula), latest)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

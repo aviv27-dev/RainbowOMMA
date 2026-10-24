@@ -5,6 +5,10 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+### Added
+- Homebrew: the repository is its own tap (`brew tap aviv27-dev/rainbowomma https://github.com/aviv27-dev/RainbowOMMA`,
+  `brew install rainbowomma`); `rainbowomma-install` and `rainbowomma-uninstall` run the same installer into your folder.
+
 ### Fixed
 - proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
   start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,

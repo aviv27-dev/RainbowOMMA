@@ -51,6 +51,9 @@ RainbowOMMA has one rule: **one owner per resource; everyone else asks it.**
 ```bash
 git clone https://github.com/aviv27-dev/RainbowOMMA.git && cd RainbowOMMA
 ./install.sh --with-heal --adapter claude-code  # tools into ~/bin, the color-keeping job, your agent's adapter filled in
+# or with Homebrew (the repository is its own tap):
+#   brew tap aviv27-dev/rainbowomma https://github.com/aviv27-dev/RainbowOMMA && brew install rainbowomma
+#   rainbowomma-install --with-heal --adapter claude-code       # the same installer, again after every brew upgrade
 $EDITOR ~/bin/browsers.json                    # one row per agent: port, profile, color, label
 ~/bin/rainbowomma-doctor                       # what's in place, what's missing, and how to fix it
 
