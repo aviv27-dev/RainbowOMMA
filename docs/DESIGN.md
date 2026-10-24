@@ -275,6 +275,20 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
 - **The code.** `code AGENT SITE` works only for the holder: a dialog asks the human for the one-time code, which goes
   back in that agent's answer and never into a receipt or a log.
 
+## 17. cdp-broker — an agent's Chrome on a pipe (`"cdp": "pipe"`)
+- **Why.** `--remote-debugging-port` serves CDP, unauthenticated, to every local process and every macOS user. In pipe
+  mode Chrome gets `--remote-debugging-pipe` (fds 3/4, NUL-separated JSON) from `cdp-broker`, started by `browser-owner
+  start`; the browser is recognized by its profile and the pipe flag; `kill-chrome.sh` spares it.
+- **Who may talk to it.** `$RAINBOW_HOME/cdp/AGENT/cdp.sock` (folder 0700, socket 0600) for browser-owner, tabs and
+  front — HTTP `/json/version` and a WebSocket. On `127.0.0.1:PORT`, only a WebSocket at `/devtools/browser/<token>`
+  (`token`, 0600, made once and kept so an MCP config stays valid); anything else is 403. `mcp-config` emits that
+  endpoint (`--wsEndpoint` / `--cdp-endpoint`). The guard refuses another agent's `cdp/` folder.
+- **Many clients, one pipe.** Request ids are remapped per client; a reply goes back to its sender with its own id; an
+  event with a `sessionId` goes to the client that attached that session (and its child sessions), others to everyone.
+  Chrome exits → the broker exits and removes its socket; stopping the browser stops its tree, and the broker with it.
+- **Limits.** Same user, same powers: an agent running as you could read the token if the guard didn't stop it. Can't
+  go with a `launcher`. Real Chrome hasn't been tried behind it yet.
+
 ## 14. Wave D: simulators, clipboards, Linux
 - **Simulators.** `sim-owner` keeps one simulator per agent, named `rainbowomma-<agent>` (created with `simctl create`
   the first time, booted on lease). Ownership comes from the name, so nothing else needs storing. With `RAINBOW_AGENT`

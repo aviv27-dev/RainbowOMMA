@@ -22,6 +22,10 @@ exit codes are an API and change only in a major version.
 - `install/isolate-agent.sh`: an agent of its own macOS user — `create` (a hidden standard user, a sudoers rule for you
   only, a shared work folder, RainbowOMMA in its home), `run AGENT -- COMMAND`, `status`, `remove`; a dry run unless
   `--apply`.
+- `"cdp": "pipe"` per agent and `cdp-broker`: the agent's Chrome runs with `--remote-debugging-pipe`, no open DevTools
+  port. RainbowOMMA reaches it through a socket only you can open; its MCP server through the port, but only at a
+  WebSocket path with the agent's token (`mcp-config` emits it). Several clients share the pipe; the guard refuses
+  another agent's token.
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it
