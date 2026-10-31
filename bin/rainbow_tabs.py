@@ -7,7 +7,7 @@ reloaded, and if it stays hot, closed. Run by `browser-owner tabs` (and its laun
                    idleMinutes), and no other client attached to it (an agent driving it) → reload it; still hot for another
                    hotMinutes after the reload → close it. Never the browser's last tab.
     never          the human's Chrome or any browser outside browsers.json; an agent with "tabSweep": false, one in
-                   tabSweep.exclude, or one managedBy another tool (a logged-in smart-card session, say); a browser whose
+                   tabSweep.exclude, or one managedBy another tool (a signed-in session that must not be reloaded, say); a browser whose
                    port isn't its own tree's. Nothing is killed: reload and close go through CDP (Page.reload,
                    Target.closeTarget) — no process is ever signalled.
     dry run        the default: what it would do is reported and logged, nothing is touched, until browsers.json says
