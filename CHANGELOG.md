@@ -18,6 +18,11 @@ exit codes are an API and change only in a major version.
   `sensitiveSites` example, days built at run time in the tab-summary test, the MCP version compared to the one asked for.
   (A privacy scanner run over the repository found nine false positives there.)
 
+### Changed
+- `browser-owner front` (and the focus give-back) brings a window forward through AppKit's `NSRunningApplication` first:
+  no Apple Event, so no Automation grant — it works from a Dock icon, a panel or a launchd job that was never allowed to drive
+  System Events (-1743). System Events stays as the fallback.
+
 ## [0.3.0] — 2026-11-07
 
 Word recovers from a blocking dialog and never stays open over a failed conversion; agents' sign-ins open in their

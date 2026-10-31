@@ -680,7 +680,20 @@ def front_pid():
         return None
 
 
+FRONT_JXA = ("ObjC.import('AppKit'); const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(%d); "
+             "a.isNil() ? 'none' : String(a.activateWithOptions($.NSApplicationActivateAllWindows | $.NSApplicationActivateIgnoringOtherApps))")
+
+
 def set_front(pid):
+    """bring that process's windows forward. AppKit's NSRunningApplication goes first: it sends no Apple Event, so it needs no
+    Automation grant — a panel, a Dock icon or a launchd job that was never allowed to drive System Events (-1743) still
+    works. System Events stays as the fallback."""
+    try:
+        r = subprocess.run(["osascript", "-l", "JavaScript", "-e", FRONT_JXA % int(pid)], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip() == "true":
+            return True
+    except Exception:
+        pass
     try:
         r = subprocess.run(["osascript", "-e", f'tell application "System Events" to set frontmost of (first process whose unix id is {int(pid)}) to true'],
                            capture_output=True, text=True, timeout=5)
