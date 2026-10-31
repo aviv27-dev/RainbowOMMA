@@ -2085,6 +2085,12 @@ mh = tmp / "manifest-home"; (mh / "bin").mkdir(parents=True); (mh / "bin" / "rec
 menv = dict(os.environ, HOME=str(mh), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(mh / ".rainbowomma"))
 inst = lambda *a: subprocess.run(["bash", str(HERE.parent / a[0]), "--bin", str(mh / "bin"), *a[1:]], capture_output=True, text=True, env=menv)
 r1 = inst("install.sh"); saved_once = "saved in" in r1.stdout
+try:
+    iv = json.loads((mh / ".rainbowomma" / "installed-version").read_text())
+except (OSError, ValueError):
+    iv = {}
+check("install records which release is in place (VERSION, where it came from, the folder) for a version check to read",
+      iv.get("version") == (HERE.parent / "VERSION").read_text().strip() and iv.get("bin") == str(mh / "bin") and iv.get("source"), iv)
 r2 = inst("install.sh")
 (mh / "bin" / "port-owner").write_text((mh / "bin" / "port-owner").read_text() + "# my change\n")
 r3 = inst("uninstall.sh")

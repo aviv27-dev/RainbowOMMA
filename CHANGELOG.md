@@ -9,6 +9,21 @@ exit codes are an API and change only in a major version.
 - `rainbowomma-doctor status [--json]`: the running system on one screen — each agent's browser, CDP mode, idle time and
   missing colors, presence, port leases, Office (who launched it, leftover temp copies), the last errors — and every
   problem with the command that fixes it; exit 1 when something needs attention, for scripts. (#57)
+- `rainbow-panel` (`bin/rainbow-panel.sh`): one native window with every browser on the Mac — open, close, bring to
+  front, an agent's color and name, and adding an agent to `browsers.json` through browser-owner's own validation. A
+  local server on 127.0.0.1 with a key per launch and a Host check; English and Hebrew from the catalog.
+- `rainbowomma-report bug|feature --title … --body-file …`: files an issue with `gh`, after a privacy scan of the title
+  and body (e-mail addresses, home paths, private and Tailscale addresses, keys, phone numbers, this Mac's user, host and
+  agent names, and your own `$RAINBOW_HOME/report-deny.txt`) and a check against the issue template. A finding stops it;
+  `rainbowomma-report scan FILE…` only scans. See `docs/REPORTING.md`.
+
+### Changed
+- `browser-owner front` (and the focus give-back) brings a window forward through AppKit's `NSRunningApplication` first:
+  no Apple Event, so no Automation grant — it works from a Dock icon, a panel or a launchd job that was never allowed to drive
+  System Events (-1743). System Events stays as the fallback.
+- `install.sh` records the release it put in place in `$RAINBOW_HOME/installed-version` (`VERSION`, and whether it came
+  from Homebrew, a git checkout — `git describe` — or an archive), so a check can tell an install that lags the latest
+  release. A release refuses to go out when `VERSION` doesn't match its tag.
 
 ### Fixed
 - tests: the guard's `kill <pid>` check passes where the OS no longer shows another process's environment (macOS 27's
@@ -17,20 +32,6 @@ exit codes are an API and change only in a major version.
 - Examples and tests carry no real-looking dates, government domains or card words: `*.agency.example` in the
   `sensitiveSites` example, days built at run time in the tab-summary test, the MCP version compared to the one asked for.
   (A privacy scanner run over the repository found nine false positives there.)
-
-### Changed
-- `browser-owner front` (and the focus give-back) brings a window forward through AppKit's `NSRunningApplication` first:
-  no Apple Event, so no Automation grant — it works from a Dock icon, a panel or a launchd job that was never allowed to drive
-  System Events (-1743). System Events stays as the fallback.
-
-### Added
-- `rainbow-panel` (`bin/rainbow-panel.sh`): one native window with every browser on the Mac — open, close, bring to
-  front, an agent's color and name, and adding an agent to `browsers.json` through browser-owner's own validation. A
-  local server on 127.0.0.1 with a key per launch and a Host check; English and Hebrew from the catalog.
-- `rainbowomma-report bug|feature --title … --body-file …`: files an issue with `gh`, after a privacy scan of the title
-  and body (e-mail addresses, home paths, private and Tailscale addresses, keys, phone numbers, this Mac's user, host and
-  agent names, and your own `$RAINBOW_HOME/report-deny.txt`) and a check against the issue template. A finding stops it;
-  `rainbowomma-report scan FILE…` only scans. See `docs/REPORTING.md`.
 
 ## [0.3.0] — 2026-11-07
 
