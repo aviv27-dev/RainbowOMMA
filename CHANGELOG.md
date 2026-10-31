@@ -10,6 +10,11 @@ exit codes are an API and change only in a major version.
   missing colors, presence, port leases, Office (who launched it, leftover temp copies), the last errors — and every
   problem with the command that fixes it; exit 1 when something needs attention, for scripts. (#57)
 
+### Fixed
+- tests: the guard's `kill <pid>` check passes where the OS no longer shows another process's environment (macOS 27's
+  `ps -E`): there it checks that every kill is refused (fail closed); root tracking covers ownership. The framework test's
+  stopped `sleep` no longer prints "Terminated: 15" into the output.
+
 ## [0.3.0] — 2026-11-07
 
 Word recovers from a blocking dialog and never stays open over a failed conversion; agents' sign-ins open in their

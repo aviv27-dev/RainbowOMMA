@@ -995,14 +995,28 @@ listening.clear()
 kids = {who: subprocess.Popen(["sleep", "60"], env=dict(os.environ, **({"RAINBOW_AGENT": who} if who != "human" else {})))
         for who in ("alpha", "bravo", "human")}
 os.environ.pop("RAINBOW_AGENT", None)
+def env_readable(pid):
+    """does this OS still show another process's environment? (Linux and older macOS do; macOS 27's `ps -E` doesn't)"""
+    try:
+        if Path("/proc").is_dir():
+            return b"RAINBOW_AGENT=alpha" in Path(f"/proc/{pid}/environ").read_bytes()
+        out = subprocess.run(["ps", "-Eww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, timeout=10).stdout
+        return "RAINBOW_AGENT=alpha" in out
+    except OSError:
+        return False
 try:
     time.sleep(0.3)
     got = {(me, who): as_agent(f"kill {kids[who].pid}", me) for me in ("alpha", None) for who in ("alpha", "bravo", "human")}
+    alpha_env_readable = env_readable(kids["alpha"].pid)        # while it runs: a dead process has no environment to read
 finally:
     for k in kids.values():
         k.kill()
-check("guard as Alpha: `kill <pid>` only for Alpha's own process — Bravo's and the human's are refused",
-      got[("alpha", "alpha")] == 0 and got[("alpha", "bravo")] == 2 and got[("alpha", "human")] == 2, got)
+if alpha_env_readable:
+    check("guard as Alpha: `kill <pid>` only for Alpha's own process — Bravo's and the human's are refused",
+          got[("alpha", "alpha")] == 0 and got[("alpha", "bravo")] == 2 and got[("alpha", "human")] == 2, got)
+else:   # the mark can't be read here: nothing is provably Alpha's, so every kill is refused (the root-tracking test covers ownership)
+    check("guard as Alpha (environments unreadable on this OS): `kill <pid>` is refused for every process — it fails closed",
+          got[("alpha", "alpha")] == 2 and got[("alpha", "bravo")] == 2 and got[("alpha", "human")] == 2, got)
 check("guard without RAINBOW_AGENT: nothing is provably the caller's — every live process is refused",
       got[(None, "bravo")] == 2 and got[(None, "alpha")] == 2 and got[(None, "human")] == 2, got)
 
@@ -1680,7 +1694,8 @@ fw_dir = tmp / "fw"; fw_dir.mkdir(); (fw_dir / "agentfw").symlink_to("/bin/bash"
 th = tmp / "track-home"
 tenv = dict(genv, RAINBOW_HOME=str(th), RAINBOW_ENV_MARKERS="off", RAINBOW_AGENT="alpha", RAINBOW_TRACK_ROOT="on")
 evt = json.dumps({"tool_input": {"command": "ls"}}).replace("'", "")
-fw = subprocess.Popen([str(fw_dir / "agentfw"), "-c", f"sleep 30 & echo '{evt}' | {sys.executable} -I {guard}; wait"], env=tenv)
+fw = subprocess.Popen([str(fw_dir / "agentfw"), "-c", f"sleep 30 & echo '{evt}' | {sys.executable} -I {guard}; wait"], env=tenv,
+                      stderr=subprocess.DEVNULL)   # bash's "Terminated: 15 sleep 30" when the test stops it is not a failure
 try:
     t_roots, t_kid = {}, None
     for _ in range(40):
