@@ -58,6 +58,7 @@ git clone https://github.com/aviv27-dev/RainbowOMMA.git && cd RainbowOMMA
 #   rainbowomma-install --with-heal --adapter claude-code       # the same installer, again after every brew upgrade
 $EDITOR ~/bin/browsers.json                    # one row per agent: port, profile, color, label
 ~/bin/rainbowomma-doctor                       # what's in place, what's missing, and how to fix it
+~/bin/rainbowomma-report scan draft.md         # before filing an issue: nothing private in it (docs/REPORTING.md)
 
 ~/bin/browser-owner start alpha --by alpha     # paints Alpha's browser and opens it in the background
 ~/bin/browser-owner list                       # who's up, blocked, hung, or closed by the human
@@ -402,7 +403,8 @@ focus, and how a theme is installed through the DevTools pipe on Chrome 137+.
 
 ## Contributing and security
 
-Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Every behavior change comes with a
+Bug reports and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). `rainbowomma-report` files an issue only after a
+privacy scan of what you wrote ([docs/REPORTING.md](docs/REPORTING.md)). Every behavior change comes with a
 test that uses fakes only. To report a security problem privately, see [SECURITY.md](SECURITY.md).
 
 ## License

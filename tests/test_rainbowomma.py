@@ -2698,6 +2698,59 @@ check("panel: every word the window shows is in the catalog, in both languages; 
       used_p and used_p <= set(panel.texts()) and '<html lang="en" dir="ltr">' in pg_en and '<html lang="he" dir="rtl">' in pg_he
       and "__LANG__" not in pg_en and "/*RAINBOW_TEXT*/" not in pg_en and not re.search("[\u0590-\u05FF]", html_p),
       sorted(used_p - set(panel.texts())))
+# ── rainbowomma-report: nothing leaves the Mac before the privacy scan and the template check ──
+rp = load("rainbowomma-report.py")
+NOREG = tmp / "no-such-registry.json"
+rp.REGISTRY = NOREG
+leaky = "\n".join(["mail me: someone@example.org", "see /Users/someone/bin/browsers.json", "ssh 192.168.1.20", "tailnet " + ".".join(("100", "101", "2", "3")),
+                   "host box." + "tail" + "1234.ts.net", "key s" + "k-abcdefghijklmnop", "call +1 555 010 1234"])
+kinds = [k for _, _, k in rp.scan(leaky, terms=[], deny=[])]
+check("report: e-mail, home path, private and Tailscale addresses, a ts.net name, a key and a phone number are each found",
+      kinds == ["e-mail address", "home path", "private IP address", "Tailscale address", "Tailscale name", "API key or token", "phone number"], kinds)
+clean_txt = "by noreply@anthropic.com · ~/bin/browser-owner · /Users/you/bin · 127.0.0.1:9222 · alpha's browser · v0.2.0 · pid 4242"
+check("report: placeholders, a noreply address, loopback, ports and versions are not findings", rp.scan(clean_txt, terms=[], deny=[]) == [],
+      rp.scan(clean_txt, terms=[], deny=[]))
+rreg = tmp / "report-reg.json"; rreg.write_text(json.dumps({"agents": {"alpha": {"label": "Alpha"}, "zelda": {"label": "Zed Agent"}}}))
+rp.REGISTRY = rreg
+terms_r = rp.local_terms()
+check("report: this Mac's agent names and labels are findings — the placeholders are not",
+      "zelda" in terms_r and "Zed Agent" in terms_r and "alpha" not in terms_r and "Alpha" not in terms_r
+      and [k for _, _, k in rp.scan("zelda's browser hung", deny=[])] == ["a name from this Mac"], terms_r)
+rp.REGISTRY = NOREG
+dfile = tmp / "report-deny.txt"; dfile.write_text("# my own words\nacme corp\n\\bcase-\\d{4}\\b\n[unclosed\n")
+dn = rp.deny_patterns(dfile)
+check("report: report-deny.txt — expressions, case-insensitive, comments skipped, a broken expression matched literally",
+      len(dn) == 3 and [n for _, n, _ in rp.scan("ACME Corp\nok\ncase-1234\nx [unclosed y", terms=[], deny=dn)] == [1, 3, 4])
+hits_r = rp.scan("token s" + "k-abcdefghijklmnop", terms=[], deny=[])
+check("report: a finding names the kind and the line — never the text it found", hits_r == [("body", 1, "API key or token")], hits_r)
+tpl_dir = HERE.parent / ".github" / "ISSUE_TEMPLATE"
+tpl_ok = all(re.findall(r"^\*\*(.+?)\*\*\s*$", (tpl_dir / f).read_text(encoding="utf-8"), re.M) == rp.TEMPLATES[k]["headings"]
+             and re.search(r"^labels: " + re.escape(rp.TEMPLATES[k]["label"]) + "$", (tpl_dir / f).read_text(encoding="utf-8"), re.M)
+             for k, f in (("bug", "bug_report.md"), ("feature", "feature_request.md")))
+check("report: its headings and labels are the repository's issue templates'", tpl_ok)
+good_body = "**The problem on a shared Mac**\nx\n\n**What you'd like RainbowOMMA to do**\ny\n\n**Agent framework, if it's about one**\nz\n"
+check("report: a body without the template's headings (or out of order) is refused",
+      rp.template_gaps("feature", good_body) == [] and rp.template_gaps("feature", "just text") == rp.TEMPLATES["feature"]["headings"]
+      and rp.template_gaps("feature", good_body.replace("**The problem on a shared Mac**\nx\n\n", "") + "**The problem on a shared Mac**\n")
+      == ["What you'd like RainbowOMMA to do", "Agent framework, if it's about one"])
+gb = tmp / "good-body.md"; gb.write_text(good_body); bb = tmp / "bad-body.md"; bb.write_text(good_body + "\nfrom /Users/someone\n")
+fake_gh_dir = tmp / "fake-gh"; fake_gh_dir.mkdir(); (fake_gh_dir / "gh").write_text(f"#!/bin/sh\necho \"$@\" >> {tmp / 'gh-calls.txt'}\necho https://github.com/x/y/issues/1\n")
+(fake_gh_dir / "gh").chmod(0o755)
+renv = dict(os.environ, PATH=f"{fake_gh_dir}:{os.environ['PATH']}", RAINBOW_HOME=str(tmp / "report-home"), BROWSER_OWNER_REGISTRY=str(NOREG),
+            USER="nobodyhere", LOGNAME="nobodyhere")
+rr_ = lambda *a: subprocess.run(["bash", str(HERE / "rainbowomma-report"), *a], capture_output=True, text=True, env=renv)
+r_bad = rr_("feature", "--title", "Colors for agents", "--body-file", str(bb))
+r_tl = rr_("feature", "--title", "mail someone@example.org", "--body-file", str(gb))
+r_dry = rr_("feature", "--title", "Colors for agents", "--body-file", str(gb), "--dry-run")
+calls_before = (tmp / "gh-calls.txt").exists()
+r_send = rr_("feature", "--title", "Colors for agents", "--body-file", str(gb))
+gh_calls = (tmp / "gh-calls.txt").read_text() if (tmp / "gh-calls.txt").exists() else ""
+check("report: a finding in the body or the title → refused (exit 2) and gh is never run; a dry run shows the command only",
+      r_bad.returncode == 2 and json.loads(r_bad.stdout)["findings"] == ["body:10: home path"] and r_tl.returncode == 2
+      and r_dry.returncode == 0 and json.loads(r_dry.stdout)["status"] == "would-send" and not calls_before, (r_bad.stdout, r_tl.stdout, r_dry.stdout))
+check("report: a clean report goes to gh issue create on the repository, with the template's label",
+      r_send.returncode == 0 and json.loads(r_send.stdout)["status"] == "sent"
+      and gh_calls.strip() == f"issue create -R aviv27-dev/RainbowOMMA --title Colors for agents --body-file {gb} --label enhancement", (r_send.stdout, gh_calls))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
