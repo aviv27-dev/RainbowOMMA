@@ -315,6 +315,11 @@ front if it's already open, even when it's minimized. Your own Chrome closes the
 (`~/.rainbowomma/human.json`: `{"label": …, "color": …}`). `--remove` takes the group out again; the rest of your Dock is
 never touched.
 
+`bin/rainbow-panel.sh` opens one window for all of it: every browser on the Mac — yours and each agent's — with open,
+close and bring to front, a color and a name per agent, and a form that adds an agent to `browsers.json` (through
+browser-owner's own validation: a bad row is refused and the file stays as it was). It is a native window on a local
+server bound to 127.0.0.1 with a key per launch, so no web page can drive it; it exits a minute after you close it.
+
 ![Colored desktop icons for opening and closing each agent's browser, the human's Chrome, and all agents](docs/images/desktop-icons.png)
 
 ---
