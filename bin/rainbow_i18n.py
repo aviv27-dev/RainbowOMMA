@@ -148,6 +148,11 @@ M = {
                      "he": "{path} פתוח ב-Excel (או ש-Excel לא ענה) — לא כותבים מתחתיו; לסגור אותו, או להשתמש ב-‎--out"},
     "ao.xlsx_failed": {"en": "Excel did not recalculate the workbook — {detail}", "he": "Excel לא חישב מחדש את חוברת העבודה — {detail}"},
     "ao.pdf_failed": {"en": "Word produced no PDF — {detail}", "he": "Word לא הפיק PDF — {detail}"},
+    "ao.damaged": {"en": "Word was not asked to open it: {detail} — a damaged file opens a dialog in Word that blocks every "
+                         "conversion after it; fix or re-save the file", "he": "Word לא התבקש לפתוח אותו: {detail} — קובץ פגום פותח "
+                         "ב-Word חלון שחוסם את כל ההמרות שאחריו; לתקן או לשמור מחדש את הקובץ"},
+    "ao.word_dialog": {"en": "Word is showing a dialog, which blocks every conversion — close it (or ask the human), then try "
+                             "again", "he": "Word מציג חלון דו-שיח שחוסם כל המרה — לסגור אותו (או לבקש מהאדם) ולנסות שוב"},
     # ── desktop icons (desk-browser.sh, make-desktop-apps.sh) ──
     "desk.name.human": {"en": "Human", "he": "האדם"},
     "desk.name.all": {"en": "All", "he": "הכל"},

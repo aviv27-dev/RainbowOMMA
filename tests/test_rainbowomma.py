@@ -448,12 +448,18 @@ def word_osa(sc):
         return 0, "quit" if not docs.get("Microsoft Word") else "busy %d" % len(docs["Microsoft Word"])
     return osa(sc)
 ao.RUN = word_osa
-src = tmp / "agent" / "מכתב.docx"; src.write_text("x")
+import zipfile as _zf
+def make_docx(path, body="<w:document xmlns:w='urn:w'><w:body/></w:document>"):
+    with _zf.ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", "<Types xmlns='urn:t'/>"); z.writestr("word/document.xml", body)
+    return path
+src = make_docx(tmp / "agent" / "מכתב.docx"); SRC_BYTES = src.read_bytes()
 code, out = ao.cmd_pdf("bravo", str(src))
 st = json.loads(ao.APPS_STATE.read_text())
 check("pdf: through real Word, its own uniquely named copy (never 'active document'), PDF beside the source",
-      code == 0 and out["renderer"] == "Microsoft Word" and Path(out["pdf"]).exists() and "active document" not in calls[0]
-      and "ofc-pdf-" in calls[0] and not list(ao.WORD_DIR.glob("ofc-pdf-*.docx")), (out, calls[:1]))
+      code == 0 and out["renderer"] == "Microsoft Word" and Path(out["pdf"]).exists()
+      and all("active document" not in c for c in calls) and any("save as d file name" in c and "ofc-pdf-" in c for c in calls)
+      and not list(ao.WORD_DIR.glob("ofc-pdf-*.docx")), (out, calls[:3]))
 check("pdf: Word was NOT running → recorded as launched by the owner, with its pid", st["word"]["launchedBy"].startswith("office-owner/")
       and st["word"]["pid"] == 777, st)
 st["word"]["lastActivity"] = time.time() - 5; ao.save_apps_state(st)
@@ -487,7 +493,7 @@ check("Word hangs (a dialog) → clear failure, and the cleanup closes ONLY that
 check("…and no leftover temp copy or empty PDF in the work folder", not list(ao.WORD_DIR.glob("ofc-pdf-*")), list(ao.WORD_DIR.glob("*")))
 calls.clear()
 code, out = ao.cmd_pdf("bravo", str(src), out=str(src))
-check("pdf --out = the source itself → refused before Word is touched (never overwrite the document)", code == 1 and not calls and src.read_text() == "x", out)
+check("pdf --out = the source itself → refused before Word is touched (never overwrite the document)", code == 1 and not calls and src.read_bytes() == SRC_BYTES, out)
 code, out = ao.cmd_pdf("bravo", str(src), out=str(tmp / "agent" / "x.docx"))
 check("pdf --out must end in .pdf", code == 1 and not calls, out)
 ao.RUN = osa
@@ -790,7 +796,7 @@ px.pump_agent(io.BytesIO(b"".join(feed)))
 check("proxy: malformed tool calls pass through, and the messages after them still reach the driver", px.proc.stdin.lines == feed, px.proc.stdin.lines)
 # 5: pdf never replaces a PDF that is already there
 ao.RUN = word_osa; calls.clear()
-src2 = tmp / "agent" / "report.docx"; src2.write_text("x"); (tmp / "agent" / "report.pdf").write_bytes(b"%PDF- the human's")
+src2 = make_docx(tmp / "agent" / "report.docx"); (tmp / "agent" / "report.pdf").write_bytes(b"%PDF- the human's")
 code, out = ao.cmd_pdf("bravo", str(src2))
 check("pdf: report.pdf already exists → refused before Word is touched, the old PDF intact",
       code == 1 and not calls and (tmp / "agent" / "report.pdf").read_bytes() == b"%PDF- the human's", out)
@@ -2217,6 +2223,105 @@ check("guard: an agent reads its own broker token, never another agent's (it ope
       as_agent("cat ~/.rainbowomma/cdp/bravo/token", "alpha") == 2 and as_agent("cat ~/.rainbowomma/cdp/alpha/token", "alpha") == 0
       and as_agent("cat ~/.rainbowomma/cdp/alpha/token", None) == 2
       and bool(load("rainbowomma-guard.py").file_verdict({"tool_name": "Read", "tool_input": {"file_path": "/Users/x/.rainbowomma/cdp/bravo/token"}})))
+
+# ── office-owner and a blocked Word (#36, #37, #38) ──
+ao.TEMPS = tmp / "office_temps.json"; ao.RECOVER = tmp / "office_recover.json"; ao.LOG = tmp / "agent-office-w.log"
+wstate = {"running": True, "dialog": 0, "convert": [], "docs_answer": True, "windows": 1, "docs_left": "no"}
+wcalls = []
+def wfake(sc):
+    wcalls.append(sc)
+    if "(name of processes) contains" in sc:
+        return 0, "true" if wstate["running"] else "false"
+    if "subrole" in sc:
+        return 0, str(wstate["dialog"])
+    if "count of windows of process" in sc:
+        return 0, str(wstate["windows"])
+    if "to count of documents" in sc:
+        return (0, "0") if wstate["docs_answer"] else (124, "timeout after 12 s (osascript)")
+    if "quit saving ask" in sc:
+        pids["word"] = None; wstate["running"] = False; return 0, ""
+    if "set r to \"no\"" in sc:
+        return 0, wstate["docs_left"]
+    if "save as d file name" in sc:
+        res = wstate["convert"].pop(0) if wstate["convert"] else (0, "")
+        if res[0] == 0:
+            Path(re.search(r'file name "([^"]+)"', sc).group(1)).write_bytes(b"%PDF- ok"); pids["word"] = 4242
+        return res
+    if "close x saving no" in sc or "count of documents) is 0 then" in sc:
+        return 0, "quit"
+    return 0, ""
+ao.RUN = wfake
+bad_docs = {"not a zip": lambda f: f.write_text("x"),
+            "no document.xml": lambda f: _zf.ZipFile(f, "w").writestr("[Content_Types].xml", "<Types/>"),
+            "broken XML": lambda f: make_docx(f, "<w:document><w:body></w:document>"),
+            "a DTD": lambda f: make_docx(f, "<!DOCTYPE x [<!ENTITY a 'b'>]><w:document>&a;</w:document>")}
+res36 = {}
+for k, mk in bad_docs.items():
+    f = tmp / "agent" / f"bad-{len(res36)}.docx"; mk(f); wcalls.clear()
+    c_, o_ = ao.cmd_pdf("bravo", str(f), force=True)
+    res36[k] = (c_, o_["status"], any("save as" in c for c in wcalls))
+check("pdf (#36): a damaged .docx is refused before Word is asked to open it — no dialog, no blocked Word",
+      all(v == (2, "refused", False) for v in res36.values()), res36)
+rtf = tmp / "agent" / "x.rtf"; rtf.write_text("not rtf"); wcalls.clear()
+check("pdf (#36): a .rtf without its header is refused the same way", ao.cmd_pdf("bravo", str(rtf), force=True)[0] == 2 and not any("save as" in c for c in wcalls))
+wstate["dialog"] = 1; wcalls.clear()
+c_, o_ = ao.cmd_pdf("bravo", str(src), force=True)
+check("pdf (#36): a dialog open in Word → 'blocked-by-dialog' with what to do, and no conversion is tried (no cascade of -1708)",
+      c_ == 1 and o_["status"] == "blocked-by-dialog" and not any("save as" in c for c in wcalls), o_)
+wstate["dialog"] = 0
+ao.save_apps_state({"word": {"launchedBy": "office-owner/bravo", "pid": 4242, "lastActivity": time.time()}}); pids["word"] = 4242
+wstate.update(convert=[(1, "Microsoft Word got an error: AppleEvent timed out. (-1712)"), (0, "")], docs_answer=False, windows=0)
+wcalls.clear()
+c_, o_ = ao.cmd_pdf("bravo", str(src), force=True)
+quits = [c for c in wcalls if "quit saving ask" in c]
+check("pdf (#36): Word stuck (no window, no answer) and launched by office-owner → quit once (saving ask) and one retry — it converts",
+      c_ == 0 and o_["status"] == "converted" and len(quits) == 1, (o_, len(quits)))
+wstate.update(running=True, convert=[(1, "Microsoft Word got an error: AppleEvent timed out. (-1712)")]); pids["word"] = 4242
+ao.save_apps_state({"word": {"launchedBy": "office-owner/bravo", "pid": 4242, "lastActivity": time.time()}}); wcalls.clear()
+c_, o_ = ao.cmd_pdf("bravo", str(src), force=True)
+check("pdf (#36): …but at most once in 10 minutes — the next stuck Word is reported, with its AppleScript error number",
+      c_ == 1 and o_.get("errno") == -1712 and not any("quit saving ask" in c for c in wcalls), o_)
+ao.RECOVER.unlink(); ao.save_apps_state({"word": {"launchedBy": "human", "pid": 4242}})
+wstate["convert"] = [(1, "Microsoft Word got an error: AppleEvent timed out. (-1712)")]; wcalls.clear()
+ao.cmd_pdf("bravo", str(src), force=True)
+check("pdf (#36): the human's Word is never quit, stuck or not", not any("quit saving ask" in c for c in wcalls))
+wstate.update(docs_answer=True, windows=1, running=True, docs_left="yes", convert=[(1, "Microsoft Word got an error: no document. (-1708)")])
+ao.save_apps_state({"word": {"launchedBy": "office-owner/bravo", "pid": 4242, "lastActivity": time.time() - 9999}})
+ao.TEMPS.unlink(missing_ok=True); wcalls.clear()
+ao.cmd_pdf("bravo", str(src), force=True)
+left = json.loads(ao.TEMPS.read_text())
+st_ = ao.apps_state(); st_["word"]["lastActivity"] = time.time() - 9999; ao.save_apps_state(st_)     # idle since
+check("pdf (#37): a copy Word still holds after a failure is recorded as office-owner's own (name and Word's pid)",
+      left and all(x["name"].startswith("ofc-pdf-") and x["pid"] == 4242 for x in left), left)
+wcalls.clear(); r37 = ao.idle_quit()
+sweep_sc = next((c for c in wcalls if "count of documents) is 0 then" in c), "")
+check("sweep (#37): those copies — and only those — are closed first, then Word may quit; the record is cleared",
+      all(x["name"] in sweep_sc for x in left) and "close x saving no" in sweep_sc and r37 and r37[0]["result"] == "quit"
+      and json.loads(ao.TEMPS.read_text()) == [], (r37, sweep_sc[:200]))
+check("sweep (#37): a document that isn't office-owner's temp copy is never on that list", all(n.startswith("ofc-") for n in ao.temps_of("word", 4242)))
+_sub_run, _run = ao.subprocess.run, ao.RUN
+def _timeout(*a, **k):
+    raise ao.subprocess.TimeoutExpired("osascript", 5)
+ao.RUN = None; ao.subprocess.run = _timeout
+to_ = ao.osa("x", 5)
+ao.subprocess.run = lambda *a, **k: type("R", (), {"returncode": 1, "stdout": "", "stderr": ""})()
+silent_ = ao.osa("x", 5)
+ao.subprocess.run, ao.RUN = _sub_run, _run
+check("osa (#38): a timeout and a silent failure always come back with a reason", to_ == (124, "timeout after 5 s (osascript)")
+      and silent_[0] == 1 and silent_[1], (to_, silent_))
+ao.RUN = lambda sc: (0, "true" if "Microsoft Word" in sc else "false") if "(name of processes) contains" in sc else (0, "0") if "subrole" in sc else (124, "") \
+    if "save as" in sc or "calculate" in sc else (0, "no") if 'set r to "no"' in sc else (0, "")
+ao.save_apps_state({"word": {"launchedBy": "human", "pid": 4242}}); ao.LOG.unlink(missing_ok=True)
+cp_, op_ = ao.cmd_pdf("bravo", str(src), force=True)
+xl = tmp / "agent" / "b.xlsx"; xl.write_bytes(b"PK")
+cx_, ox_ = ao.cmd_xlsx("bravo", str(xl))
+logtxt = ao.LOG.read_text()
+check("pdf/xlsx (#38): an empty osascript failure never leaves '()' — the log and the answer say it timed out",
+      "()" not in logtxt and "timeout" in op_["why"] and "timeout" in ox_["why"] and cp_ == cx_ == 1, (logtxt[-300:], op_, ox_))
+check("failure (#38): the AppleScript error number is read from the text whatever its language",
+      ao.failure(1, "Microsoft Word קיבל שגיאה: פג הזמן. (-1712)") == ("Microsoft Word קיבל שגיאה: פג הזמן. (-1712)", -1712)
+      and ao.failure(1, "")[0] == "exit 1 with no message")
+ao.RUN = osa
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

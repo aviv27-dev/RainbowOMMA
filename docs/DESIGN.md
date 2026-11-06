@@ -108,6 +108,17 @@ working in parallel is fine; the app is shared, the documents are not.
   in (worksheets of wb)` fails with -50), save, optionally export the active sheet to PDF, and close that copy by name.
   Only then does the copy replace the source (or go to `--out`). A workbook open in Excel — or when Excel can't say — is
   never written under.
+- **A blocked Word.** One modal dialog (a damaged .docx: "unreadable content") blocks every AppleScript call to Word, so
+  every later conversion failed (-1712, then -1708) until a person quit Word. Now: a .docx is checked first (a zip with
+  well-formed `[Content_Types].xml` and `word/document.xml`, no DTD), a .rtf/.doc by its header — refused (exit 2)
+  before Word sees it; a dialog or sheet in Word (System Events, `AXDialog`) answers `blocked-by-dialog` at once; a
+  Word office-owner launched that shows no window and doesn't answer is quit once (`saving ask`, at most every
+  10 minutes) and the conversion retried once. The human's Word is never quit.
+- **Leftover copies.** Every temp copy office-owner opens is recorded with the app's pid (`office_temps.json`) until it
+  is closed; closing runs in `finally`. The sweep closes those copies — only `ofc-*` names of that pid, never a leased
+  or a person's document — before it asks whether the app has documents left and may quit.
+- **Never "()".** osascript's timeout and a failure with no output have a reason (`timeout after N s`); the AppleScript
+  error number (`-1712`, `-1708` …) is read from the text, whatever its language, into `errno` in the answer.
 
 ## 5. Agent adapters (the guardrails)
 - **One guard, many frameworks.** `bin/rainbowomma-guard.py` splits the shell line into simple commands (through pipes,
