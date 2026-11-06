@@ -26,6 +26,10 @@ exit codes are an API and change only in a major version.
   port. RainbowOMMA reaches it through a socket only you can open; its MCP server through the port, but only at a
   WebSocket path with the agent's token (`mcp-config` emits it). Several clients share the pipe; the guard refuses
   another agent's token.
+- `install.sh --migrate-from DIR` (`install/migrate.py`): a pre-release install's state is copied into `$RAINBOW_HOME` —
+  never moved or overwritten; a legacy stop flag named after the person becomes `offByHuman`, and set or unreadable
+  means stopped; locks, broker keys and Word's temp copies stay behind; rows of `browsers.json` still pointing into the
+  old folder are named. `--dry-run` only reports. Until then browser-owner reads a legacy flag as stopped. (#41)
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it

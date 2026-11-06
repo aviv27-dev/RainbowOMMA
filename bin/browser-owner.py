@@ -218,11 +218,19 @@ def profile_unsafe(a):
     return None
 
 
+LEGACY_OFF = re.compile(r"^offBy[A-Z]\w*$")
+
+
 def load(a):
     try:
-        return json.loads(Path(a["state"]).read_text(encoding="utf-8"))
+        st = json.loads(Path(a["state"]).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    if not isinstance(st, dict):
+        return {}
+    if "offByHuman" not in st and any(LEGACY_OFF.match(k) and k != "offByHuman" and v for k, v in st.items()):
+        st["offByHuman"] = True          # a pre-release install named its stop flag after the person: stopped stays stopped
+    return st
 
 
 def atomic_write(path, text):
