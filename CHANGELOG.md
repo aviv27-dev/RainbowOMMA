@@ -39,6 +39,13 @@ exit codes are an API and change only in a major version.
 - proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its
   start time (a pid the system handed out again, to the same kind of command, is never the agent's). On macOS,
   `RAINBOW_AGENT=…` counts only in a process's environment, never as words in its own command line.
+- office-owner: a damaged .docx/.rtf/.doc is refused before Word opens it (exit 2); a dialog open in Word answers
+  `blocked-by-dialog` at once instead of a run of -1708s; a stuck Word that office-owner launched is quit once
+  (saving ask, at most every 10 minutes) and the conversion retried once. (#36)
+- office-owner: temp copies a failed conversion leaves in Word or Excel are recorded and closed — in `finally`, and by the
+  sweep before it decides whether the app may quit — so a failure no longer keeps Word open for days. (#37)
+- office-owner: a failure never has an empty reason — an osascript timeout says so — and the AppleScript error number
+  is returned as `errno`. (#38)
 
 ## [0.2.0] — 2026-10-24
 

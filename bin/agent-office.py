@@ -7,13 +7,19 @@
 
 A document is closed only if the agent leased it, nobody had it open before, and the app says it is saved (checked in the
 same AppleScript that closes it). `pdf` converts through the real Word, on a uniquely named temp copy closed by name, so
-parallel conversions never touch the human's documents. An app is quit only if office-owner itself launched it, after
-10 idle minutes with no documents open — an app that was already running is the human's and is never quit.
-Exit codes: 0 done · 3 left open · 1 failure.
+parallel conversions never touch the human's documents. Before Word is asked, a damaged file is refused (it would open a
+dialog that blocks every later conversion), and a dialog already open in Word is reported as blocked-by-dialog; a stuck
+Word that office-owner launched is quit once (saving ask, at most every 10 minutes) and the conversion retried once.
+Temp copies a failure leaves open are recorded, and the sweep closes them before it decides whether to quit. An app is
+quit only if office-owner itself launched it, after 10 idle minutes with no documents open — an app that was already
+running is the human's and is never quit. A failure always says why (a timeout too), with the AppleScript error number.
+Exit codes: 0 done · 3 left open · 2 refused (a damaged file) · 1 failure (blocked-by-dialog included).
 """
 from __future__ import annotations
 
 import argparse
+import re
+import zipfile
 import fcntl
 import shutil
 import json
@@ -45,6 +51,10 @@ RUN = None   # tests replace it: (script) -> (code, stdout)
 TIMEOUT_S = 20
 APPS_STATE = LEASES.parent / "office_apps.json"     # app → {launchedBy, pid, launchedAt, lastActivity}
 INFLIGHT = LEASES.parent / "office_inflight"         # one file per running conversion: {app, pid}
+TEMPS = LEASES.parent / "office_temps.json"           # [{app, name, pid, at}] — every temp copy office-owner opened, until it is closed
+RECOVER = LEASES.parent / "office_recover.json"       # app → when office-owner last quit a stuck copy of it (once per 10 min)
+RECOVER_EVERY_S = 600
+RETRY_ERRNO = {-1712, -1708, -609, -600}               # timed out · "missing value" · connection invalid · not running
 IDLE_QUIT_S = 600
 PDF_TIMEOUT_S = 100
 WORD_DIR = Path(os.environ.get("OFFICE_WORD_DIR") or (ROOT / "word-convert"))
@@ -65,16 +75,29 @@ def log(msg):
 
 def osa(script, timeout=None):
     """→ (code, stdout) — or, on a failure, (code, the reason osascript gave); a hang (a dialog, a permission prompt) is a
-    failure, never an answer"""
+    failure, never an answer — and a failure always says why"""
     if RUN:
         return RUN(script)
     try:
         r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout or TIMEOUT_S)
         if r.returncode:                       # the reason is on stderr (e.g. "Microsoft Word got an error: …") — say it
-            return r.returncode, ((r.stderr or "").strip() or (r.stdout or "").strip())
+            return r.returncode, ((r.stderr or "").strip() or (r.stdout or "").strip() or f"osascript exit {r.returncode} with no message")
         return r.returncode, (r.stdout or "").strip()
     except subprocess.TimeoutExpired:
-        return 124, ""
+        return 124, f"timeout after {int(timeout or TIMEOUT_S)} s (osascript)"
+
+
+ERRNO = re.compile(r"\((-\d{2,5})\)\s*$|error number (-\d{2,5})", re.M)
+
+
+def failure(code, msg):
+    """→ (reason, AppleScript error number or None): never empty; the number is read from the text, which is localized"""
+    msg = (msg or "").strip()
+    m = ERRNO.search(msg)
+    errno = int(m.group(1) or m.group(2)) if m else None
+    if code == 124 and not msg:
+        msg = "timeout (osascript)"
+    return (msg or f"exit {code} with no message")[:300], errno
 
 
 def q(s):
@@ -365,6 +388,137 @@ def inflight_for(app):
     return n
 
 
+def _xml_ok(fh):
+    """well-formed XML, and no DTD (an Office part never has one; none is ever expanded here)"""
+    import xml.parsers.expat
+    par = xml.parsers.expat.ParserCreate()
+
+    def no_dtd(*a):
+        raise ValueError("a DTD in a document part")
+    par.StartDoctypeDeclHandler = no_dtd
+    par.EntityDeclHandler = no_dtd
+    try:
+        par.ParseFile(fh)
+        return True
+    except (xml.parsers.expat.ExpatError, ValueError):
+        return False
+
+
+def preflight(path):
+    """→ why Word would choke on this file (a damaged .docx opens a modal dialog that blocks every later conversion), or None"""
+    ext = path.suffix.lower()
+    try:
+        if ext == ".docx":
+            if not zipfile.is_zipfile(path):
+                return "not a .docx (not a zip package)"
+            with zipfile.ZipFile(path) as z:
+                names = set(z.namelist())
+                for part in ("[Content_Types].xml", "word/document.xml"):
+                    if part not in names:
+                        return f"damaged .docx: {part} is missing"
+                    if z.getinfo(part).file_size > 512 * 1024 * 1024:
+                        return f"damaged .docx: {part} is too large"
+                    with z.open(part) as fh:
+                        if not _xml_ok(fh):
+                            return f"damaged .docx: {part} is not well-formed XML"
+        elif ext == ".rtf":
+            with open(path, "rb") as fh:
+                if not fh.read(16).lstrip(b"\xef\xbb\xbf").startswith(b"{\\rtf"):
+                    return "not an .rtf (no {\\rtf header)"
+        elif ext == ".doc":
+            with open(path, "rb") as fh:
+                head = fh.read(8)
+            if head != bytes.fromhex("d0cf11e0a1b11ae1") and not head.startswith(b"{\\rtf"):
+                return "not a Word .doc (no OLE header)"
+    except (OSError, zipfile.BadZipFile, KeyError, RuntimeError) as exc:
+        return f"can't be read: {type(exc).__name__}: {exc}"[:200]
+    return None
+
+
+def word_dialog():
+    """→ True when Word shows a modal dialog or sheet (it then blocks every AppleScript call), False when it doesn't,
+    None when that can't be told (Word not running, or no Accessibility permission for System Events)"""
+    if not running("word"):
+        return None
+    code, out = osa('tell application "System Events" to tell process "Microsoft Word"\n'
+                    'set n to count of (windows whose subrole is "AXDialog" or subrole is "AXSystemDialog")\n'
+                    'repeat with w in windows\nset n to n + (count of sheets of w)\nend repeat\nreturn n as text\nend tell', 10)
+    return int(out) > 0 if code == 0 and out.strip().isdigit() else None
+
+
+def word_stuck():
+    """Word runs, shows no window at all, and doesn't answer how many documents it has"""
+    if not running("word"):
+        return False
+    code, _ = osa('with timeout of 8 seconds\ntell application "Microsoft Word" to count of documents\nend timeout', 12)
+    if code == 0:
+        return False
+    code, out = osa('tell application "System Events" to count of windows of process "Microsoft Word"', 10)
+    return code == 0 and out.strip() == "0"
+
+
+def recover_word():
+    """quit a stuck Word ONCE (saving ask — never discards anyone's changes): only one office-owner launched, with no window
+    open, at most once per 10 minutes. → True when it quit"""
+    st = apps_state().get("word") or {}
+    if not str(st.get("launchedBy", "")).startswith("office-owner/") or (st.get("pid") and st["pid"] != app_pid("word")):
+        return False                                   # the human's Word is theirs to fix
+    try:
+        last = float(json.loads(RECOVER.read_text(encoding="utf-8")).get("word") or 0)
+    except (OSError, ValueError, AttributeError):
+        last = 0.0
+    if time.time() - last < RECOVER_EVERY_S or not word_stuck():
+        return False
+    RECOVER.parent.mkdir(parents=True, exist_ok=True)
+    RECOVER.write_text(json.dumps({"word": time.time()}), encoding="utf-8")
+    osa('with timeout of 20 seconds\ntell application "Microsoft Word" to quit saving ask\nend timeout', 25)
+    for _ in range(20):
+        if app_pid("word") is None:
+            break
+        time.sleep(1)
+    gone = app_pid("word") is None
+    log(f"recover word — stuck (no window, no answer): quit {'done' if gone else 'did not finish'}")
+    return gone
+
+
+def note_temps(app, names, add):
+    """the temp copies office-owner opened in an app (with its pid), so a failure can't leave them for ever — the sweep
+    closes them before it decides whether the app may quit"""
+    TEMPS.parent.mkdir(parents=True, exist_ok=True)
+    pid = app_pid(app) if add else None
+    with open(TEMPS.with_suffix(".lock"), "w") as lk:     # its own lock: parallel conversions, and the sweep under leases_lock
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        try:
+            cur = json.loads(TEMPS.read_text(encoding="utf-8")) if TEMPS.exists() else []
+            cur = [x for x in cur if isinstance(x, dict) and str(x.get("name", "")).startswith("ofc-")]
+        except (OSError, ValueError):
+            cur = []
+        if add:
+            cur += [{"app": app, "name": n, "pid": pid, "at": time.time()} for n in names]
+        else:
+            cur = [x for x in cur if not (x["app"] == app and x["name"] in names)]
+        tmp = TEMPS.with_name(f".{TEMPS.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(cur), encoding="utf-8")
+        os.replace(tmp, TEMPS)
+
+
+def word_has(names):
+    """→ whether Word still holds any of these documents (True when it can't say)"""
+    code, out = osa(f'with timeout of 10 seconds\ntell application "Microsoft Word"\nset r to "no"\nrepeat with x in (documents as list)\n'
+                    f'try\nif {{name of x}} is in {{{", ".join(q(n) for n in names)}}} then set r to "yes"\nend try\nend repeat\nreturn r\n'
+                    f'end tell\nend timeout', 15)
+    return not (code == 0 and out.strip() == "no")
+
+
+def temps_of(app, pid):
+    try:
+        cur = json.loads(TEMPS.read_text(encoding="utf-8")) if TEMPS.exists() else []
+    except (OSError, ValueError):
+        return []
+    return [x["name"] for x in cur if isinstance(x, dict) and x.get("app") == app and str(x.get("name", "")).startswith("ofc-")
+            and (x.get("pid") in (None, pid))]
+
+
 def cmd_pdf(agent, src, out=None, force=False):
     p = Path(norm(src))
     if not p.exists():
@@ -377,6 +531,13 @@ def cmd_pdf(agent, src, out=None, force=False):
         return 1, {"status": "failed", "why": t("ao.pdf_out")}
     if dest.exists() and not force:          # never silently replace a PDF someone already has
         return 1, {"status": "failed", "why": t("ao.pdf_exists", path=dest)}
+    bad = preflight(p)
+    if bad:                                  # a damaged file opens a dialog in Word that blocks every conversion after it
+        log(f"pdf REFUSED {agent} {p} ({bad})")
+        return 2, {"status": "refused", "why": t("ao.damaged", detail=bad)}
+    if word_dialog():
+        log(f"pdf BLOCKED {agent} {p} (a dialog is open in Word)")
+        return 1, {"status": "blocked-by-dialog", "why": t("ao.word_dialog")}
     WORD_DIR.mkdir(parents=True, exist_ok=True)
     base = "ofc-pdf-" + uuid.uuid4().hex[:12]
     tmp, tmp_pdf = WORD_DIR / (base + ext), WORD_DIR / (base + ".pdf")
@@ -389,12 +550,29 @@ def cmd_pdf(agent, src, out=None, force=False):
     script = (f'with timeout of {PDF_TIMEOUT_S - 10} seconds\ntell application "Microsoft Word"\nlaunch\nopen (POSIX file {q(str(tmp))})\n'
               f'set d to document {q(tmp.name)}\nsave as d file name {q(str(tmp_pdf))} file format format PDF\n{close_mine}\n'
               f'end tell\nend timeout')
+    ok, retried = False, False
     try:
         with inflight("word"):
-            code, msg = osa(script, PDF_TIMEOUT_S)
-            ok = tmp_pdf.exists() and tmp_pdf.stat().st_size > 0
-            if not ok:
-                osa(f'with timeout of 15 seconds\ntell application "Microsoft Word"\n{close_mine}\nend tell\nend timeout')
+            for attempt in (1, 2):
+                note_temps("word", names, add=True)
+                try:
+                    code, msg = osa(script, PDF_TIMEOUT_S)
+                    ok = tmp_pdf.exists() and tmp_pdf.stat().st_size > 0
+                finally:                     # closed by name even when the conversion failed — never left in Word
+                    if not ok and running("word"):
+                        osa(f'with timeout of 15 seconds\ntell application "Microsoft Word"\n{close_mine}\nend tell\nend timeout')
+                    if ok or not running("word") or not word_has(names):
+                        note_temps("word", names, add=False)
+                reason, errno = failure(code, msg)
+                if ok or attempt == 2 or not (code == 124 or errno in RETRY_ERRNO):
+                    break
+                if word_dialog():            # a dialog — retrying would only fail again; the human closes it
+                    log(f"pdf BLOCKED {agent} {p} ({reason})")
+                    return 1, {"status": "blocked-by-dialog", "why": t("ao.word_dialog"), "errno": errno}
+                if not recover_word():
+                    break
+                retried = True
+                log(f"pdf retry {agent} {p} after quitting a stuck Word ({reason})")
     finally:
         try:
             tmp.unlink()
@@ -407,8 +585,11 @@ def cmd_pdf(agent, src, out=None, force=False):
             tmp_pdf.unlink()
         except OSError:
             pass
-        log(f"pdf FAILED {agent} {p} ({msg[:120]})")
-        return 1, {"status": "failed", "why": t("ao.pdf_failed", detail=msg.strip()[:160] or f"exit {code}")}
+        log(f"pdf FAILED {agent} {p} ({reason}{', errno ' + str(errno) if errno else ''}{', after one retry' if retried else ''})")
+        out_ = {"status": "failed", "why": t("ao.pdf_failed", detail=reason[:160])}
+        if errno:
+            out_["errno"] = errno
+        return 1, out_
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(tmp_pdf), str(dest))
     log(f"pdf {agent} {p} -> {dest}")
@@ -453,15 +634,24 @@ def cmd_xlsx(agent, src, out=None, pdf=None, force=False):
     before = tmp.stat().st_mtime_ns
     try:
         with inflight("excel"):
-            code, msg = osa(script, PDF_TIMEOUT_S)
-            ok = code == 0 and tmp.exists() and tmp.stat().st_mtime_ns != before and (not pdf_dest or (tmp_pdf.exists() and tmp_pdf.stat().st_size > 0))
-            if not ok:
-                osa(f'with timeout of 15 seconds\ntell application "Microsoft Excel"\n{close_mine}\nend tell\nend timeout')
+            note_temps("excel", [tmp.name], add=True)
+            ok = False
+            try:
+                code, msg = osa(script, PDF_TIMEOUT_S)
+                ok = code == 0 and tmp.exists() and tmp.stat().st_mtime_ns != before and (not pdf_dest or (tmp_pdf.exists() and tmp_pdf.stat().st_size > 0))
+            finally:
+                if not ok and running("excel"):
+                    osa(f'with timeout of 15 seconds\ntell application "Microsoft Excel"\n{close_mine}\nend tell\nend timeout')
+                note_temps("excel", [tmp.name], add=False)
         with leases_lock():
             touch("excel")
         if not ok:
-            log(f"xlsx FAILED {agent} {p} ({msg[:120]})")
-            return 1, {"status": "failed", "why": t("ao.xlsx_failed", detail=msg.strip()[:160] or f"exit {code}")}
+            reason, errno = failure(code, msg if code else (msg or "Excel answered, but the workbook was not saved"))
+            log(f"xlsx FAILED {agent} {p} ({reason}{', errno ' + str(errno) if errno else ''})")
+            out_ = {"status": "failed", "why": t("ao.xlsx_failed", detail=reason[:160])}
+            if errno:
+                out_["errno"] = errno
+            return 1, out_
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(tmp), str(dest))                     # replaces the source (or --out) only now, recalculated
         res = {"status": "recalculated", "xlsx": str(dest), "renderer": "Microsoft Excel"}
@@ -507,9 +697,15 @@ def idle_quit(dry=False):
             out.append({"app": app, "would": "quit if it has no documents"})
             continue
         name, coll = APPS[app][0], APPS[app][1]
-        code, res = osa(f'with timeout of 15 seconds\ntell application {q(name)}\nif (count of {coll}) is 0 then\nquit\nreturn "quit"\n'
+        mine_ = temps_of(app, pid)             # temp copies a failed conversion left: office-owner's own, never leased
+        close_ = (f'repeat with x in ({coll} as list)\ntry\nif {{name of x}} is in {{{", ".join(q(n) for n in mine_)}}} then close x saving no\n'
+                  f'end try\nend repeat\n') if mine_ else ""
+        code, res = osa(f'with timeout of 15 seconds\ntell application {q(name)}\n{close_}if (count of {coll}) is 0 then\nquit\nreturn "quit"\n'
                         f'end if\nreturn "busy " & (count of {coll})\nend tell\nend timeout')
         res = res.strip() if code == 0 else "unknown"
+        if mine_ and code == 0:
+            note_temps(app, mine_, add=False)
+            log(f"closed {len(mine_)} leftover temp cop{'y' if len(mine_) == 1 else 'ies'} in {app}")
         if res == "quit":
             st.pop(app, None)
             log(f"quit {app} — launched by {rec.get('launchedBy')}, idle {int((time.time() - float(rec.get('lastActivity') or 0)) / 60)} min, no documents")
