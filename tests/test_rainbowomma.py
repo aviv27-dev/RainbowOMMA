@@ -2323,5 +2323,44 @@ check("failure (#38): the AppleScript error number is read from the text whateve
       and ao.failure(1, "")[0] == "exit 1 with no message")
 ao.RUN = osa
 
+# ── install --migrate-from: a pre-release install's state (#41) ──
+legacy = tmp / "legacy-home"; (legacy / "browsers").mkdir(parents=True); (legacy / "logs").mkdir(); (legacy / "word-convert").mkdir()
+(legacy / "cdp" / "alpha").mkdir(parents=True); (legacy / "cdp" / "alpha" / "token").write_text("old-secret")
+(legacy / "browsers" / "alpha.json").write_text(json.dumps({"offByOwner": True, "offAt": "2026-10-19T10:00:00"}))
+(legacy / "browsers" / "bravo.json").write_text(json.dumps({"offByOwner": False, "lastStart": {"by": "bravo"}}))
+(legacy / "browsers" / "charlie.json").write_text(json.dumps({"offByOwner": "yes"}))
+(legacy / "browsers" / "alpha.lock").write_text("")
+(legacy / "logs" / "browser-owner.log").write_text("old log\n"); (legacy / "word-convert" / "ofc-pdf-1.docx").write_text("x")
+mh2 = tmp / "migrate-new"; (mh2 / "logs").mkdir(parents=True); (mh2 / "logs" / "browser-owner.log").write_text("new log\n")
+mreg = tmp / "migrate-reg.json"
+mreg.write_text(json.dumps({"agents": {"alpha": {"label": "A", "port": 9222, "profile": str(tmp / "ma"), "color": "#E53935",
+                                                  "state": str(legacy / "browsers" / "alpha.json")}}}))
+mig = lambda *a: subprocess.run([sys.executable, "-I", str(HERE.parent / "install" / "migrate.py"), str(legacy), str(mh2), "--registry", str(mreg), *a],
+                                capture_output=True, text=True)
+dry_ = mig("--dry-run")
+check("migrate (#41): the dry run only reports — nothing is written", dry_.returncode == 0 and "dry run" in dry_.stdout
+      and not (mh2 / "browsers").exists() and "legacy stop flag" in dry_.stdout, dry_.stdout)
+real_ = mig()
+st_a = json.loads((mh2 / "browsers" / "alpha.json").read_text()); st_b = json.loads((mh2 / "browsers" / "bravo.json").read_text())
+st_c = json.loads((mh2 / "browsers" / "charlie.json").read_text())
+check("migrate (#41): a legacy stop flag set (or unreadable) becomes offByHuman — a browser the human closed stays closed",
+      st_a["offByHuman"] is True and st_b["offByHuman"] is False and st_c["offByHuman"] is True, (st_a, st_b, st_c))
+check("migrate (#41): nothing in the new home is overwritten, the old folder is untouched, and locks, broker keys and Word's temp copies stay behind",
+      (mh2 / "logs" / "browser-owner.log").read_text() == "new log\n" and json.loads((legacy / "browsers" / "alpha.json").read_text()) == {"offByOwner": True, "offAt": "2026-10-19T10:00:00"}
+      and not (mh2 / "cdp").exists() and not (mh2 / "browsers" / "alpha.lock").exists() and not list((mh2).glob("word-convert/*")))
+check("migrate (#41): rows of browsers.json still pointing into the old folder are named", "alpha.state" in real_.stdout, real_.stdout)
+check("migrate (#41): the old and the new folder must be separate", subprocess.run([sys.executable, "-I", str(HERE.parent / "install" / "migrate.py"),
+      str(legacy), str(legacy / "inner")], capture_output=True, text=True).returncode == 2)
+lbo = load("browser-owner.py")
+lf = tmp / "legacy-state.json"; lf.write_text(json.dumps({"offByOwner": True}))
+check("browser-owner (#41): until the move, a legacy stop flag still means stopped; offByHuman, once there, decides",
+      lbo.load({"state": str(lf)}).get("offByHuman") is True
+      and (lf.write_text(json.dumps({"offByOwner": True, "offByHuman": False})) or lbo.load({"state": str(lf)})["offByHuman"] is False))
+ih = tmp / "migrate-install"; ih.mkdir()
+r_mi = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--bin", str(ih / "bin"), "--migrate-from", str(legacy), "--dry-run"],
+                      capture_output=True, text=True, env=dict(os.environ, HOME=str(ih), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(ih / ".rainbowomma")))
+check("install.sh --migrate-from … --dry-run reports the migration and changes nothing", r_mi.returncode == 0 and "dry run" in r_mi.stdout
+      and not (ih / ".rainbowomma").exists(), r_mi.stdout[-400:] + r_mi.stderr[-200:])
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

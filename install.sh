@@ -2,7 +2,7 @@
 # RainbowOMMA installer — copies the tools into one folder, creates the registry from the example (never overwrites yours),
 # creates the state folders, and optionally loads the launchd sweep for office-owner with absolute paths.
 #
-#   ./install.sh [--bin DIR] [--agent-chrome CHANNEL] [--with-sweep] [--with-heal] [--with-tab-sweep] [--with-menubar] [--adapter AGENT …] [--dry-run]
+#   ./install.sh [--bin DIR] [--agent-chrome CHANNEL] [--with-sweep] [--with-heal] [--with-tab-sweep] [--with-menubar] [--adapter AGENT …] [--migrate-from DIR] [--dry-run]
 #
 #   --bin DIR      where the tools go (default: ~/bin). They look for each other in the same folder.
 #   --agent-chrome C  the agents' browsers run as a Chrome of their own: beta, dev, canary or cft (Chrome for Testing) —
@@ -13,6 +13,9 @@
 #                  says "tabSweep": {"mode": "apply"} (then it reloads them, and closes those that stay hot)
 #   --with-menubar the menu-bar item for SwiftBar (agents as colored dots, pause all agents with ⌘⌥⌃P)
 #   --adapter A    write agent framework A's adapter, with your paths filled in, to $RAINBOW_HOME/adapters/A (see docs/AGENTS.md)
+#   --migrate-from DIR  carry a pre-release install's state (DIR, e.g. its old state folder) into $RAINBOW_HOME:
+#                  copied, never moved or overwritten; a legacy stop flag becomes offByHuman (stopped stays stopped).
+#                  With --dry-run it only reports — run that first
 #   --dry-run      print what would happen, change nothing
 #
 # RAINBOW_HOME (default ~/.rainbowomma) is where logs, state and themes live; the jobs are given the same value.
@@ -23,6 +26,7 @@ BIN="$HOME/bin"
 SWEEP=0
 HEAL=0
 CHANNEL=""
+MIGRATE=""
 TABS=0
 MENUBAR=0
 ADAPTERS=""
@@ -32,12 +36,13 @@ while [ $# -gt 0 ]; do
     --bin) BIN="${2:?--bin needs a folder}"; shift 2 ;;
     --with-sweep) SWEEP=1; shift ;;
     --with-heal) HEAL=1; shift ;;
+    --migrate-from) MIGRATE="${2:?--migrate-from needs the folder of the old install}"; shift 2 ;;
     --agent-chrome) CHANNEL="${2:?--agent-chrome needs beta, dev, canary or cft}"; shift 2 ;;
     --with-tab-sweep) TABS=1; shift ;;
     --with-menubar) MENUBAR=1; shift ;;
     --adapter) ADAPTERS="$ADAPTERS ${2:?--adapter needs an agent framework, e.g. claude-code}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -115,6 +120,12 @@ if [ -n "$CHANNEL" ]; then
     else HOW="google.com/chrome, or: brew install --cask google-chrome@$CHANNEL"; fi
     echo "   note: /Applications/$APP.app isn't installed yet — $HOW"
   fi
+fi
+
+if [ -n "$MIGRATE" ]; then
+  echo "→ migrating $MIGRATE into $ROOT"
+  if [ "$DRY" = 1 ]; then python3 -I "$HERE/install/migrate.py" "$MIGRATE" "$ROOT" --registry "$BIN/browsers.json" --dry-run
+  else python3 -I "$HERE/install/migrate.py" "$MIGRATE" "$ROOT" --registry "$BIN/browsers.json"; fi
 fi
 
 echo "→ state in $ROOT"
