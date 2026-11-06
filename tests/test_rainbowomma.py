@@ -2362,5 +2362,48 @@ r_mi = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--bin", str(ih 
 check("install.sh --migrate-from … --dry-run reports the migration and changes nothing", r_mi.returncode == 0 and "dry run" in r_mi.stdout
       and not (ih / ".rainbowomma").exists(), r_mi.stdout[-400:] + r_mi.stderr[-200:])
 
+# ── built-in idle-stop (#44) and a theme missing for long (#45) ──
+ib = load("browser-owner.py"); ib.SHARED = tmp / "idle-home"
+ireg = {"alpha": {"name": "alpha", "label": "Alpha", "idleMinutes": 30, "state": str(tmp / "idle-alpha.json"), "lock": str(tmp / "idle-alpha.lock"),
+                  "log": str(tmp / "idle.log"), "port": 9222},
+        "bravo": {"name": "bravo", "label": "Bravo", "state": str(tmp / "idle-bravo.json"), "lock": str(tmp / "idle-bravo.lock"),
+                  "log": str(tmp / "idle.log"), "port": 9223}}
+Path(ireg["alpha"]["state"]).write_text(json.dumps({"lastStart": {"at": "2020-01-01T00:00:00"}}))
+ib.view = lambda a, st=None, rows=None: {"status": "up", "roots": [1]}
+ib.processes = lambda: []
+stops, sig = [], {"v": (False, "S1")}
+ib.do_idle_stop = lambda a, by: stops.append((a["name"], by)) or (0, {"status": "stopped"})
+def _sig(a):
+    if isinstance(sig["v"], Exception):
+        raise sig["v"]
+    return sig["v"]
+ib.idle_signals = _sig
+ib.AUTH_LEASES = lambda: {}
+r1 = ib.auto_idle(ireg)
+ago40 = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 40 * 60))
+s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
+sig["v"] = (True, "S1"); r_att = ib.auto_idle(ireg)
+s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
+sig["v"] = (False, "S1"); ib.AUTH_LEASES = lambda: {"accounts.example.com": {"holder": "alpha"}}; r_auth = ib.auto_idle(ireg)
+ib.AUTH_LEASES = lambda: {}; sig["v"] = OSError("no answer"); r_unk = ib.auto_idle(ireg)
+check("auto idle-stop (#44): a tab change, an attached client, a sign-in in progress, or no answer — never a stop",
+      r1[0]["idle"] == "changed" and r_att[0]["idle"] == "active" and r_auth[0]["idle"] == "busy" and r_unk[0]["idle"] == "unknown"
+      and not stops and [x["agent"] for x in r1] == ["alpha"], (r1, r_att, r_auth, r_unk))
+s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; s_["idleSnap"] = "S1"; Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
+sig["v"] = (False, "S1"); r_stop = ib.auto_idle(ireg)
+check("auto idle-stop (#44): no client and no tab change for idleMinutes → stopped through idle-stop, with a receipt; an agent without idleMinutes never",
+      stops == [("alpha", "auto-idle")] and r_stop[0]["idle"] == "stopped"
+      and '"auto-idle"' in (SAFE_HOME / "logs" / "receipts.jsonl").read_text(), (stops, r_stop))
+hb = load("browser-owner.py"); notes = []
+hb.auto_idle = lambda reg, rows=None: []; hb.theme_saved = lambda a: ""; hb.profile_unsafe = lambda a: None
+hb.view = lambda a, st=None, rows=None: {"roots": [1]}; hb.notify = lambda title, text: notes.append(text)
+hb.chrome_version = lambda: None; hb.processes = lambda: []; hb.THEMES = tmp / "heal-themes"; hb.DOCK_APPS = tmp / "no-dock"
+hreg = {"alpha": {"name": "alpha", "label": "Alpha", "color": "#E53935", "state": str(tmp / "heal-alpha.json"), "lock": str(tmp / "heal-alpha.lock"),
+                  "log": str(tmp / "heal.log"), "profile": str(tmp / "heal-prof")}}
+runs = [hb.heal(hreg)["agents"][0] for _ in range(9)]
+hst = json.loads(Path(hreg["alpha"]["state"]).read_text())
+check("heal (#45): a theme missing on an open browser is said once, then again after ~4 h (8 runs) with how long — and not every run after",
+      len(notes) == 2 and runs[-1]["runs"] == 9 and hst["themePending"] is True and "Alpha" in notes[1], (notes, runs[-1]))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
