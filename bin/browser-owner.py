@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -863,7 +864,7 @@ def view(a, st=None, rows=None):
     else:
         status = "hung" if roots else "down"
     return {"agent": a["name"], "label": a["label"], "color": a["color"], "port": a["port"], "status": status, "up": status == "up",
-            "roots": roots, "processes": len(tree), "foreignRoots": foreign, "cdp": a.get("cdp", "port"), "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")),
+            "roots": roots, "processes": len(tree), "foreignRoots": foreign, "cdp": a.get("cdp", "port"), "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")), "themePending": bool(st.get("themePending")),
             "offAt": st.get("offAt"), "lastExitType": last_exit_type(a), "lastStart": st.get("lastStart"),
             "lastStop": st.get("lastStop"), "managedBy": a.get("managedBy")}
 
@@ -1024,10 +1025,92 @@ def notify(title, text):
         pass
 
 
+THEME_ESCALATE_RUNS = 8            # heal runs every 30 min: ~4 h uncolored, then say it again (at most once a day)
+AUTH_LEASES = None                 # tests replace it: () -> {site: {"holder": …}}
+
+
+def _iso_ago(text):
+    try:
+        return time.time() - time.mktime(time.strptime(str(text or "")[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def _auth_holders():
+    if AUTH_LEASES:
+        return {v.get("holder") for v in AUTH_LEASES().values()}
+    try:
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader("rainbow_auth_owner", str(HERE / "auth-owner.py"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return {v.get("holder") for v in mod.leases().values()}
+    except Exception:
+        return None                                      # can't tell → treated as busy by the caller
+
+
+def idle_signals(a):
+    """→ (a client is attached to one of its tabs, a fingerprint of its tabs) through the agent's own CDP; raises if unreadable"""
+    with cdp_for(a, timeout=5) as c:
+        pages = [x for x in c.call("Target.getTargets").get("targetInfos", []) if x.get("type") == "page"]
+    attached = any(x.get("attached") for x in pages)
+    snap = "|".join(sorted(f"{x.get('targetId')}={x.get('url')}" for x in pages))
+    return attached, hashlib.sha256(snap.encode()).hexdigest()[:16]
+
+
+def auto_idle(reg, rows=None):
+    """the built-in reaper (#44): an agent with idleMinutes whose browser has had no client attached to any tab and no tab
+    change for idleMinutes, and holds no auth-owner lease, is stopped like `idle-stop --by auto-idle`. Anything it can't
+    read means busy — never a stop on a guess. Never the human's browser, never a managedBy one."""
+    rows = processes() if rows is None else rows
+    holders, out = _auth_holders(), []
+    for name, a in reg.items():
+        if not a.get("idleMinutes") or a.get("managedBy"):
+            continue
+        st = load(a)
+        if view(a, st=st, rows=rows)["status"] != "up":
+            continue
+        if holders is None or name in holders:
+            out.append({"agent": name, "idle": "busy", "why": "signing in (auth-owner)" if holders else "auth leases unreadable"})
+            continue
+        try:
+            attached, snap = idle_signals(a)
+        except Exception as exc:
+            out.append({"agent": name, "idle": "unknown", "why": f"{type(exc).__name__}"})
+            continue
+        if attached or st.get("idleSnap") != snap:
+            st.update({"idleSnap": snap, "idleSince": now_iso()})
+            save(a, st)
+            out.append({"agent": name, "idle": "active" if attached else "changed"})
+            continue
+        quiet = _iso_ago(st.get("idleSince"))
+        if quiet is None or quiet < a["idleMinutes"] * 60:
+            out.append({"agent": name, "idle": "quiet", "minutes": int((quiet or 0) // 60)})
+            continue
+        try:
+            lk = open_lock(a["lock"])
+        except OSError:
+            continue
+        with lk:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                continue
+            a["peers"] = list(reg)
+            code, res = do_idle_stop(a, "auto-idle")
+        rainbow_receipts.write("browser-owner", "idle-stop", name, "auto-idle", res.get("status"), minutes=int(quiet // 60))
+        log(a, f"auto-idle: no client and no tab change for {int(quiet // 60)} min → {res.get('status')}")
+        out.append({"agent": name, "idle": res.get("status"), "minutes": int(quiet // 60)})
+    return out
+
+
 def heal(reg):
     """keep every agent's colors: a CLOSED browser whose theme is gone (Chrome Sync, a settings reset) gets it back now
     (windowless install, under its lock); an OPEN one is never restarted from here — one notification, and its next start
     puts it back. A Chrome update is recorded, with one notification on whether every theme and Dock applet is in place."""
+    idle = auto_idle(reg)                    # first: a browser it stops gets its colors back in this same run
     rows = processes()
     out = []
     for name, a in reg.items():
@@ -1035,7 +1118,7 @@ def heal(reg):
             continue
         st = load(a)
         if st.get("theme") == theme_key(a) and theme_saved(a):
-            if st.pop("themeMissingSince", None):
+            if any(st.pop(k, None) is not None for k in ("themeMissingSince", "themeMissingRuns", "themePending", "themeEscalatedAt")):
                 save(a, st)
             out.append({"agent": name, "theme": "ok"})
             continue
@@ -1046,10 +1129,18 @@ def heal(reg):
         if v["roots"] or v.get("profileBusy"):
             if not st.get("themeMissingSince"):
                 st["themeMissingSince"] = now_iso()
-                save(a, st)
                 notify("RainbowOMMA", t("bo.heal_missing_open", label=a["label"]))
                 log(a, "heal: theme missing while the browser is open — put back on the next start")
-            out.append({"agent": name, "theme": "missing-open", "since": st.get("themeMissingSince")})
+            st["themeMissingRuns"] = int(st.get("themeMissingRuns") or 0) + 1
+            st["themePending"] = True            # re-applied at the next stop — the idle one included
+            gone = _iso_ago(st["themeMissingSince"]) or 0
+            again = _iso_ago(st.get("themeEscalatedAt"))
+            if st["themeMissingRuns"] >= THEME_ESCALATE_RUNS and (again is None or again >= 86400):
+                st["themeEscalatedAt"] = now_iso()
+                notify("RainbowOMMA", t("bo.heal_missing_still", label=a["label"], hours=int(gone // 3600)))
+                log(a, f"heal: theme still missing after {int(gone // 3600)} h of open browser — told the human again")
+            save(a, st)
+            out.append({"agent": name, "theme": "missing-open", "since": st.get("themeMissingSince"), "runs": st["themeMissingRuns"]})
             continue
         try:
             lk = open_lock(a["lock"])
@@ -1063,7 +1154,8 @@ def heal(reg):
                 out.append({"agent": name, "theme": "busy"})
                 continue
             res = ensure_theme(a, st)
-            st.pop("themeMissingSince", None)
+            for k in ("themeMissingSince", "themeMissingRuns", "themePending", "themeEscalatedAt"):
+                st.pop(k, None)
             save(a, st)
             log(a, f"heal: theme {res} while the browser was closed")
             out.append({"agent": name, "theme": res})
@@ -1083,7 +1175,8 @@ def heal(reg):
         if prev:
             bad = [x["agent"] for x in out if x["theme"] not in ("ok", "kept", "installed")] + missing_apps
             notify("RainbowOMMA", t("bo.heal_chrome_ok", ver=ver) if not bad else t("bo.heal_chrome_check", ver=ver, names=", ".join(bad)))
-    return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps}
+    return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps,
+            "idle": idle}
 
 
 def _broker():

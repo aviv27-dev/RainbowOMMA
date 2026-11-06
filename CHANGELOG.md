@@ -30,6 +30,9 @@ exit codes are an API and change only in a major version.
   never moved or overwritten; a legacy stop flag named after the person becomes `offByHuman`, and set or unreadable
   means stopped; locks, broker keys and Word's temp copies stay behind; rows of `browsers.json` still pointing into the
   old folder are named. `--dry-run` only reports. Until then browser-owner reads a legacy flag as stopped. (#41)
+- Built-in idle-stop: an agent with `idleMinutes` whose browser has no client attached and no tab change for that long,
+  and holds no auth-owner lease, is stopped by the heal job (`--by auto-idle`, with a receipt) — no private reaper
+  needed. Anything that can't be read counts as busy. (#44)
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it
@@ -50,6 +53,8 @@ exit codes are an API and change only in a major version.
   sweep before it decides whether the app may quit — so a failure no longer keeps Word open for days. (#37)
 - office-owner: a failure never has an empty reason — an osascript timeout says so — and the AppleScript error number
   is returned as `errno`. (#38)
+- heal: colors missing on an open browser are reported again after ~4 h with how long (at most once a day) and marked
+  `themePending`; an idle stop in the same run puts them back. (#45)
 
 ## [0.2.0] — 2026-10-24
 

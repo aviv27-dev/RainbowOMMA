@@ -61,6 +61,10 @@ M = {
     "bo.idle_too_soon": {"en": "{label}'s browser was started {mins} min ago — not idle yet (idleMinutes = {idle})",
                          "he": "הדפדפן של {label} נפתח לפני {mins} דק׳ — עוד לא בחוסר פעילות (idleMinutes = {idle})"},
     "bo.front_down": {"en": "{label}'s browser is not running", "he": "הדפדפן של {label} לא רץ"},
+    "bo.heal_missing_still": {"en": "{label} has been running without its colors for {hours} h — stop and start its browser when it "
+                                    "suits you (or it gets them back at its next idle stop)",
+                              "he": "{label} רץ בלי הצבעים שלו כבר {hours} שעות — לעצור ולהפעיל את הדפדפן שלו כשנוח (או שהצבעים "
+                                    "יחזרו בעצירה הבאה שלו בחוסר פעילות)"},
     "bo.heal_missing_open": {"en": "{label}'s colors are gone (Chrome Sync) — they come back the next time its browser starts",
                              "he": "הצבעים של {label} ירדו (סנכרון Chrome) — הם יחזרו בהפעלה הבאה של הדפדפן שלו"},
     "bo.heal_chrome_ok": {"en": "Chrome updated to {ver} — every agent's colors and Dock shortcut are in place",
