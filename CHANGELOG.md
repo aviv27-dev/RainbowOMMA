@@ -38,6 +38,9 @@ exit codes are an API and change only in a major version.
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it
   would replace (`$RAINBOW_HOME/backup/`). `uninstall.sh` removes only what it installed and you did not change since,
   then puts your files back; an older install without a manifest loses only files identical to RainbowOMMA's.
+- Logs: the heal and sweep jobs print only what changed (stamped with `"at"`, a heartbeat once a day); logs in
+  `$RAINBOW_HOME/logs` rotate weekly, kept 4 weeks (`receipts.jsonl` stays whole); `rainbowomma-doctor logs` merges every
+  log into one timeline. Reinstall (or add `--scheduled` to the jobs) to get the quiet job output. (#46)
 
 ### Fixed
 - proc-owner: a recorded process mark holds only while the process is the same one — its command line and, now, its

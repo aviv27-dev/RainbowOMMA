@@ -1280,7 +1280,8 @@ def main(argv=None):
     ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
     ap.add_argument("--format", choices=["json", "claude"], default="json", help="mcp-config: an mcpServers entry, or a claude mcp add-json line")
     ap.add_argument("--apply", action="store_true", help="tabs: act now (reload / close), whatever tabSweep.mode says")
-    ap.add_argument("--scheduled", action="store_true", help="tabs: the launchd run — tabSweep.mode decides, one summary a day")
+    ap.add_argument("--scheduled", action="store_true", help="tabs / heal: the launchd run — tabs: tabSweep.mode decides, one summary a "
+                    "day; heal: prints only what changed (stamped), and rotates the logs")
     a = ap.parse_args(argv)
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if me and a.by.strip().lower() not in (me, "agent", "keepalive"):        # an agent acts as itself — never as the human or a peer
@@ -1321,7 +1322,10 @@ def main(argv=None):
             for x in res["agents"]:
                 if x["theme"] not in ("ok", "kept"):
                     rainbow_receipts.write("browser-owner", "heal", x["agent"], "heal", x["theme"])
-            print(json.dumps(res, ensure_ascii=False))
+            if a.scheduled:                  # the launchd job: changes only (and a daily heartbeat), stamped, logs rotated
+                rainbow_receipts.quiet_print("heal", res)
+            else:
+                print(json.dumps(res, ensure_ascii=False))
             return 0
         except Exception as exc:   # one JSON answer, always
             print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))

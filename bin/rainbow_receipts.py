@@ -44,6 +44,65 @@ def acting_as(agent):
     return None
 
 
+VOLATILE = {"at", "minutes", "since", "runs", "until"}       # change every run without anything happening
+ROTATE_KEEP_S = 28 * 86400
+
+
+def _stable(v):
+    if isinstance(v, dict):
+        return {k: _stable(x) for k, x in v.items() if k not in VOLATILE}
+    if isinstance(v, list):
+        return [_stable(x) for x in v]
+    return v
+
+
+def quiet_print(job, result, now=None):
+    """for a launchd job: print its answer (stamped with "at") only when it differs from the last one printed, and once a
+    day anyway as a heartbeat — the job's log then holds changes, not the same line every half hour. → printed or not"""
+    now = time.time() if now is None else now
+    sig = hashlib.sha256(json.dumps(_stable(result), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    f = path().parent.parent / "state" / f"{job}-last.json"
+    try:
+        last = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        last = {}
+    show = last.get("sig") != sig or now - float(last.get("printedAt") or 0) >= 86400
+    if show:
+        print(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(now)), **result}, ensure_ascii=False))
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({"sig": sig, "printedAt": now}), encoding="utf-8")
+        except OSError:
+            pass
+    rotate_logs(now)
+    return show
+
+
+def rotate_logs(now=None):
+    """once a week: every *.log in $RAINBOW_HOME/logs becomes NAME.log.YYYY-Www, and rotated logs older than 4 weeks go.
+    receipts.jsonl stays whole (its line count is the OTLP export's cursor)."""
+    now = time.time() if now is None else now
+    logs = path().parent
+    week = time.strftime("%G-W%V", time.localtime(now))
+    mark = logs / ".rotated-week"
+    try:
+        if mark.read_text().strip() == week:
+            return
+    except OSError:
+        pass
+    try:
+        prev = time.strftime("%G-W%V", time.localtime(now - 7 * 86400))
+        for f in logs.glob("*.log"):
+            if f.is_file() and not f.is_symlink() and f.stat().st_size:
+                os.replace(f, f.with_name(f"{f.name}.{prev}"))
+        for f in logs.glob("*.log.*-W*"):
+            if now - f.stat().st_mtime > ROTATE_KEEP_S:
+                f.unlink()
+        mark.write_text(week)
+    except OSError:
+        pass
+
+
 def write(tool, action, agent=None, by=None, status=None, **detail):
     rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "tool": tool, "action": action, "agent": agent, "by": by, "status": status}
     rec.update({k: (v[:MAX_FIELD] if isinstance(v, str) else v) for k, v in detail.items() if v not in (None, "", [], {})})
