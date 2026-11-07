@@ -69,6 +69,10 @@ TOOLS = [
     {"name": "release_login", "description": "Done signing in: give the site back.",
      "inputSchema": {"type": "object", "properties": {"site": {"type": "string"}}, "required": ["site"]},
      "argv": lambda me, a: ["auth-owner", "release", me, str(a["site"])]},
+    {"name": "open_in_my_browser", "description": "Open an address (a sign-in, an OAuth page …) in YOUR browser — never the human's. "
+                                                 "Use it instead of `open <url>`.",
+     "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]},
+     "argv": lambda me, a: ["browser-owner", "open", me, str(a["url"]), "--by", me]},
     {"name": "browser_status", "description": "Your browser: up, down, hung, blocked, profile-busy, or closed by the human.",
      "inputSchema": {"type": "object", "properties": {}},
      "argv": lambda me, a: ["browser-owner", "status", me]},

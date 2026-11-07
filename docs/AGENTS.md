@@ -80,6 +80,15 @@ These three work for every agent, whatever its framework:
   same way as the cursor proxy below, e.g.
   `claude mcp add-json --scope user rainbowomma "{\"command\":\"$HOME/bin/rainbowomma-mcp\",\"args\":[\"--agent\",\"alpha\"]}"`.
 
+## Sign-in pages: `BROWSER=` for every agent
+
+A framework that opens a sign-in page itself (Python's `webbrowser.open`, OAuth and device-code flows — Hermes Agent
+among them) uses `$BROWSER` when it is set. Put `BROWSER=/Users/you/bin/rainbowomma-browser` in the agent's environment
+— `as-agent` passes it on, or the framework's own env setting (Claude Code `"env"`, Codex `shell_environment_policy`,
+Hermes `.env`). The page then opens in that agent's browser (`browser-owner open`), never the human's, and a failure is
+reported without falling back to the human's browser. Agent skills that call `open <url>` should call
+`browser-owner open <agent> <url>` instead — the guardrail refuses the former and says so.
+
 ## File tools, not only the shell
 
 The guardrail also refuses an agent's file tools aimed at RainbowOMMA's own state or `browsers.json` (writing) and the

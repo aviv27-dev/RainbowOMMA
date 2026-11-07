@@ -1047,7 +1047,7 @@ check("mcp: initialize answers the client's protocol version; the notification g
       [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == "2025-06-18", got[:1])
 check("mcp: the tools — ports, processes, the agent's own browser",
       {"lease_port", "release_port", "who_port", "whose_process", "stop_process", "my_processes", "browser_status", "start_my_browser",
-       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval", "take_login", "ask_login_code", "release_login"} == set(names), names)
+       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval", "take_login", "ask_login_code", "release_login", "open_in_my_browser"} == set(names), names)
 lp = got[2]["result"]
 check("mcp lease_port: a port from Alpha's own range, as structured JSON", not lp["isError"] and 41000 <= lp["structuredContent"]["port"] <= 41099, lp)
 check("mcp who_port: 3000 is the human's", got[3]["result"]["structuredContent"]["owner"] == "human")
@@ -1960,6 +1960,8 @@ class FakeTabsCDP(FakeCDP):
                     res = {"metrics": [{"name": "Timestamp", "value": ts}, {"name": "TaskDuration", "value": td}]}
                 elif m == "Target.closeTarget":
                     self.pages.pop(prm["targetId"], None); res = {"success": True}
+                elif m == "Target.createTarget":
+                    tid_ = f"new{len(self.pages)}"; self.pages[tid_] = (prm.get("url", ""), 0.0, False); res = {"targetId": tid_}
                 elif m == "SystemInfo.getProcessInfo":
                     self.gpu_t = getattr(self, "gpu_t", 0.0) + getattr(self, "gpu_rate", 0.0) * 10
                     res = {"processInfo": [{"type": "browser", "id": 1, "cpuTime": 5.0}, {"type": "GPU", "id": 2, "cpuTime": self.gpu_t}]}
@@ -2440,6 +2442,50 @@ os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
 check("logs (#46): `rainbowomma-doctor logs` — every location (an agent's log elsewhere too) as one timeline, oldest first",
       order == ["alpha: start", "charlie: start", "pdf bravo x", '{"at": "2026-11-05T11:30:00+0200", "status": "healed"}', "alpha: stop"]
       and "1 lines without a time" in r_lg.stdout, r_lg.stdout + r_lg.stderr)
+
+# ── sign-ins never land in the human's browser (#42) ──
+human_open = ["open https://accounts.example.com/login", "open -a 'Google Chrome' https://x.example", "open -a Safari",
+              "open -a Chromium", "open http://x.example/oauth?code=1", "bash -c 'open https://x.example'"]
+ho = {c: as_agent(c, "alpha") for c in human_open}
+ok_open = {c: as_agent(c, "alpha") for c in ["open .", "open README.md", "open -a TextEdit notes.txt", "browser-owner open alpha https://x.example"]}
+check("guard (#42): an agent's `open <url>` / `open -a <a browser>` would land in the human's browser — refused, the way out named",
+      all(v == 2 for v in ho.values()) and all(v == 0 for v in ok_open.values()), (ho, ok_open))
+r_why = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": "open https://x.example"}}), capture_output=True,
+                       text=True, env=dict(genv, RAINBOW_AGENT="alpha"))
+check("guard (#42): …and the refusal says what to run instead", "browser-owner open alpha <url>" in r_why.stderr, r_why.stderr)
+rp_ = json.loads(REG.read_text()); rp_["guardOpen"] = "report"; RPREG = tmp / "open-report.json"; RPREG.write_text(json.dumps(rp_))
+check("guard (#42): guardOpen \"report\" lets it through for a rollout (a receipt only)",
+      subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_input": {"command": "open https://x.example"}}), capture_output=True,
+                     text=True, env=dict(genv, RAINBOW_AGENT="alpha", BROWSER_OWNER_REGISTRY=str(RPREG))).returncode == 0)
+check("guard (#42): an agent opens addresses only in its own browser", as_agent("browser-owner open bravo https://x.example", "alpha") == 2)
+fo = FakeTabsCDP({"t0": ("https://docs.example/", 0.0, False)})
+ob = load("browser-owner.py"); ob.SHARED = tmp / "open-home"; ob.healthy = lambda a, timeout=2.0: True; ob.auth_sites = lambda path=None: []
+oa = {"name": "alpha", "port": fo.port, "label": "Alpha", "log": str(tmp / "open.log")}
+fo.calls.clear()
+c_o, r_o = ob.do_open(oa, "https://accounts.example.com/login", "alpha")
+check("browser-owner open (#42): a new tab in the agent's own browser, brought to the front of its window",
+      c_o == 0 and r_o["status"] == "opened" and any(m == "Target.createTarget" and prm.get("url") == "https://accounts.example.com/login" for m, prm, _ in fo.calls)
+      and any(m == "Target.activateTarget" for m, _, _ in fo.calls), (r_o, fo.calls))
+bad_urls = [ob.do_open(oa, u, "alpha")[0] for u in ("javascript:alert(1)", "file:///etc/passwd", "chrome://settings", "", "https://")]
+check("browser-owner open (#42): http(s) only — never javascript:, file: or chrome:", bad_urls == [2] * 5, bad_urls)
+starts = []
+ob.healthy = lambda a, timeout=2.0: bool(starts)
+ob.do_start = lambda a, by: starts.append(by) or (2, {"status": "closed-by-person", "why": "the human closed it"})
+c_c, r_c = ob.do_open(oa, "https://x.example", "alpha")
+check("browser-owner open (#42): a browser that is down is started first, by the usual rules — one the human closed stays closed",
+      starts == ["alpha"] and c_c == 2 and r_c["status"] == "closed-by-person", r_c)
+ob.healthy = lambda a, timeout=2.0: True
+ob.auth_sites = lambda path=None: ["accounts.example.com"]
+aoo = load("auth-owner.py"); aoo.state_file = lambda: tmp / "open-auth.json"; ob._auth_owner = lambda: aoo
+aoo.cmd_lease("bravo", "accounts.example.com", 10, 0)
+c_a, r_a = ob.do_open(oa, "https://accounts.example.com/login", "alpha")
+check("browser-owner open (#42): a sign-in site another agent holds (authSites) is refused; a free one is taken for this agent",
+      c_a == 2 and r_a.get("holder") == "bravo" and (aoo.cmd_release("bravo", "accounts.example.com") or True)
+      and ob.do_open(oa, "https://accounts.example.com/login", "alpha")[0] == 0 and aoo.holder("accounts.example.com") == "alpha", r_a)
+lb = subprocess.run(["bash", str(HERE / "rainbowomma-browser"), "https://x.example"], capture_output=True, text=True,
+                    env={k: v for k, v in genv.items() if k != "RAINBOW_AGENT"})
+check("rainbowomma-browser (#42): without an agent name nothing opens — and it still exits 0, so webbrowser.open never falls back to the human's browser",
+      lb.returncode == 0 and "no agent name" in lb.stderr, (lb.returncode, lb.stderr))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
