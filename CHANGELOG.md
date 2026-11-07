@@ -5,6 +5,13 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-11-07
+
+One window for every browser (`rainbow-panel`), issues filed only after a privacy scan (`rainbowomma-report`), a
+bring-to-front that needs no Automation grant, the release in place recorded on every install, `rainbowomma-doctor
+status` for the running system on one screen, and the tests passing where macOS no longer shows other processes'
+environments.
+
 ### Added
 - `rainbowomma-doctor status [--json]`: the running system on one screen — each agent's browser, CDP mode, idle time and
   missing colors, presence, port leases, Office (who launched it, leftover temp copies), the last errors — and every
@@ -279,6 +286,7 @@ First public release.
 - Desktop open/close icons, the human's Chrome theme, and `kill-chrome.sh` that spares every agent browser.
 - Tests on macOS in CI (fakes only — never a real browser or app).
 
+[0.3.1]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.1
 [0.3.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.0
 [0.2.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.2.0
 [0.1.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.1.0
