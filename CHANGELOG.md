@@ -5,6 +5,11 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+### Added
+- `rainbowomma-doctor status [--json]`: the running system on one screen — each agent's browser, CDP mode, idle time and
+  missing colors, presence, port leases, Office (who launched it, leftover temp copies), the last errors — and every
+  problem with the command that fixes it; exit 1 when something needs attention, for scripts. (#57)
+
 ## [0.3.0] — 2026-11-07
 
 Word recovers from a blocking dialog and never stays open over a failed conversion; agents' sign-ins open in their

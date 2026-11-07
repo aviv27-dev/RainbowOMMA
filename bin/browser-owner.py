@@ -917,6 +917,7 @@ def view(a, st=None, rows=None):
         status = "hung" if roots else "down"
     return {"agent": a["name"], "label": a["label"], "color": a["color"], "port": a["port"], "status": status, "up": status == "up",
             "roots": roots, "processes": len(tree), "foreignRoots": foreign, "cdp": a.get("cdp", "port"), "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")), "themePending": bool(st.get("themePending")),
+            "idleMinutes": a.get("idleMinutes"), "idleSince": st.get("idleSince"),
             "offAt": st.get("offAt"), "lastExitType": last_exit_type(a), "lastStart": st.get("lastStart"),
             "lastStop": st.get("lastStop"), "managedBy": a.get("managedBy")}
 
