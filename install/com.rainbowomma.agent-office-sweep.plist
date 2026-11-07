@@ -8,6 +8,7 @@
     <string>/bin/bash</string>
     <string>~/bin/agent-office</string>
     <string>sweep</string>
+    <string>--scheduled</string>
     <string>--max-age-h</string>
     <string>3</string>
   </array>

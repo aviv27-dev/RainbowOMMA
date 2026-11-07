@@ -748,6 +748,7 @@ def main(argv=None):
     c = sub.add_parser("close"); c.add_argument("--agent", required=True); c.add_argument("file")
     r = sub.add_parser("renew"); r.add_argument("--agent", required=True); r.add_argument("file")
     s = sub.add_parser("sweep"); s.add_argument("--max-age-h", type=float, default=3.0); s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--scheduled", action="store_true", help="the launchd run: print only what changed (stamped), rotate the logs")
     sub.add_parser("list")
     x = sub.add_parser("xlsx"); x.add_argument("--agent", required=True); x.add_argument("--out"); x.add_argument("--pdf")
     x.add_argument("--force", action="store_true"); x.add_argument("file")
@@ -791,7 +792,10 @@ def main(argv=None):
         for x in out.get("items", []) + out.get("apps", []):
             if x.get("result") in ("closed", "quit", "dropped"):
                 rainbow_receipts.write("office-owner", "sweep", x.get("agent"), "sweep", x["result"], file=x.get("path"), app=x.get("app"))
-    print(json.dumps(out, ensure_ascii=False))
+    if a.cmd == "sweep" and a.scheduled:
+        rainbow_receipts.quiet_print("sweep", out)
+    else:
+        print(json.dumps(out, ensure_ascii=False))
     return code
 
 

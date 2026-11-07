@@ -8,6 +8,7 @@
     <string>/bin/bash</string>
     <string>~/bin/browser-owner</string>
     <string>heal</string>
+    <string>--scheduled</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>LANG</key><string>en_US.UTF-8</string><key>LC_ALL</key><string>en_US.UTF-8</string></dict>

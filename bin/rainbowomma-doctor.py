@@ -3,6 +3,7 @@
 
     rainbowomma-doctor            one line per check: ✓ ok · ✗ needed and missing (with the fix) · – optional and missing
     rainbowomma-doctor --json     the same as one JSON answer
+    rainbowomma-doctor logs [--since 2026-11-01] [-n 200]   every log RainbowOMMA writes, as one timeline
 
 Exit codes: 0 everything needed is in place · 1 something needed is missing.
 """
@@ -13,6 +14,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -101,7 +103,67 @@ def _read(path):
         return ""
 
 
+TS = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\]\s?(.*)$")
+
+
+def log_files():
+    """every log RainbowOMMA writes: $RAINBOW_HOME/logs, and an agent's own `log` when browsers.json puts it elsewhere"""
+    root = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))
+    files = sorted((root / "logs").glob("*.log")) if (root / "logs").is_dir() else []
+    try:
+        reg = json.loads(Path(os.environ.get("BROWSER_OWNER_REGISTRY") or HERE / "browsers.json").read_text(encoding="utf-8"))
+        for row in (reg.get("agents") or {}).values():
+            if isinstance(row, dict) and isinstance(row.get("log"), str):
+                f = Path(os.path.expanduser(row["log"]))
+                if f.is_file() and f not in files:
+                    files.append(f)
+    except (OSError, ValueError, AttributeError):
+        pass
+    return files
+
+
+def merged_logs(since="", n=200):
+    """→ [(time, file, line)] from every log, oldest first: "[YYYY-mm-dd HH:MM:SS] …" lines and JSON lines with "at";
+    a line without a time (an old job's stdout) can't be placed, and is counted, not shown"""
+    got, untimed = [], 0
+    for f in log_files():
+        try:
+            lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for ln in lines:
+            m = TS.match(ln)
+            if m:
+                when, text = m.group(1).replace(" ", "T"), m.group(2)
+            elif ln.startswith("{"):
+                try:
+                    d = json.loads(ln)
+                    when, text = str(d.get("at") or "")[:19], ln
+                except ValueError:
+                    when = ""
+            else:
+                when = ""
+            if not when:
+                untimed += bool(ln.strip())
+                continue
+            if when >= since:
+                got.append((when, f.name, text))
+    got.sort(key=lambda x: x[0])
+    return got[-n:] if n else got, untimed
+
+
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["logs"]:                     # rainbowomma-doctor logs [--since 2026-11-01] [-n 200]
+        lp = argparse.ArgumentParser(prog="rainbowomma-doctor logs")
+        lp.add_argument("--since", default=""); lp.add_argument("-n", type=int, default=200)
+        la = lp.parse_args(argv[1:])
+        rows, untimed = merged_logs(la.since.replace(" ", "T"), la.n)
+        for when, name, text in rows:
+            print(f"{when}  {name}  {text}")
+        if untimed:
+            print(f"({untimed} lines without a time were left out)")
+        return 0
     ap = argparse.ArgumentParser(prog="rainbowomma-doctor")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)

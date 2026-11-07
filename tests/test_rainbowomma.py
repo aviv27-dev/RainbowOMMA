@@ -2405,5 +2405,41 @@ hst = json.loads(Path(hreg["alpha"]["state"]).read_text())
 check("heal (#45): a theme missing on an open browser is said once, then again after ~4 h (8 runs) with how long — and not every run after",
       len(notes) == 2 and runs[-1]["runs"] == 9 and hst["themePending"] is True and "Alpha" in notes[1], (notes, runs[-1]))
 
+# ── logs (#46): changes only, stamped; rotation; one timeline ──
+lgh = tmp / "logs-home"; os.environ["RAINBOW_HOME"] = str(lgh); lrr = load("rainbow_receipts.py")
+outs = []
+for k, res in enumerate([{"status": "healed", "agents": [{"agent": "alpha", "theme": "ok"}]}] * 3
+                        + [{"status": "healed", "agents": [{"agent": "alpha", "theme": "missing-open", "since": "x", "runs": k}]} for k in range(2)]):
+    b_ = io.StringIO()
+    with contextlib.redirect_stdout(b_):
+        lrr.quiet_print("heal", res, now=1_800_000_000 + k * 1800)
+    outs.append(b_.getvalue())
+b_ = io.StringIO()
+with contextlib.redirect_stdout(b_):
+    lrr.quiet_print("heal", {"status": "healed", "agents": [{"agent": "alpha", "theme": "missing-open", "since": "x", "runs": 9}]},
+                    now=1_800_000_000 + 2 * 86400)
+check("logs (#46): a scheduled job prints only when something changed (a counter ticking doesn't count), stamped with \"at\" — and once a day anyway",
+      [bool(o) for o in outs] == [True, False, False, True, False] and json.loads(outs[0])["at"] and bool(b_.getvalue()), [bool(o) for o in outs])
+(lgh / "logs").mkdir(parents=True, exist_ok=True)
+(lgh / "logs" / "heal.out.log").write_text("x\n"); (lgh / "logs" / "receipts.jsonl").write_text("{}\n")
+oldrot = lgh / "logs" / "heal.out.log.2020-W01"; oldrot.write_text("old\n"); os.utime(oldrot, (1_000_000_000, 1_000_000_000))
+(lgh / "logs" / ".rotated-week").write_text("2000-W01")
+lrr.rotate_logs(now=time.time())
+check("logs (#46): weekly rotation — a log gets its week's name, one older than 4 weeks goes, receipts.jsonl stays whole",
+      not (lgh / "logs" / "heal.out.log").exists() and list((lgh / "logs").glob("heal.out.log.*-W*")) and not oldrot.exists()
+      and (lgh / "logs" / "receipts.jsonl").read_text() == "{}\n", sorted(x.name for x in (lgh / "logs").iterdir()))
+(lgh / "logs" / "browser-owner.log").write_text("[2026-11-05 10:00:00] alpha: start\n[2026-11-05 12:00:00] alpha: stop\n")
+(lgh / "logs" / "agent-office.log").write_text("[2026-11-05 11:00:00] pdf bravo x\n")
+(lgh / "logs" / "heal.out.log").write_text('{"at": "2026-11-05T11:30:00+0200", "status": "healed"}\nno time here\n')
+elsewhere = tmp / "agent-own.log"; elsewhere.write_text("[2026-11-05 10:30:00] charlie: start\n")
+lreg = tmp / "logs-reg.json"; lreg.write_text(json.dumps({"agents": {"charlie": {"log": str(elsewhere)}}}))
+r_lg = subprocess.run([sys.executable, "-I", str(HERE / "rainbowomma-doctor.py"), "logs", "--since", "2026-11-05"], capture_output=True, text=True,
+                      env=dict(genv, RAINBOW_HOME=str(lgh), BROWSER_OWNER_REGISTRY=str(lreg)))
+order = [ln.split("  ")[2] for ln in r_lg.stdout.splitlines() if ln[:4] == "2026"]
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+check("logs (#46): `rainbowomma-doctor logs` — every location (an agent's log elsewhere too) as one timeline, oldest first",
+      order == ["alpha: start", "charlie: start", "pdf bravo x", '{"at": "2026-11-05T11:30:00+0200", "status": "healed"}', "alpha: stop"]
+      and "1 lines without a time" in r_lg.stdout, r_lg.stdout + r_lg.stderr)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -237,6 +237,11 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   `get_*`, `list_*` and session calls), and the cursor proxy holds the action until the human pauses, at most
   `RAINBOW_HUMAN_WAIT_S` (30 s). Unknown idle time (not macOS, no `ioreg`) never blocks.
 - **`rm -r` of home.** The guard refuses a recursive `rm` of `/`, `~`, `$HOME`, `/Users/<name>` or a system folder.
+- **Logs.** Everything lands under `$RAINBOW_HOME/logs`, every line with its time. The launchd jobs (`heal --scheduled`,
+  `sweep --scheduled`) print a JSON line stamped `"at"` only when their answer changed (a counter ticking doesn't
+  count) and once a day as a heartbeat. Once a week each `*.log` is renamed `NAME.log.YYYY-Www`, and rotated logs older
+  than 4 weeks go; `receipts.jsonl` stays whole (the OTLP cursor counts its lines). `rainbowomma-doctor logs` shows every
+  log — an agent's own `log` elsewhere too — as one timeline.
 
 ## 12. Wave B: browser MCPs, sensitive sites, the stop button
 - **Browser MCPs on the agent's own browser.** `browser-owner mcp-config` prints `npx chrome-devtools-mcp --browserUrl
