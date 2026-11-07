@@ -27,6 +27,10 @@ exit codes are an API and change only in a major version.
 - `rainbow-panel` (`bin/rainbow-panel.sh`): one native window with every browser on the Mac — open, close, bring to
   front, an agent's color and name, and adding an agent to `browsers.json` through browser-owner's own validation. A
   local server on 127.0.0.1 with a key per launch and a Host check; English and Hebrew from the catalog.
+- `rainbowomma-report bug|feature --title … --body-file …`: files an issue with `gh`, after a privacy scan of the title
+  and body (e-mail addresses, home paths, private and Tailscale addresses, keys, phone numbers, this Mac's user, host and
+  agent names, and your own `$RAINBOW_HOME/report-deny.txt`) and a check against the issue template. A finding stops it;
+  `rainbowomma-report scan FILE…` only scans. See `docs/REPORTING.md`.
 
 ## [0.3.0] — 2026-11-07
 
