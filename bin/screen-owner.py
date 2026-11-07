@@ -26,6 +26,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder
+import rainbow_next  # noqa: E402
 import rainbow_receipts  # noqa: E402
 
 AUTO_TTL_S = 15
@@ -155,7 +156,7 @@ def main(argv=None):
         code, out = 0, ({"holder": cur["holder"], "until": int(cur["until"]), "auto": bool(cur.get("auto"))} if cur else {"holder": None})
     if a.cmd == "release" and out["status"] == "released":
         rainbow_receipts.write("screen-owner", "release", a.agent.strip().lower(), a.agent.strip().lower(), "released")
-    print(json.dumps(out, ensure_ascii=False))
+    print(rainbow_next.dumps(out, ensure_ascii=False))
     return code
 
 

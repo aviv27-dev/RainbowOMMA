@@ -20,6 +20,7 @@ SAFE_HOME = Path(tempfile.mkdtemp(prefix="rainbow-home-"))
 os.environ["RAINBOW_HOME"] = str(SAFE_HOME)   # a test run never shares a live lock, lease or state file with the real one
 bo = load("browser-owner.py")
 tmp = Path(tempfile.mkdtemp(prefix="bo-"))
+NEXT_AUDIT = tmp / "next-audit.jsonl"; os.environ["RAINBOW_NEXT_AUDIT"] = str(NEXT_AUDIT)   # every refusal/failure printed (#59)
 REG = tmp / "reg.json"
 REG.write_text(json.dumps({"agents": {
     "alpha": {"label": "אלפא", "port": 9222, "profile": str(tmp / "alpha-profile"), "color": "#7E57C2", "state": str(tmp / "alpha.json"),
@@ -2798,6 +2799,33 @@ check("help: --help never acts — no browser, AppleScript, kill or network call
 r_sub = subprocess.run([str(HERE / "port-owner"), "lease", "--help"], capture_output=True, text=True, env=dict(os.environ, RAINBOW_HOME=str(hhome / "x")))
 check("help: a command's own --help is still argparse's (port-owner lease --help)", r_sub.returncode == 0 and "usage: port-owner lease" in r_sub.stdout,
       r_sub.stdout[:120])
+
+# ── every refusal and failure says what happened and what to do next (#59) ──
+nx = load("rainbow_next.py")
+f_exc = nx.fill({"status": "failed", "why": "TypeError: 'NoneType' object is not subscriptable"}, "port-owner")
+f_empty = nx.fill({"status": "refused"}, "proc-owner")
+f_own = nx.fill({"status": "refused", "why": "x", "next": "do this"}, "port-owner")
+f_ok = {"status": "leased", "port": 41000}
+check("next: an exception in a JSON answer reads as an unexpected error in that tool (the exception kept), with a way on",
+      f_exc["status"] == "failed" and "port-owner" in f_exc["why"] and "TypeError" in f_exc["why"]
+      and f_exc["why"] != "TypeError: 'NoneType' object is not subscriptable" and "rainbowomma-report bug" in f_exc["next"], f_exc)
+check("next: an empty why is filled in; an answer's own next is kept; a good answer is left exactly as it was",
+      f_empty["why"] and f_empty["next"] and f_own["next"] == "do this" and f_own["why"] == "x"
+      and nx.fill(f_ok, "port-owner") is f_ok and nx.fill({"agents": []}, "browser-owner") == {"agents": []}, (f_empty, f_own))
+os.environ["RAINBOW_LANG"] = "en"
+f_port = nx.fill({"status": "refused", "why": "not your range", "agent": "bravo"}, "port-owner")
+f_hung = nx.fill({"status": "hung", "why": "not answering", "agent": "alpha"}, "browser-owner")
+os.environ["RAINBOW_LANG"] = "he"
+check("next: a tool's own advice where it has one (port-owner → its own list), the agent's name filled in; hung → recover",
+      f_port["next"].startswith("port-owner list bravo") and f_hung["next"] == "browser-owner recover alpha --by alpha", (f_port, f_hung))
+check("next: the words are in the catalog, in English and Hebrew", all(k in i18n.M and i18n.M[k].get("he") for k in
+      [*nx.GENERIC.values(), *nx.OWN.values(), "nx.no_why", "nx.unexpected", "nx.report"]))
+m_unknown = mcp([{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "no_such_tool", "arguments": {}}}], "--agent", "alpha")
+check("next: the MCP server's own refusals and failures say what to do next too", '"next"' in json.dumps(m_unknown, ensure_ascii=False), m_unknown)
+seen = [json.loads(x) for x in NEXT_AUDIT.read_text(encoding="utf-8").splitlines()] if NEXT_AUDIT.exists() else []
+bad_seen = [r for r in seen if not str(r.get("why") or "").strip() or not str(r.get("next") or "").strip()]
+check("next: every refusal and failure an owner printed in this suite (what an agent reads) has a why and a next",
+      len(seen) >= 20 and {"browser-owner", "port-owner", "proc-owner", "office-owner", "screen-owner"} <= {r["tool"] for r in seen} and not bad_seen, (len(seen), sorted({r["tool"] for r in seen}), bad_seen[:3]))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

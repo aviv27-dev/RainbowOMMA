@@ -15,6 +15,12 @@ exit codes are an API and change only in a major version.
   opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
   every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
 
+### Added
+- Every refusal and failure says what to do next: a `next` field beside `why` — a command to run, or "ask the human"
+  (`port-owner list alpha` after a refused lease, `browser-owner recover alpha --by alpha` for a hung browser,
+  `rainbowomma-doctor status` after a failure). An exception caught by a "one JSON answer, always" handler reads as an
+  unexpected error in that tool, with a way to report it. Status words, the other keys and exit codes are unchanged. (#59)
+
 ## [0.3.1] — 2026-11-07
 
 One window for every browser (`rainbow-panel`), issues filed only after a privacy scan (`rainbowomma-report`), a

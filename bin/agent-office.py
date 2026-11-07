@@ -34,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
+import rainbow_next  # noqa: E402
 
 ROOT = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(Path.home() / ".rainbowomma")))   # logs, state, work folder
 LEASES = ROOT / "state" / "doc_leases"
@@ -756,7 +757,7 @@ def main(argv=None):
     sub.add_parser("apps")
     a = ap.parse_args(argv)
     if getattr(a, "agent", None) is not None and rainbow_receipts.acting_as(a.agent):
-        print(json.dumps({"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}, ensure_ascii=False))
         return 2
     if a.cmd in ("pdf", "xlsx"):            # NOT under the leases lock: conversions run in parallel (each its own copy)
         try:
@@ -766,7 +767,7 @@ def main(argv=None):
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
         rainbow_receipts.write("office-owner", a.cmd, a.agent.strip().lower(), a.agent.strip().lower(), out.get("status"),
                                file=a.file, pdf=out.get("pdf"), xlsx=out.get("xlsx"), why=out.get("why"))
-        print(json.dumps(out, ensure_ascii=False))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
         return code
     try:
         with leases_lock():
@@ -795,7 +796,7 @@ def main(argv=None):
     if a.cmd == "sweep" and a.scheduled:
         rainbow_receipts.quiet_print("sweep", out)
     else:
-        print(json.dumps(out, ensure_ascii=False))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
     return code
 
 
