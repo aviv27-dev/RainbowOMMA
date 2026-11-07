@@ -2779,11 +2779,11 @@ check("help: each entry has the shape — what it is for, the commands with an e
 stub_dir = tmp / "help-stubs"; stub_dir.mkdir(); stub_log = tmp / "help-stub-calls.txt"
 for c in ("open", "osascript", "pkill", "killall", "pgrep", "ps", "xcrun", "gh", "curl", "lsof"):
     (stub_dir / c).write_text(f"#!/bin/sh\necho {c} \"$@\" >> {stub_log}\n"); (stub_dir / c).chmod(0o755)
-hhome = tmp / "help-home"; hhome.mkdir()
+hhome = tmp / "help-home"; hhome.mkdir(); hrh = tmp / "help-rainbow-home"   # macOS's python caches bytecode under HOME/Library — not ours
 bad_help = []
 for n in tools_:
     for flag, lg in (("-h", "en"), ("--help", "en"), ("-h", "he"), ("--help", "he")):
-        henv = dict(os.environ, PATH=f"{stub_dir}:/usr/bin:/bin", HOME=str(hhome), RAINBOW_HOME=str(hhome / ".rainbowomma"),
+        henv = dict(os.environ, PATH=f"{stub_dir}:/usr/bin:/bin", HOME=str(hhome), RAINBOW_HOME=str(hrh),
                     RAINBOW_AGENT="alpha", RAINBOW_LANG=lg, BROWSER_OWNER_REGISTRY=str(NOREG))
         try:
             r = subprocess.run([str(HERE / n), flag], capture_output=True, text=True, env=henv, stdin=subprocess.DEVNULL, timeout=20)
@@ -2793,7 +2793,8 @@ for n in tools_:
             bad_help.append((n, flag, lg, "timeout"))
 check("help: -h and --help on every tool print its catalog entry and exit 0, in English and Hebrew", not bad_help, bad_help[:4])
 check("help: --help never acts — no browser, AppleScript, kill or network call, and nothing written to $RAINBOW_HOME",
-      not stub_log.exists() and not any(hhome.rglob("*")), (stub_log.read_text() if stub_log.exists() else "", list(hhome.rglob("*"))[:5]))
+      not stub_log.exists() and not hrh.exists() and not (hhome / ".rainbowomma").exists(),
+      (stub_log.read_text() if stub_log.exists() else "", list(hrh.rglob("*"))[:5] if hrh.exists() else []))
 r_sub = subprocess.run([str(HERE / "port-owner"), "lease", "--help"], capture_output=True, text=True, env=dict(os.environ, RAINBOW_HOME=str(hhome / "x")))
 check("help: a command's own --help is still argparse's (port-owner lease --help)", r_sub.returncode == 0 and "usage: port-owner lease" in r_sub.stdout,
       r_sub.stdout[:120])
