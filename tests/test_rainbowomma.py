@@ -46,6 +46,28 @@ def fake_install(a, folder=None, timeout=25.0, record=None):
 bo.install_theme = fake_install
 bo.build_theme = lambda a: tmp / ("theme-" + a["name"])
 bo.front_pid = lambda: 200
+# set_front: AppKit first (no Automation grant needed), System Events only when AppKit could not
+_real_set_front, _real_run = bo.set_front, bo.subprocess.run
+def _front_with(answers):
+    calls = []
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        out = answers.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return type("R", (), {"returncode": out[0], "stdout": out[1], "stderr": ""})()
+    bo.subprocess.run = fake_run
+    try:
+        return _real_set_front(4242), calls
+    finally:
+        bo.subprocess.run = _real_run
+ok1, c1 = _front_with([(0, "true\n")])
+check("front: AppKit (NSRunningApplication, no Apple Events) brings the window forward — System Events is not asked",
+      ok1 is True and len(c1) == 1 and c1[0][:3] == ["osascript", "-l", "JavaScript"] and "runningApplicationWithProcessIdentifier(4242)" in c1[0][-1], c1)
+ok2, c2 = _front_with([(0, "none\n"), (0, "")])
+ok3, c3 = _front_with([OSError("no osascript"), (1, "")])
+check("front: when AppKit can't (no such app, or osascript failed) System Events is the fallback, and its answer counts",
+      ok2 is True and len(c2) == 2 and "System Events" in c2[1][-1] and ok3 is False and len(c3) == 2, (c2, c3))
 bo.set_front = lambda pid: True
 P = ALPHA_A["profile"]
 CH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
