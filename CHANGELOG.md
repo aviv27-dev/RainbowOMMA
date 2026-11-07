@@ -33,6 +33,11 @@ exit codes are an API and change only in a major version.
 - Built-in idle-stop: an agent with `idleMinutes` whose browser has no client attached and no tab change for that long,
   and holds no auth-owner lease, is stopped by the heal job (`--by auto-idle`, with a receipt) — no private reaper
   needed. Anything that can't be read counts as busy. (#44)
+- Sign-ins stay out of the human's browser: the guard refuses an agent's `open <url>` and `open -a <a browser>`
+  (`"guardOpen": "report"` only records); `browser-owner open AGENT URL` opens it as a new tab in the agent's own
+  browser (http(s) only, started first if down, an `authSites` site taken for the agent); `rainbowomma-browser` is a
+  `BROWSER=` launcher for frameworks' `webbrowser.open`, which never falls back to the human's browser; MCP tool
+  `open_in_my_browser`. (#42)
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it

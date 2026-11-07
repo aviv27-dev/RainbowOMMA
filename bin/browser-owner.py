@@ -110,6 +110,15 @@ def sensitive_sites(path=None):
     return [str(x).strip().lower().lstrip("*.") for x in got if str(x).strip()] if isinstance(got, list) else []
 
 
+def open_mode(path=None):
+    """how the guardrail treats an agent's `open <url>` (it would land in the human's browser): refuse (default) · report"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("guardOpen")
+    except (OSError, ValueError):
+        got = None
+    return got if got in ("refuse", "report") else "refuse"
+
+
 def auth_sites(path=None):
     """domains where one agent at a time signs in (auth-owner): "authSites" at the top of browsers.json — none, it's off"""
     try:
@@ -818,6 +827,47 @@ def restore_windows(a):
         return 0
 
 
+def _auth_owner():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("rainbow_auth_owner", str(HERE / "auth-owner.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def do_open(a, url, by):
+    """open URL in the agent's OWN browser (a new tab, brought to the front of its window) — never in the human's.
+    Its browser is started first if it is down (the usual start rules: a browser the human closed stays closed); a site
+    listed in authSites is taken for this agent first (auth-owner)."""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(str(url or "").strip())
+    except ValueError:
+        u = None
+    if not u or u.scheme not in ("http", "https") or not u.hostname:
+        return 2, {"status": "refused", "why": "only an http(s) address opens in an agent's browser"}
+    sites = auth_sites()
+    if sites:
+        ao = _auth_owner()
+        site = ao.covered(u.hostname, sites)
+        if site:
+            code, res = ao.cmd_lease(a["name"], site, ao.DEFAULT_MINUTES, 0)
+            if code:
+                return code, res
+    if not healthy(a):
+        code, res = do_start(a, by)
+        if code or res.get("status") not in ("started", "already-up"):
+            return code or 1, res
+    with cdp_for(a, timeout=10) as c:
+        tid = c.call("Target.createTarget", {"url": u.geturl()}).get("targetId")
+        if tid:
+            c.call("Target.activateTarget", {"targetId": tid})
+    log(a, f"open by {by}: {u.hostname}")
+    return 0, {"status": "opened", "targetId": tid, "site": u.hostname}
+
+
 def do_front(a):
     """the agent's browser to the front for the human — a minimized window comes back first"""
     roots = tree_of(a, processes())[0]
@@ -1273,8 +1323,9 @@ def tabs(reg, only=None, apply=None, scheduled=False):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
     ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
-                                    "tabs"])
+                                    "tabs", "open"])
     ap.add_argument("agent", nargs="?")
+    ap.add_argument("url", nargs="?", help="open: the address to open in the agent's own browser")
     ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
     ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
     ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
@@ -1372,9 +1423,10 @@ def main(argv=None):
         except OSError:
             print(json.dumps({"status": "busy", "why": t("bo.busy")}, ensure_ascii=False))
             return 1
-        fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover}[a.cmd]
+        fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover, "open": do_open}[a.cmd]
         try:
-            code, out = fn(ag, a.by.strip().lower(), a.allow_reopen) if a.cmd == "stop" else fn(ag, a.by.strip().lower())
+            code, out = fn(ag, a.by.strip().lower(), a.allow_reopen) if a.cmd == "stop" else \
+                fn(ag, a.url, a.by.strip().lower()) if a.cmd == "open" else fn(ag, a.by.strip().lower())
         except Exception as exc:   # one JSON answer, always
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
     rainbow_receipts.write("browser-owner", a.cmd, ag["name"], a.by.strip().lower(), out.get("status"), why=out.get("why"))

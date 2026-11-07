@@ -84,7 +84,7 @@ HUMAN_TOOLS = {"desk-browser.sh", "kill-chrome.sh", "human-chrome.sh"}
 # subcommands whose first argument is the agent acting: it must be the caller
 AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease", "release", "env"},
              "sim-owner": {"lease", "release"}, "auth-owner": {"lease", "release", "code"}, "screen-owner": {"take", "release"}, "rainbowomma-clip": {"copy", "paste"},
-             "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config", "tabs"}}
+             "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config", "tabs", "open"}}
 HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
 INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
 INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")
@@ -244,6 +244,33 @@ def cdp_dir_verdict(text, me):
     return None
 
 
+BROWSER_APPS = ("chrome", "chromium", "safari", "firefox", "arc", "brave", "edge", "opera", "vivaldi", "orion", "zen")
+URL_ARG = re.compile(r"^https?://", re.I)
+
+
+def open_verdict(args, me):
+    """`open https://…` or `open -a <a browser> …` lands in the HUMAN's browser — their cookies, their profile. An agent
+    opens addresses in its own: `browser-owner open <agent> <url>`. guardOpen: report → only a receipt, for a rollout."""
+    apps = [args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-a", "-b")]
+    browser_app = any(b in x for x in apps for b in BROWSER_APPS)
+    if not (browser_app or any(URL_ARG.match(x) for x in args)):
+        return None
+    try:
+        mode = _port_owner().BO.open_mode()
+    except Exception:
+        mode = "refuse"
+    why = (f"`open` hands an address to the human's own browser (their logins, their tabs) — open it in yours: "
+           f"`browser-owner open {me or '<you>'} <url>`" + ("" if me else " (as-agent <name> … first)"))
+    if mode == "report":
+        try:
+            import rainbow_receipts
+            rainbow_receipts.write("guard", "open-report", me or None, me or None, "would-refuse", why=why)
+        except Exception:
+            pass
+        return None
+    return why
+
+
 def owner_tool_verdict(name, args, me):
     """an owner tool acts as the caller only: --by and the agent argument are the caller's own name, never the human's"""
     base = name[:-3] if name.endswith(".py") else name
@@ -358,7 +385,11 @@ def verdict(command):
             return WHY["human-browser"]
         if any("@playwright/mcp" in x for x in [name] + args) and "--extension" in args:
             return WHY["human-browser"]
-        if name == "open" or name.endswith("chrome") or name.endswith("chromium"):
+        if name == "open":
+            why = open_verdict(args, me)
+            if why:
+                return why
+        if name == "open" or name.endswith("chrome") or name.endswith("chromium") or (name in ("browser-owner", "browser-owner.py") and "open" in args):
             why = _sensitive_verdict([x for x in args if "://" in x])
             if why:
                 return why

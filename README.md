@@ -202,6 +202,15 @@ programs and web pages; an agent running as you could still read the token file,
 [docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
 virtual display of its own, and how to keep its credentials apart (1Password, Keychain).
 
+### 🌐 Sign-ins open in the agent's browser, not yours
+An agent that opens an address with `open https://…` or `open -a "Google Chrome" …` lands in **your** Chrome, with your
+cookies. The guardrail refuses that and names the way: `browser-owner open alpha <url>` opens it as a new tab in the
+agent's own browser (started first if it is down; a site in `authSites` is taken for that agent). For frameworks that
+open sign-in pages themselves (Python's `webbrowser.open`, OAuth and device-code flows), set
+`BROWSER=~/bin/rainbowomma-browser` in the agent's environment: it opens them in the agent's browser and never falls
+back to yours. MCP tool: `open_in_my_browser`. `"guardOpen": "report"` in `browsers.json` only records instead of
+refusing, for a gentle rollout.
+
 ### 🔑 One agent at a time signs in (optional)
 Two agents signing in to the same account at once log each other out, and a one-time code typed into the wrong
 window is lost. List the sites in `browsers.json` (`"authSites": ["accounts.example.com"]`) and an agent takes one before
