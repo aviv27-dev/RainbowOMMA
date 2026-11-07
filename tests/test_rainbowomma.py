@@ -30,6 +30,7 @@ REG.write_text(json.dumps({"agents": {
 reg = bo.registry(REG)
 ALPHA_A, CHARLIE_A = reg["alpha"], reg["charlie"]
 bo.time.sleep = lambda s: None                               # the 3-probe wait, instant in tests
+bo.rainbow_presence.IDLE = lambda: 1.0    # the human is here unless a test says otherwise (a CI Mac has no one at it)
 def fake_install(a, folder=None, timeout=25.0, record=None):
     """never a real Chrome in a test: record the theme in the profile the way Chrome does (extensions.theme.id)"""
     prefs = Path(a["profile"]) / "Default" / "Preferences"; prefs.parent.mkdir(parents=True, exist_ok=True)
@@ -2567,7 +2568,7 @@ _, st_here = sb.do_start(sa, "alpha")
 la = json.loads(Path(sa["state"]).read_text())["lastStart"]
 check("browser-owner start (#35): away → the agent's window to the front; here → in the background, the human's focus given back",
       fronts2 == [1] and gave == [4242] and la["focus"] == "restored", (fronts2, gave, la))
-sb.rainbow_presence.IDLE = None
+sb.rainbow_presence.IDLE = lambda: 1.0
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
