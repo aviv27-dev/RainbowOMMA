@@ -2,6 +2,8 @@
 
 All notable changes to RainbowOMMA. Versions follow [Semantic Versioning](https://semver.org/); JSON status words and
 exit codes are an API and change only in a major version.
+A release that asks something of you (a job to reinstall, a setting to add) lists it under `### Action needed`; an
+upgrade prints those in full.
 
 ## [Unreleased]
 
@@ -20,6 +22,10 @@ exit codes are an API and change only in a major version.
   (`port-owner list alpha` after a refused lease, `browser-owner recover alpha --by alpha` for a hung browser,
   `rainbowomma-doctor status` after a failure). An exception caught by a "one JSON answer, always" handler reads as an
   unexpected error in that tool, with a way to report it. Status words, the other keys and exit codes are unchanged. (#59)
+- An upgrade ends with what changed: `install.sh` compares the release in place (`installed-version`) with the one it
+  installs and prints every release in between, short (headings and the first line of each entry), then, in full,
+  anything listed under `### Action needed` (a job to reinstall, a setting to add). `rainbowomma-doctor` shows the
+  installed version and where it came from. (#60)
 
 ## [0.3.1] — 2026-11-07
 
