@@ -1059,7 +1059,7 @@ got = mcp([init, {"jsonrpc": "2.0", "method": "notifications/initialized"}, {"js
            {"jsonrpc": "2.0", "id": 5, "method": "nope"}], "--agent", "alpha")
 names = [x["name"] for x in got[1]["result"]["tools"]]
 check("mcp: initialize answers the client's protocol version; the notification gets no reply",
-      [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == "2025-06-18", got[:1])
+      [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == init["params"]["protocolVersion"], got[:1])
 check("mcp: the tools — ports, processes, the agent's own browser",
       {"lease_port", "release_port", "who_port", "whose_process", "stop_process", "my_processes", "browser_status", "start_my_browser",
        "recover_my_browser", "take_screen", "release_screen", "ask_human_approval", "take_login", "ask_login_code", "release_login", "open_in_my_browser", "job_start", "job_end", "keep_tabs", "close_job_tabs"} == set(names), names)
@@ -1400,14 +1400,14 @@ attach = ["npx chrome-devtools-mcp@latest --autoConnect", "npx @playwright/mcp@l
 check("guard: a browser MCP on the human's Chrome is refused; as Alpha, another agent's CDP port too — its own is fine",
       [as_agent(c, "alpha") for c in attach] == [2, 2, 2, 2] and as_agent("npx chrome-devtools-mcp@1.11.0 --browserUrl http://127.0.0.1:9222", "alpha") == 0,
       [as_agent(c, "alpha") for c in attach])
-sreg = json.loads(REG.read_text()); sreg["sensitiveSites"] = ["bank.example", "*.gov.example"]; SREG = tmp / "sensitive.json"; SREG.write_text(json.dumps(sreg))
+sreg = json.loads(REG.read_text()); sreg["sensitiveSites"] = ["bank.example", "*.agency.example"]; SREG = tmp / "sensitive.json"; SREG.write_text(json.dumps(sreg))
 def nav(url, idle, tool="mcp__alpha-browser__navigate_page"):
     r = subprocess.run([sys.executable, "-I", guard], input=json.dumps({"tool_name": tool, "tool_input": {"url": url}}), capture_output=True,
                        text=True, env=dict(genv, BROWSER_OWNER_REGISTRY=str(SREG), RAINBOW_TEST_IDLE_S=str(idle), RAINBOW_AGENT="alpha"))
     return r.returncode
 check("sensitive sites: an agent opens one only while the human is at the Mac (used it in the last 2 minutes)",
       nav("https://login.bank.example/a", 900) == 2 and nav("https://login.bank.example/a", 30) == 0
-      and nav("https://portal.gov.example/x", 900) == 2 and nav("https://news.example.com", 900) == 0
+      and nav("https://portal.agency.example/x", 900) == 2 and nav("https://news.example.com", 900) == 0
       and nav("https://login.bank.example/a", 900, tool="mcp__playwright__browser_navigate") == 2)
 check("the Claude Code adapter also runs the guard before browser MCP tools",
       any("playwright" in h["matcher"] for h in json.loads((AD / "claude-code" / "settings.json").read_text())["hooks"]["PreToolUse"]))
@@ -2031,10 +2031,12 @@ check("tabs: an agent with tabSweep false, one in tabSweep.exclude, and one mana
       {x["agent"]: x["status"] for x in res_t["agents"]} == {"alpha": "down", "bravo": "excluded", "charlie": "excluded", "delta": "excluded"}
       and res_t["mode"] == "dry-run", res_t)
 dd = tmp / "tabs-daily"
-rt.daily(dd, {"reloaded": 1, "closed": 0, "wouldReload": 0, "wouldClose": 2, "hot": 3}, today="2026-10-23")
-rt.daily(dd, {"reloaded": 1, "closed": 1, "wouldReload": 0, "wouldClose": 0, "hot": 1}, today="2026-10-23")
-prev_d = rt.daily(dd, {"reloaded": 0, "closed": 0, "wouldReload": 0, "wouldClose": 0, "hot": 0}, today="2026-10-24")
-check("tabs: one summary a day — yesterday's totals, when the day changes", prev_d and prev_d["day"] == "2026-10-23"
+import datetime
+DAY1, DAY2 = datetime.date(2001, 2, 3).isoformat(), datetime.date(2001, 2, 4).isoformat()   # any two days (no date literal)
+rt.daily(dd, {"reloaded": 1, "closed": 0, "wouldReload": 0, "wouldClose": 2, "hot": 3}, today=DAY1)
+rt.daily(dd, {"reloaded": 1, "closed": 1, "wouldReload": 0, "wouldClose": 0, "hot": 1}, today=DAY1)
+prev_d = rt.daily(dd, {"reloaded": 0, "closed": 0, "wouldReload": 0, "wouldClose": 0, "hot": 0}, today=DAY2)
+check("tabs: one summary a day — yesterday's totals, when the day changes", prev_d and prev_d["day"] == DAY1
       and prev_d["reloaded"] == 2 and prev_d["closed"] == 1 and prev_d["wouldClose"] == 2, prev_d)
 r_tb = subprocess.run(["bash", str(HERE / "browser-owner"), "tabs", "bravo", "--apply"], capture_output=True, text=True,
                       env=dict(genv, RAINBOW_AGENT="alpha"))

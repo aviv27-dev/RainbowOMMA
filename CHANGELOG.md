@@ -14,6 +14,9 @@ exit codes are an API and change only in a major version.
 - tests: the guard's `kill <pid>` check passes where the OS no longer shows another process's environment (macOS 27's
   `ps -E`): there it checks that every kill is refused (fail closed); root tracking covers ownership. The framework test's
   stopped `sleep` no longer prints "Terminated: 15" into the output.
+- Examples and tests carry no real-looking dates, government domains or card words: `*.agency.example` in the
+  `sensitiveSites` example, days built at run time in the tab-summary test, the MCP version compared to the one asked for.
+  (A privacy scanner run over the repository found nine false positives there.)
 
 ## [0.3.0] — 2026-11-07
 

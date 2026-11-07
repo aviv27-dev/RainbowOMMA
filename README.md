@@ -234,7 +234,7 @@ it signs in: `auth-owner lease alpha accounts.example.com` (refused while anothe
 site meanwhile. MCP tools: `take_login`, `ask_login_code`, `release_login`. Without `authSites` nothing changes.
 
 ### 🔒 Sensitive sites need you there
-List them as `"sensitiveSites": ["bank.example", "*.gov.example"]` at the top of `browsers.json`. An agent's browser tool
+List them as `"sensitiveSites": ["bank.example", "*.agency.example"]` at the top of `browsers.json`. An agent's browser tool
 (Chrome DevTools MCP, Playwright MCP, any `navigate`/`open` tool) may go there only while you're at the Mac: you used the
 keyboard or mouse in the last 2 minutes (`RAINBOW_HUMAN_PRESENT_S`). Otherwise it's refused and the agent is told to ask
 you.
