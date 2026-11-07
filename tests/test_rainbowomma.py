@@ -2027,9 +2027,11 @@ check("tabs: an agent sweeps its own browser only (owner and guard)",
       r_tb.returncode == 2 and as_agent("browser-owner tabs bravo --apply", "alpha") == 2 and as_agent("browser-owner tabs alpha", "alpha") == 0,
       r_tb.stdout)
 formula = (HERE.parent / "Formula" / "rainbowomma.rb").read_text()
-latest = re.search(r"^## \[(\d+\.\d+\.\d+)\]", (HERE.parent / "CHANGELOG.md").read_text(), re.M).group(1)
-check("Homebrew: the formula points at the latest release in CHANGELOG.md, with a checksum",
-      f"/v{latest}.tar.gz" in formula and re.search(r'sha256 "[0-9a-f]{64}"', formula), latest)
+releases = re.findall(r"^## \[(\d+\.\d+\.\d+)\]", (HERE.parent / "CHANGELOG.md").read_text(), re.M)
+# a tag's archive can't carry its own checksum: the release commit still names the release before it, and the formula is
+# moved to the new tag (with that archive's sha256) in the commit right after the release
+check("Homebrew: the formula points at the latest release in CHANGELOG.md (or, in the release commit itself, the one before), with a checksum",
+      any(f"/v{v}.tar.gz" in formula for v in releases[:2]) and re.search(r'sha256 "[0-9a-f]{64}"', formula), releases[:2])
 ich = tmp / "chan-home"; ich.mkdir()
 r_ch = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--bin", str(ich / "bin"), "--agent-chrome", "canary"], capture_output=True,
                       text=True, env=dict(os.environ, HOME=str(ich), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(ich / ".rainbowomma")))
