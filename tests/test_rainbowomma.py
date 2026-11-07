@@ -2572,5 +2572,24 @@ check("browser-owner start (#35): away → the agent's window to the front; here
       fronts2 == [1] and gave == [4242] and la["focus"] == "restored", (fronts2, gave, la))
 sb.rainbow_presence.IDLE = lambda: 1.0
 
+# ── doctor status: the running system on one screen (#57) ──
+dsh = tmp / "status-home"; (dsh / "state").mkdir(parents=True); (dsh / "logs").mkdir()
+(dsh / "state" / "office_temps.json").write_text(json.dumps([{"app": "word", "name": "ofc-pdf-1.docx", "pid": 1}]))
+nowiso = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+(dsh / "logs" / "receipts.jsonl").write_text(json.dumps({"at": nowiso, "tool": "office-owner", "action": "pdf", "agent": "bravo",
+                                                          "status": "blocked-by-dialog", "why": "Word shows a dialog"}) + "\n")
+denv = dict(genv, RAINBOW_HOME=str(dsh), RAINBOW_TEST_IDLE_S="900")
+ds = subprocess.run([sys.executable, "-I", str(HERE / "rainbowomma-doctor.py"), "status", "--json"], capture_output=True, text=True, env=denv, timeout=120)
+dj = json.loads(ds.stdout) if ds.stdout.strip() else {}
+check("doctor status (#57): agents, presence, ports and Office on one screen; each problem comes with its fix; exit 1 for scripts",
+      ds.returncode == 1 and {a["agent"] for a in dj.get("agents", [])} >= {"alpha", "bravo"} and dj["presence"].get("present") is False
+      and len(dj["problems"]) == 2 and all(p_["fix"] for p_ in dj["problems"]) and dj["errors24h"] == 1, (ds.returncode, ds.stdout[-500:], ds.stderr[-300:]))
+dt = subprocess.run([sys.executable, "-I", str(HERE / "rainbowomma-doctor.py"), "status"], capture_output=True, text=True, env=denv, timeout=120)
+check("doctor status (#57): the same as text, problems last with what to run", all(w in dt.stdout for w in ("Agents", "Presence", "Office", "Needs attention", "→ office-owner sweep")), dt.stdout)
+clean = tmp / "status-clean"; clean.mkdir()
+dc = subprocess.run([sys.executable, "-I", str(HERE / "rainbowomma-doctor.py"), "status"], capture_output=True, text=True,
+                    env=dict(genv, RAINBOW_HOME=str(clean)), timeout=120)
+check("doctor status (#57): nothing wrong → says so, exit 0", dc.returncode == 0 and "Nothing needs attention." in dc.stdout, dc.stdout)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
