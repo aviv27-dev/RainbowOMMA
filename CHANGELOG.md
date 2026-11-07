@@ -11,6 +11,10 @@ upgrade prints those in full.
 - `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
   codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
   stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
+- The installer prints numbered steps, each with one result word (`[3/5] state in ~/.rainbowomma — done`; `kept`
+  for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
+  yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
+  touch; a failure names the step it stopped at. (#61)
 
 ### Fixed
 - `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
