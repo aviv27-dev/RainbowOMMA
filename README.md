@@ -198,6 +198,13 @@ through the usual port — but only at a WebSocket path with the agent's own tok
 <agent>` puts in the entry (`--wsEndpoint`). `/json/*` on that port answers nobody. It keeps out other users, other
 programs and web pages; an agent running as you could still read the token file, which the guardrail refuses.
 
+### 🧺 A job's tabs close when it ends — after asking
+Every job opens a few tabs, and pages open more. `browser-owner job-start alpha` when a job begins; `job-end alpha`
+when it's done lists the tabs the job opened (title, site) and asks: `job-keep alpha <id> …` keeps what the agent still
+needs (and the tabs those opened), `job-close alpha` closes the rest — or the scheduled tab job does, a minute later,
+if nobody answers. Never the browser's last tab, never a tab another client drives, never one that was there before.
+MCP tools: `job_start`, `job_end`, `keep_tabs`, `close_job_tabs`.
+
 ### 🧱 When one shared Mac isn't enough
 [docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
 virtual display of its own, and how to keep its credentials apart (1Password, Keychain).

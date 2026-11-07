@@ -84,7 +84,7 @@ HUMAN_TOOLS = {"desk-browser.sh", "kill-chrome.sh", "human-chrome.sh"}
 # subcommands whose first argument is the agent acting: it must be the caller
 AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease", "release", "env"},
              "sim-owner": {"lease", "release"}, "auth-owner": {"lease", "release", "code"}, "screen-owner": {"take", "release"}, "rainbowomma-clip": {"copy", "paste"},
-             "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config", "tabs", "open"}}
+             "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config", "tabs", "open", "job-start", "job-end", "job-keep", "job-close"}}
 HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
 INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
 INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")

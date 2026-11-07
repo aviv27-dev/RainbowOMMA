@@ -232,3 +232,98 @@ def daily(shared, counts, today=None):
         d[k] = int(d.get(k, 0)) + int(v)
     save_state(p, d)
     return prev
+
+
+# ── a job's tabs (#43): what a job opened is closed when it ends — after asking the agent ──
+JOB_GRACE_S = 60
+
+
+def jobs_path(shared, agent):
+    return shared / "state" / f"tabs-job-{agent}.json"
+
+
+def pages_of(cdp):
+    """→ [{"id", "url", "title", "attached", "opener"}] for the browser's page tabs"""
+    return [{"id": t["targetId"], "url": str(t.get("url", "")), "title": str(t.get("title", ""))[:80], "attached": bool(t.get("attached")),
+             "opener": t.get("openerId")} for t in cdp.call("Target.getTargets").get("targetInfos", []) if t.get("type") == "page"]
+
+
+def job_candidates(before, pages, kept=()):
+    """the tabs a job opened that may close (no I/O): opened since job-start, no other client attached, not kept by the
+    agent, and not opened by a tab that stays open — and never the browser's last tab"""
+    ids = {p["id"] for p in pages}
+    fresh = [p for p in pages if p["id"] not in set(before)]
+    cands = [p for p in fresh if not p["attached"] and p["id"] not in set(kept)]
+    staying = ids - {p["id"] for p in cands}
+    cands = [p for p in cands if not (p.get("opener") and p["opener"] in staying and p["opener"] not in set(before))]
+    while cands and len(ids) - len(cands) < 1:             # one tab always stays
+        cands.pop()
+    return cands
+
+
+def job_start(cdp, shared, agent, now=None):
+    d = {"start": time.time() if now is None else now, "before": [p["id"] for p in pages_of(cdp)], "pending": {}, "kept": []}
+    save_state(jobs_path(shared, agent), d)
+    return {"status": "started", "tabs": len(d["before"])}
+
+
+def job_end(cdp, shared, agent, grace=JOB_GRACE_S, now=None):
+    """→ the tabs that will close unless the agent keeps them (the question to the agent); nothing closes here"""
+    now = time.time() if now is None else now
+    d = load_state(jobs_path(shared, agent))
+    if not d.get("start"):
+        return 2, {"status": "refused", "why": f"no job was started — run `browser-owner job-start {agent}` when a job begins"}
+    cands = job_candidates(d.get("before") or [], pages_of(cdp), d.get("kept") or [])
+    d["pending"] = {p["id"]: {"title": p["title"], "site": host(p["url"]), "closeAfter": now + grace, "opener": p.get("opener")}
+                    for p in cands}
+    d["kept"] = []                                           # what was kept is asked about again next time
+    save_state(jobs_path(shared, agent), d)
+    return 0, {"status": "ask" if cands else "nothing", "close": [{"id": i, "title": v["title"], "site": v["site"]} for i, v in d["pending"].items()],
+               "graceSeconds": int(grace),
+               "keep": f"keep any you still need: browser-owner job-keep {agent} <id> … — the rest close: browser-owner job-close {agent}"
+                       f" (or by themselves after {int(grace)} s)"}
+
+
+def job_keep(shared, agent, ids):
+    """keep these tabs — and the tabs they opened (a popup of a page the agent still needs stays with it)"""
+    d = load_state(jobs_path(shared, agent))
+    pending = d.get("pending") or {}
+    kept = [i for i in ids if i in pending]
+    grew = True
+    while grew:
+        more = [i for i, v in pending.items() if i not in kept and v.get("opener") in kept]
+        kept += more
+        grew = bool(more)
+    for i in kept:
+        pending.pop(i, None)
+    d["kept"] = sorted(set(d.get("kept") or []) | set(kept))
+    save_state(jobs_path(shared, agent), d)
+    return {"status": "kept", "kept": kept}
+
+
+def job_close(cdp, shared, agent, now=None, only_expired=False):
+    """close the pending tabs (after the agent's answer, or once their grace ran out); re-checked right before: a tab that
+    became attached, or that would be the last one, stays"""
+    now = time.time() if now is None else now
+    d = load_state(jobs_path(shared, agent))
+    pending = d.get("pending") or {}
+    if not pending:
+        return {"status": "nothing", "closed": []}
+    pages = pages_of(cdp)
+    live = {p["id"]: p for p in pages}
+    todo = [i for i, v in pending.items() if i in live and not live[i]["attached"] and (not only_expired or v.get("closeAfter", 0) <= now)]
+    closed = []
+    for i in todo:
+        if len(live) - len(closed) <= 1:
+            break
+        try:
+            cdp.call("Target.closeTarget", {"targetId": i})
+            closed.append(i)
+        except OSError:
+            pass
+    for i in list(pending):
+        if i in closed or i not in live:
+            pending.pop(i)
+    d["pending"] = pending
+    save_state(jobs_path(shared, agent), d)
+    return {"status": "closed", "closed": closed, "stillPending": list(pending)}
