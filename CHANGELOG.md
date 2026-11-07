@@ -38,6 +38,10 @@ exit codes are an API and change only in a major version.
   browser (http(s) only, started first if down, an `authSites` site taken for the agent); `rainbowomma-browser` is a
   `BROWSER=` launcher for frameworks' `webbrowser.open`, which never falls back to the human's browser; MCP tool
   `open_in_my_browser`. (#42)
+- A job's tabs: `browser-owner job-start` / `job-end` / `job-keep` / `job-close` (MCP `job_start`, `job_end`, `keep_tabs`,
+  `close_job_tabs`) — the tabs a job opened are put to the agent at its end, kept ones (and the tabs they opened)
+  stay, the rest close through CDP, or by the scheduled tab job a minute later; never the last tab, a tab another
+  client drives, or one that was there before. (#43)
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it

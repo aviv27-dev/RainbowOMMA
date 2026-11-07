@@ -1289,6 +1289,9 @@ def tabs(reg, only=None, apply=None, scheduled=False):
                 continue
             try:
                 r = rainbow_tabs.sweep_agent(a, cfg, apply, view, SHARED, cdp_for)
+                if r["status"] == "swept" and rainbow_tabs.load_state(rainbow_tabs.jobs_path(SHARED, name)).get("pending"):
+                    with cdp_for(a, timeout=10) as c:      # a job's tabs nobody kept, once their grace ran out (#43)
+                        r["jobTabs"] = rainbow_tabs.job_close(c, SHARED, name, only_expired=True)
             except Exception as exc:
                 r = {"agent": name, "status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200], "tabs": []}
         for tab in r["tabs"]:
@@ -1323,9 +1326,10 @@ def tabs(reg, only=None, apply=None, scheduled=False):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
     ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
-                                    "tabs", "open"])
+                                    "tabs", "open", "job-start", "job-end", "job-keep", "job-close"])
     ap.add_argument("agent", nargs="?")
-    ap.add_argument("url", nargs="?", help="open: the address to open in the agent's own browser")
+    ap.add_argument("url", nargs="*", help="open: the address to open in the agent's own browser · job-keep: the tab ids to keep")
+    ap.add_argument("--grace", type=float, default=rainbow_tabs.JOB_GRACE_S, help="job-end: seconds before unkept tabs close by themselves")
     ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
     ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
     ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
@@ -1403,6 +1407,26 @@ def main(argv=None):
     if a.cmd == "mcp-config":
         print(json.dumps(mcp_config(ag, a.tool, a.format), ensure_ascii=False))
         return 0
+    if a.cmd in ("job-start", "job-end", "job-keep", "job-close"):   # a job's tabs (#43): the agent's own, through its own CDP
+        try:
+            if a.cmd == "job-keep":
+                code, out = 0, rainbow_tabs.job_keep(SHARED, ag["name"], a.url or [])
+            elif not healthy(ag):
+                code, out = 1, {"status": "down", "why": t("bo.front_down", label=ag["label"])}
+            else:
+                with cdp_for(ag, timeout=10) as c:
+                    if a.cmd == "job-start":
+                        code, out = 0, rainbow_tabs.job_start(c, SHARED, ag["name"])
+                    elif a.cmd == "job-end":
+                        code, out = rainbow_tabs.job_end(c, SHARED, ag["name"], max(0.0, min(a.grace, 3600.0)))
+                    else:
+                        code, out = 0, rainbow_tabs.job_close(c, SHARED, ag["name"])
+        except Exception as exc:   # one JSON answer, always
+            code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+        if out.get("closed"):
+            rainbow_receipts.write("browser-owner", "job-close", ag["name"], ag["name"], "closed", tabs=len(out["closed"]))
+        print(json.dumps(out, ensure_ascii=False))
+        return code
     if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
         code, out = do_front(ag)
         rainbow_receipts.write("browser-owner", "front", ag["name"], "human", out.get("status"), restored=out.get("restored"))
@@ -1426,7 +1450,7 @@ def main(argv=None):
         fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover, "open": do_open}[a.cmd]
         try:
             code, out = fn(ag, a.by.strip().lower(), a.allow_reopen) if a.cmd == "stop" else \
-                fn(ag, a.url, a.by.strip().lower()) if a.cmd == "open" else fn(ag, a.by.strip().lower())
+                fn(ag, (a.url or [""])[0], a.by.strip().lower()) if a.cmd == "open" else fn(ag, a.by.strip().lower())
         except Exception as exc:   # one JSON answer, always
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
     rainbow_receipts.write("browser-owner", a.cmd, ag["name"], a.by.strip().lower(), out.get("status"), why=out.get("why"))

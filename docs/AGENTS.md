@@ -89,6 +89,13 @@ Hermes `.env`). The page then opens in that agent's browser (`browser-owner open
 reported without falling back to the human's browser. Agent skills that call `open <url>` should call
 `browser-owner open <agent> <url>` instead — the guardrail refuses the former and says so.
 
+## A job's tabs
+
+An agent that opens tabs for a job tells its owner when the job begins and ends: `browser-owner job-start <agent>` and
+`browser-owner job-end <agent>` (MCP: `job_start`, `job_end`). `job-end` answers with the tabs that will close and how
+to keep one (`job-keep`); the agent then calls `job-close`, or they close a minute later by themselves. Put the two
+calls in the agent's own job wrapper or skill; a framework hook (a session's start and end) can call them too.
+
 ## File tools, not only the shell
 
 The guardrail also refuses an agent's file tools aimed at RainbowOMMA's own state or `browsers.json` (writing) and the

@@ -1047,7 +1047,7 @@ check("mcp: initialize answers the client's protocol version; the notification g
       [m["id"] for m in got] == [0, 1, 2, 3, 4, 5] and got[0]["result"]["protocolVersion"] == "2025-06-18", got[:1])
 check("mcp: the tools — ports, processes, the agent's own browser",
       {"lease_port", "release_port", "who_port", "whose_process", "stop_process", "my_processes", "browser_status", "start_my_browser",
-       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval", "take_login", "ask_login_code", "release_login", "open_in_my_browser"} == set(names), names)
+       "recover_my_browser", "take_screen", "release_screen", "ask_human_approval", "take_login", "ask_login_code", "release_login", "open_in_my_browser", "job_start", "job_end", "keep_tabs", "close_job_tabs"} == set(names), names)
 lp = got[2]["result"]
 check("mcp lease_port: a port from Alpha's own range, as structured JSON", not lp["isError"] and 41000 <= lp["structuredContent"]["port"] <= 41099, lp)
 check("mcp who_port: 3000 is the human's", got[3]["result"]["structuredContent"]["owner"] == "human")
@@ -1950,8 +1950,9 @@ class FakeTabsCDP(FakeCDP):
                 m, prm, sid = msg["method"], msg.get("params") or {}, msg.get("sessionId")
                 self.calls.append((m, prm, sid))
                 if m == "Target.getTargets":
-                    res = {"targetInfos": [{"targetId": t, "type": "page", "url": u, "title": "x", "attached": att}
-                                           for t, (u, f, att) in self.pages.items()] + [{"targetId": "sw", "type": "service_worker"}]}
+                    res = {"targetInfos": [{"targetId": t, "type": "page", "url": v[0], "title": "x", "attached": v[2],
+                                            **({"openerId": v[3]} if len(v) > 3 else {})}
+                                           for t, v in self.pages.items()] + [{"targetId": "sw", "type": "service_worker"}]}
                 elif m == "Target.attachToTarget":
                     sid_ = "S" + prm["targetId"]; self.sessions[sid_] = prm["targetId"]; res = {"sessionId": sid_}
                 elif m == "Performance.getMetrics":
@@ -2486,6 +2487,48 @@ lb = subprocess.run(["bash", str(HERE / "rainbowomma-browser"), "https://x.examp
                     env={k: v for k, v in genv.items() if k != "RAINBOW_AGENT"})
 check("rainbowomma-browser (#42): without an agent name nothing opens — and it still exits 0, so webbrowser.open never falls back to the human's browser",
       lb.returncode == 0 and "no agent name" in lb.stderr, (lb.returncode, lb.stderr))
+
+# ── a job's tabs close at its end — after asking the agent (#43) ──
+fj = FakeTabsCDP({"home": ("https://docs.example/", 0.0, False)})
+jb = load("browser-owner.py"); jshared = tmp / "job-home"
+ja = {"name": "alpha", "port": fj.port}
+with jb.cdp_for(ja) as c:
+    rt.job_start(c, jshared, "alpha")
+fj.pages.update({"a": ("https://shop.example/cart", 0.0, False), "b": ("https://x.example/", 0.0, True),
+                 "c": ("https://pay.example/", 0.0, False, "home"), "d": ("https://y.example/", 0.0, False, "a")})
+with jb.cdp_for(ja) as c:
+    je_code, je = rt.job_end(c, jshared, "alpha", grace=60, now=1000.0)
+asked = sorted(x["id"] for x in je["close"])
+check("job-end (#43): the job's own tabs are put to the agent first — never one a client drives, never a pre-existing tab",
+      je_code == 0 and je["status"] == "ask" and "home" not in asked and "b" not in asked and set(asked) >= {"a", "d"} and "job-keep alpha" in je["keep"], je)
+rt.job_keep(jshared, "alpha", ["a"])
+fj.calls.clear()
+with jb.cdp_for(ja) as c:
+    jc = rt.job_close(c, jshared, "alpha")
+closed_ = sorted(jc["closed"])
+check("job-close (#43): what the agent kept stays — with the tabs it opened — and the rest closes through CDP, no process signalled",
+      "a" not in closed_ and "d" not in closed_ and closed_ == ["c"] and all(m in ("Target.getTargets", "Target.closeTarget") for m, _, _ in fj.calls), (jc, fj.calls))
+fj2 = FakeTabsCDP({"only": ("https://docs.example/", 0.0, False)}); ja2 = {"name": "bravo", "port": fj2.port}
+with jb.cdp_for(ja2) as c:
+    rt.job_start(c, jshared, "bravo")
+fj2.pages.clear(); fj2.pages["n1"] = ("https://new.example/", 0.0, False)
+with jb.cdp_for(ja2) as c:
+    _, je2 = rt.job_end(c, jshared, "bravo", now=1000.0)
+check("job-end (#43): never the browser's last tab", je2["close"] == [], je2)
+fj3 = FakeTabsCDP({"h": ("https://docs.example/", 0.0, False)}); ja3 = {"name": "charlie", "port": fj3.port}
+with jb.cdp_for(ja3) as c:
+    rt.job_start(c, jshared, "charlie")
+fj3.pages["late"] = ("https://z.example/", 0.0, False)
+with jb.cdp_for(ja3) as c:
+    rt.job_end(c, jshared, "charlie", grace=60, now=1000.0)
+    early = rt.job_close(c, jshared, "charlie", now=1030.0, only_expired=True)
+    late_ = rt.job_close(c, jshared, "charlie", now=1061.0, only_expired=True)
+check("job tabs (#43): with no answer, the scheduled sweep closes them only once their grace ran out",
+      early["closed"] == [] and late_["closed"] == ["late"], (early, late_))
+check("job tabs (#43): an agent ends and keeps only its own job's tabs", as_agent("browser-owner job-end bravo", "alpha") == 2
+      and as_agent("browser-owner job-keep bravo x", "alpha") == 2)
+with jb.cdp_for({"name": "x", "port": fj3.port}) as c:
+    check("job-end (#43): without a job-start it says how to begin, and closes nothing", rt.job_end(c, jshared, "nobody")[0] == 2)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
