@@ -1,6 +1,13 @@
 #!/bin/bash
 # rainbow-panel.sh — what the panel icon runs: (re)start the panel's local server with a fresh key, then open its window.
 # One panel at a time: an old server of ours (pid file) is closed first; it would end by itself a minute after its window.
+case "${1:-}" in -h|--help)   # --help: one shape for every tool (bin/rainbow_help.py), and it never acts
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    if [ -x "$p" ] && "$p" -I -V >/dev/null 2>&1; then exec "$p" -I "$(cd "$(dirname "$0")" && pwd)/rainbow_help.py" rainbow-panel.sh; fi
+  done
+  echo "rainbow-panel.sh: no working python3 found" >&2; exit 1 ;;
+esac
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 I18N="$DIR/rainbow_i18n.py"

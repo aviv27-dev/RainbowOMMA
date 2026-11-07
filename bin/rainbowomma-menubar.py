@@ -95,4 +95,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import os as _os, sys as _sys  # noqa: E401
+    _sys.path.insert(0, _os.path.dirname(_os.path.realpath(__file__))); __import__("rainbow_help").handle(__file__)   # --help: one shape, never acts
     sys.exit(main())
