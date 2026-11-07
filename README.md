@@ -258,6 +258,8 @@ browser, the tool probes it three times over 30 seconds or more, so a Mac deep i
 Every command prints **one JSON answer** with stable status words, so an agent can branch on the result instead of
 guessing. Exit codes: `browser-owner` `0` ok · `2` refused (don't retry) · `1` failed or blocked (the `status` word says
 why); `port-owner` and `proc-owner` `0` ok · `2` refused · `1` failed; `office-owner` `0` done · `3` left open · `1` failure.
+`<tool> --help` shows the same four things for every tool — what it is for, its commands with an example each, its exit
+codes, and where to read more — and never acts.
 
 | Command | What it does |
 |---|---|

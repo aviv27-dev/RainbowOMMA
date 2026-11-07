@@ -1,4 +1,11 @@
 #!/bin/bash
+case "${1:-}" in -h|--help)   # --help: one shape for every tool (bin/rainbow_help.py), and it never acts
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    if [ -x "$p" ] && "$p" -I -V >/dev/null 2>&1; then exec "$p" -I "$(cd "$(dirname "$0")" && pwd)/rainbow_help.py" human-chrome.sh; fi
+  done
+  echo "human-chrome.sh: no working python3 found" >&2; exit 1 ;;
+esac
 set -u
 
 DATA_DIR="$HOME/Library/Application Support/Google/Chrome"

@@ -5,6 +5,16 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+### Changed
+- `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
+  codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
+  stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
+
+### Fixed
+- `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
+  opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
+  every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
+
 ## [0.3.1] — 2026-11-07
 
 One window for every browser (`rainbow-panel`), issues filed only after a privacy scan (`rainbowomma-report`), a

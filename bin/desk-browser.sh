@@ -1,6 +1,13 @@
 #!/bin/bash
 # What the desktop icons and the Dock tray run: open|close <agent> (any agent in browsers.json), open|close human, close agents.
 # open <agent> on a browser that is already open brings it to the front, un-minimized. Exit 1 (message on stderr) on failure.
+case "${1:-}" in -h|--help)   # --help: one shape for every tool (bin/rainbow_help.py), and it never acts
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    if [ -x "$p" ] && "$p" -I -V >/dev/null 2>&1; then exec "$p" -I "$(cd "$(dirname "$0")" && pwd)/rainbow_help.py" desk-browser.sh; fi
+  done
+  echo "desk-browser.sh: no working python3 found" >&2; exit 1 ;;
+esac
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 OWNER="$DIR/browser-owner"

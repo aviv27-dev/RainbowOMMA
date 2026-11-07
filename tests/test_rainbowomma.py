@@ -2758,5 +2758,45 @@ check("report: a clean report goes to gh issue create on the repository, with th
       r_send.returncode == 0 and json.loads(r_send.stdout)["status"] == "sent"
       and gh_calls.strip() == f"issue create -R aviv27-dev/RainbowOMMA --title Colors for agents --body-file {gb} --label enhancement", (r_send.stdout, gh_calls))
 
+# ── --help: one shape for every tool, and it never acts (#58) ──
+rh = load("rainbow_help.py")
+tools_ = sorted(f.name for f in HERE.iterdir() if f.is_file() and os.access(f, os.X_OK) and f.suffix not in (".js", ".html"))
+check("help: every tool in bin/ has an entry in the help catalog, and every entry is a tool",
+      all(rh.key(n) for n in tools_) and set(rh.H) <= {rh.key(n) for n in tools_}, [n for n in tools_ if not rh.key(n)])
+def help_shape(k, lg):
+    ls = rh.text(k, lg).split("\n"); h = rh.H[k]; w = lambda m: i18n.M[m].get(lg) or i18n.M[m]["en"]   # noqa: E731
+    i = ls.index(w("help.exits"))
+    docs = [d.split(" ")[0] for d in h["more"].split(", ")]
+    keys = [f"help.{k}", *(m for _c, m, _e in h["commands"]), *(m for _c, m in h["exits"])]
+    return (ls[0] == f"{k} — {w('help.' + k)}" and ls[2] == w("help.commands")
+            and sum(1 for x in ls if x.startswith("      " + w("help.eg") + " ")) == len(h["commands"]) >= 1
+            and all(re.fullmatch(r"  [0-9]  \S.*", x) for x in ls[i + 1:i + 1 + len(h["exits"])]) and len(h["exits"]) >= 1
+            and ls[-1].startswith(w("help.more") + " ") and all((ROOT_DIR / d).is_file() for d in docs)
+            and all(i18n.M[m].get("he") and i18n.M[m].get("en") for m in keys))
+check("help: each entry has the shape — what it is for, the commands with an example each, exit codes, where to read more "
+      "(in English and Hebrew; the docs it points to exist)", all(help_shape(k, lg) for k in rh.H for lg in ("en", "he")),
+      [k for k in rh.H if not all(help_shape(k, lg) for lg in ("en", "he"))])
+stub_dir = tmp / "help-stubs"; stub_dir.mkdir(); stub_log = tmp / "help-stub-calls.txt"
+for c in ("open", "osascript", "pkill", "killall", "pgrep", "ps", "xcrun", "gh", "curl", "lsof"):
+    (stub_dir / c).write_text(f"#!/bin/sh\necho {c} \"$@\" >> {stub_log}\n"); (stub_dir / c).chmod(0o755)
+hhome = tmp / "help-home"; hhome.mkdir()
+bad_help = []
+for n in tools_:
+    for flag, lg in (("-h", "en"), ("--help", "en"), ("-h", "he"), ("--help", "he")):
+        henv = dict(os.environ, PATH=f"{stub_dir}:/usr/bin:/bin", HOME=str(hhome), RAINBOW_HOME=str(hhome / ".rainbowomma"),
+                    RAINBOW_AGENT="alpha", RAINBOW_LANG=lg, BROWSER_OWNER_REGISTRY=str(NOREG))
+        try:
+            r = subprocess.run([str(HERE / n), flag], capture_output=True, text=True, env=henv, stdin=subprocess.DEVNULL, timeout=20)
+            if r.returncode != 0 or r.stdout.rstrip("\n") != rh.text(n, lg):
+                bad_help.append((n, flag, lg, r.returncode, r.stdout[:80], r.stderr[:120]))
+        except subprocess.TimeoutExpired:
+            bad_help.append((n, flag, lg, "timeout"))
+check("help: -h and --help on every tool print its catalog entry and exit 0, in English and Hebrew", not bad_help, bad_help[:4])
+check("help: --help never acts — no browser, AppleScript, kill or network call, and nothing written to $RAINBOW_HOME",
+      not stub_log.exists() and not any(hhome.rglob("*")), (stub_log.read_text() if stub_log.exists() else "", list(hhome.rglob("*"))[:5]))
+r_sub = subprocess.run([str(HERE / "port-owner"), "lease", "--help"], capture_output=True, text=True, env=dict(os.environ, RAINBOW_HOME=str(hhome / "x")))
+check("help: a command's own --help is still argparse's (port-owner lease --help)", r_sub.returncode == 0 and "usage: port-owner lease" in r_sub.stdout,
+      r_sub.stdout[:120])
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
