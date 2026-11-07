@@ -199,6 +199,16 @@ if [ "$DRY" != 1 ]; then          # the manifest: what is in it now, newest firs
     END { for (p in last) print order[p] "\t" last[p] }' | sort -n | cut -f2- > "$MANIFEST.tmp" && mv "$MANIFEST.tmp" "$MANIFEST"
 fi
 
+# which release is in place — rainbowomma-doctor and a weekly "am I on the latest release?" check read it
+VERSION="$(tr -d '[:space:]' < "$HERE/VERSION" 2>/dev/null || true)"
+SOURCE="archive"
+if [ -d "$HERE/.git" ] && command -v git >/dev/null 2>&1; then SOURCE="git $(git -C "$HERE" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+else case "$HERE" in */Cellar/rainbowomma/*) SOURCE="homebrew" ;; esac; fi
+echo "→ version ${VERSION:-unknown} ($SOURCE) recorded in $ROOT/installed-version"
+if [ "$DRY" != 1 ]; then
+  printf '{"version": "%s", "source": "%s", "bin": "%s", "at": "%s"}\n' "${VERSION:-unknown}" "$SOURCE" "$BIN" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ROOT/installed-version"
+fi
+
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "note: $BIN is not on your PATH — call the tools by their full path, or add it." ;; esac
 cat <<EOF
 

@@ -70,7 +70,7 @@ if [ -f "$ROOT/backups.txt" ]; then
     if [ -e "$saved" ] && [ ! -e "$path" ]; then echo "→ your own $path put back"; run mv "$saved" "$path"; fi
   done < "$ROOT/backups.txt"
 fi
-[ "$DRY" = 1 ] || rm -f "$MANIFEST" "$ROOT/backups.txt"
+[ "$DRY" = 1 ] || rm -f "$MANIFEST" "$ROOT/backups.txt" "$ROOT/installed-version"
 
 if [ "$PURGE" = 1 ]; then
   [ -e "$BIN/browsers.json" ] && { echo "→ $BIN/browsers.json"; run rm -f "$BIN/browsers.json"; }
