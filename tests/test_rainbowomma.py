@@ -623,6 +623,30 @@ check("install: a custom RAINBOW_HOME is handed to the sweep job", "<key>RAINBOW
 dry_home = tmp / "dry"; dry_home.mkdir()
 r = subprocess.run(["bash", installer, "--with-sweep", "--dry-run"], capture_output=True, text=True, env=dict(ienv, HOME=str(dry_home)))
 check("install --dry-run changes nothing", r.returncode == 0 and not any(dry_home.iterdir()), list(dry_home.iterdir()))
+steps_ = lambda out: [re.fullmatch(r"\[(\d+)/(\d+)\] (.+?) — (done|kept|would)(?: \((.*)\))?", x) for x in out.splitlines() if x.startswith("[")]
+st_dry = steps_(r.stdout)
+check("install (#61): numbered steps, each with one result word — a dry run says would for each, then a summary of what it would do",
+      st_dry and all(st_dry) and [int(m[1]) for m in st_dry] == list(range(1, len(st_dry) + 1)) and all(int(m[2]) == len(st_dry) for m in st_dry)
+      and {m[4] for m in st_dry} == {"would"} and "Dry run — nothing was changed. It would:" in r.stdout
+      and re.search(r"^  files     \d+ new · 0 updated · 0 replaced, yours saved first · 0 unchanged$", r.stdout, re.M)
+      and "  jobs      com.rainbowomma.agent-office-sweep\n" in r.stdout and "Done. Next" not in r.stdout and "would: cp" not in r.stdout, r.stdout[-900:])
+sh_home = tmp / "steps-home"; (sh_home / "bin").mkdir(parents=True); (sh_home / "bin" / "receipts").write_text("my own\n")
+shenv = dict(ienv, HOME=str(sh_home))
+r_s1 = subprocess.run(["bash", installer, "--with-sweep"], capture_output=True, text=True, env=shenv)
+snap_ = {f: f.read_bytes() for f in sh_home.rglob("*") if f.is_file()}
+r_s2 = subprocess.run(["bash", installer, "--with-sweep", "--dry-run"], capture_output=True, text=True, env=shenv)
+s1, s2 = steps_(r_s1.stdout), steps_(r_s2.stdout)
+n_tools = sum(1 for f in HERE.iterdir() if f.name not in ("browsers.json", "__pycache__"))
+check("install (#61): a real run says done for each step, with the files counted; your own file replaced is counted and saved",
+      r_s1.returncode == 0 and s1 and all(s1) and len(s1) == 5 and [m[4] for m in s1] == ["done", "done", "done", "done", "done"]
+      and s1[0][5] == f"{n_tools - 1} new · 0 updated · 1 replaced, yours saved first · 0 unchanged" and "saved in" in r_s1.stdout, r_s1.stdout[-900:])
+check("install (#61): a dry run over an install counts what is unchanged, keeps your registry, and changes nothing",
+      r_s2.returncode == 0 and s2 and s2[1][4] == "kept" and f"  files     0 new · 0 updated · 0 replaced, yours saved first · {n_tools} unchanged" in r_s2.stdout
+      and "  settings  browsers.json: yours, kept as it is" in r_s2.stdout
+      and snap_ == {f: f.read_bytes() for f in sh_home.rglob("*") if f.is_file()}, r_s2.stdout[-700:])
+r_fail = subprocess.run(["bash", installer, "--migrate-from", str(tmp / "no-such-old-install")], capture_output=True, text=True, env=dict(ienv, HOME=str(tmp / "fail-home")))
+check("install (#61): a failure names the step it stopped at, once, and exits non-zero", r_fail.returncode != 0
+      and r_fail.stderr.count("✗ install.sh failed at step [3/5] migrating") == 1 and "[4/5]" not in r_fail.stdout, r_fail.stderr[-400:])
 r = subprocess.run(["bash", installer], capture_output=True, text=True, env=dict(ienv, RAINBOW_INSTALL_ANY_OS="0"))
 check("install: refuses to run anywhere but macOS", sys.platform == "darwin" or (r.returncode == 1 and "macOS" in r.stderr), r.stderr)
 

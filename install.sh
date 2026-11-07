@@ -64,26 +64,54 @@ if [ "$(uname -s)" != "Darwin" ] && [ "${RAINBOW_INSTALL_ANY_OS:-0}" != "1" ]; t
 fi
 command -v python3 >/dev/null 2>&1 || { echo "python3 is needed (macOS: xcode-select --install)" >&2; exit 1; }
 
-run() { if [ "$DRY" = 1 ]; then echo "would: $*"; else "$@"; fi; }
+# numbered steps, each with one result word: [3/7] state in ~/.rainbowomma — done
+TOTAL=4                                             # tools, the registry, the state folder, the version
+[ -z "$MIGRATE" ] || TOTAL=$((TOTAL + 1))
+TOTAL=$((TOTAL + SWEEP + HEAL + TABS + MENUBAR))
+[ -z "$ADAPTERS" ] || TOTAL=$((TOTAL + 1))
+N=0; STEP="starting"; NOTES=""
+begin() { N=$((N + 1)); STEP="$1"; NOTES=""; }
+note() { NOTES="${NOTES}      $*"$'\n'; }
+end() {   # end WORD [DETAIL] — WORD is done, kept or would
+  printf '[%d/%d] %s — %s%s\n' "$N" "$TOTAL" "$STEP" "$1" "${2:+ ($2)}"
+  [ -z "$NOTES" ] || printf '%s' "$NOTES"
+}
+REPORTED=0
+WORD="done"; [ "$DRY" = 1 ] && WORD="would"
+run() { if [ "$DRY" = 1 ]; then return 0; else "$@"; fi; }   # a dry run changes nothing; the summary says what it would do
 sum() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | cut -d' ' -f1; else sha256sum "$1" | cut -d' ' -f1; fi; }
 MANIFEST="$ROOT/installed.txt"      # "<sha256>  <path>" for every file this installer put in place — uninstall.sh reads it
 BACKUPS="$ROOT/backups.txt"         # "<path>\t<backup>" for a file of yours it replaced — uninstall.sh puts it back
 BACKUP_DIR="$ROOT/backup/$(date +%Y%m%d-%H%M%S)"
-NEW_ENTRIES="$(mktemp)"; trap 'rm -f "$NEW_ENTRIES"' EXIT
+finish() {   # on the way out: the temp file goes; a failure names the step it stopped at (once)
+  local rc=$?
+  rm -f "$NEW_ENTRIES"
+  if [ "$rc" != 0 ] && [ "$N" -gt 0 ] && [ "$REPORTED" = 0 ]; then
+    echo "✗ install.sh failed at step [$N/$TOTAL] $STEP — the steps after it did not run" >&2
+  fi
+}
+NEW_ENTRIES="$(mktemp)"; trap finish EXIT
 ours() { [ -f "$MANIFEST" ] && cut -d' ' -f3- "$MANIFEST" | grep -qxF "$1"; }     # a path this installer wrote before
+F_NEW=0; F_UPD=0; F_MINE=0; F_SAME=0
 place() {   # place SRC DEST — a file of yours already at DEST (not one this installer put there) is saved first
   local src="$1" dest="$2"
-  if [ "$DRY" = 1 ]; then echo "would: cp -p $src $dest"; return; fi
-  if [ -e "$dest" ] && ! cmp -s "$src" "$dest" && ! ours "$dest"; then
-    mkdir -p "$BACKUP_DIR" && cp -p "$dest" "$BACKUP_DIR/$(basename "$dest")"
-    printf '%s\t%s\n' "$dest" "$BACKUP_DIR/$(basename "$dest")" >> "$BACKUPS"
-    echo "   your own $(basename "$dest") was there — saved in $BACKUP_DIR (uninstall.sh puts it back)"
+  if [ ! -e "$dest" ]; then F_NEW=$((F_NEW + 1))
+  elif cmp -s "$src" "$dest"; then F_SAME=$((F_SAME + 1))
+  elif ours "$dest"; then F_UPD=$((F_UPD + 1))
+  else
+    F_MINE=$((F_MINE + 1))
+    if [ "$DRY" = 1 ]; then note "your own $(basename "$dest") is there — it would be saved first"; else
+      mkdir -p "$BACKUP_DIR" && cp -p "$dest" "$BACKUP_DIR/$(basename "$dest")"
+      printf '%s\t%s\n' "$dest" "$BACKUP_DIR/$(basename "$dest")" >> "$BACKUPS"
+      note "your own $(basename "$dest") was there — saved in $BACKUP_DIR (uninstall.sh puts it back)"
+    fi
   fi
+  [ "$DRY" != 1 ] || return 0
   cp -p "$src" "$dest"
   printf '%s  %s\n' "$(sum "$dest")" "$dest" >> "$NEW_ENTRIES"
 }
 
-echo "→ tools into $BIN"
+begin "tools into $BIN"
 run mkdir -p "$BIN"
 [ "$DRY" = 1 ] || mkdir -p "$ROOT"
 for f in "$HERE"/bin/*; do
@@ -93,12 +121,17 @@ for f in "$HERE"/bin/*; do
   esac
   place "$f" "$BIN/$name"
 done
+FILES="$F_NEW new · $F_UPD updated · $F_MINE replaced, yours saved first · $F_SAME unchanged"
+end "$WORD" "$FILES"
 
+begin "the agent registry $BIN/browsers.json"
 if [ -e "$BIN/browsers.json" ]; then
-  echo "→ $BIN/browsers.json exists — kept as it is"
-  [ -z "$CHANNEL" ] || echo "   --agent-chrome: add \"chrome\": \"$CHANNEL\" to each agent in it yourself (an existing registry is never rewritten)"
+  SETTINGS="browsers.json: yours, kept as it is"
+  [ -z "$CHANNEL" ] || note "--agent-chrome: add \"chrome\": \"$CHANNEL\" to each agent in it yourself (an existing registry is never rewritten)"
+  REG_WORD=kept
 else
-  echo "→ $BIN/browsers.json created from the example — edit it: one row per agent"
+  SETTINGS="browsers.json: a new one from the example${CHANNEL:+, every agent on Chrome $CHANNEL} — edit it: one row per agent"
+  REG_WORD="$WORD"
   run cp "$HERE/examples/browsers.example.json" "$BIN/browsers.json"
   if [ -n "$CHANNEL" ] && [ "$DRY" != 1 ]; then
     python3 -I - "$BIN/browsers.json" "$CHANNEL" <<'PY'
@@ -109,7 +142,7 @@ for row in d["agents"].values():
     row["chrome"] = channel
 open(path, "w", encoding="utf-8").write(json.dumps(d, ensure_ascii=False, indent=1) + "\n")
 PY
-    echo "   every agent's browser runs as Chrome $CHANNEL"
+    note "every agent's browser runs as Chrome $CHANNEL"
   fi
 fi
 if [ -n "$CHANNEL" ]; then
@@ -118,24 +151,29 @@ if [ -n "$CHANNEL" ]; then
   if [ ! -d "/Applications/$APP.app" ]; then
     if [ "$CHANNEL" = cft ]; then HOW="npx @puppeteer/browsers install chrome@stable, then move it to /Applications"
     else HOW="google.com/chrome, or: brew install --cask google-chrome@$CHANNEL"; fi
-    echo "   note: /Applications/$APP.app isn't installed yet — $HOW"
+    note "note: /Applications/$APP.app isn't installed yet — $HOW"
   fi
 fi
+end "$REG_WORD" "$SETTINGS"
 
 if [ -n "$MIGRATE" ]; then
-  echo "→ migrating $MIGRATE into $ROOT"
-  if [ "$DRY" = 1 ]; then python3 -I "$HERE/install/migrate.py" "$MIGRATE" "$ROOT" --registry "$BIN/browsers.json" --dry-run
-  else python3 -I "$HERE/install/migrate.py" "$MIGRATE" "$ROOT" --registry "$BIN/browsers.json"; fi
+  begin "migrating $MIGRATE into $ROOT"
+  if [ "$DRY" = 1 ]; then MOUT="$(python3 -I "$HERE/install/migrate.py" "$MIGRATE" "$ROOT" --registry "$BIN/browsers.json" --dry-run)"
+  else MOUT="$(python3 -I "$HERE/install/migrate.py" "$MIGRATE" "$ROOT" --registry "$BIN/browsers.json")"; fi
+  while IFS= read -r ln; do note "$ln"; done <<< "$MOUT"
+  end "$WORD"
 fi
 
-echo "→ state in $ROOT"
+begin "state in $ROOT"
 run mkdir -p "$ROOT/logs" "$ROOT/state" "$ROOT/word-convert"
 run chmod 700 "$ROOT"     # receipts, approvals and document copies: readable by you only
+end "$WORD" "readable by you only"
 
 job() {   # job <label> <what> — write the launchd job from install/<label>.plist with absolute paths, and load it
   local label="$1" what="$2" plist="$AGENTS_DIR/$1.plist"
-  echo "→ $what job $plist (absolute paths — launchd does not expand ~)"
-  if [ "$DRY" = 1 ]; then echo "would: write $plist and load it"; return; fi
+  begin "$what job $label"
+  JOBS="${JOBS:+$JOBS, }$label"
+  if [ "$DRY" = 1 ]; then end would "write $plist, with absolute paths, and load it"; return; fi
   mkdir -p "$AGENTS_DIR"
   python3 -I - "$HERE/install/$label.plist" "$plist" "$BIN" "$ROOT" "$HOME" <<'PY'
 import sys, xml.sax.saxutils as x
@@ -155,36 +193,41 @@ PY
     launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
     launchctl bootstrap "gui/$(id -u)" "$plist"
   fi
+  end "done" "$plist, with absolute paths — launchd does not expand ~"
 }
-[ "$SWEEP" = 1 ] && job "$LABEL" sweep
-[ "$HEAL" = 1 ] && job com.rainbowomma.heal heal
-[ "$TABS" = 1 ] && job com.rainbowomma.tabs tab-sweep
+JOBS=""
+if [ "$SWEEP" = 1 ]; then job "$LABEL" sweep; fi
+if [ "$HEAL" = 1 ]; then job com.rainbowomma.heal heal; fi
+if [ "$TABS" = 1 ]; then job com.rainbowomma.tabs tab-sweep; fi
 
 if [ "$MENUBAR" = 1 ]; then
   PLUGINS="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null || true)"
   [ -n "$PLUGINS" ] || PLUGINS="$ROOT/swiftbar"
-  echo "→ menu-bar item $PLUGINS/rainbowomma.10s.sh (SwiftBar runs it every 10 s)"
-  if [ "$DRY" = 1 ]; then echo "would: write it"; else
+  begin "menu-bar item $PLUGINS/rainbowomma.10s.sh"
+  if [ "$DRY" = 1 ]; then end would "SwiftBar runs it every 10 s"; else
     mkdir -p "$PLUGINS"
     printf '#!/bin/bash\n# <swiftbar.title>RainbowOMMA</swiftbar.title>\n# <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>\nexec %q\n' \
       "$BIN/rainbowomma-menubar" > "$PLUGINS/rainbowomma.10s.sh"
     chmod +x "$PLUGINS/rainbowomma.10s.sh"
     printf '%s  %s\n' "$(sum "$PLUGINS/rainbowomma.10s.sh")" "$PLUGINS/rainbowomma.10s.sh" >> "$NEW_ENTRIES"
     if [ "$PLUGINS" = "$ROOT/swiftbar" ]; then
-      echo "   install SwiftBar (brew install --cask swiftbar) and choose $PLUGINS as its plugin folder"
+      note "install SwiftBar (brew install --cask swiftbar) and choose $PLUGINS as its plugin folder"
     fi
+    end "done" "SwiftBar runs it every 10 s"
   fi
 fi
 
 set -f   # the names were checked above; no globbing of them
+ADAPTER_LIST="$(echo $ADAPTERS | sed 's/ /, /g')"
+[ -z "$ADAPTERS" ] || begin "adapters in $ROOT/adapters"
 for A in $ADAPTERS; do
   SRC="$HERE/adapters/$A"
   if [ ! -d "$SRC" ]; then
-    echo "no adapter called $A — there are: $(ls "$HERE/adapters" | tr '\n' ' ')" >&2; exit 2
+    REPORTED=1; echo "✗ install.sh failed at step [$N/$TOTAL] $STEP: no adapter called $A — there are: $(ls "$HERE/adapters" | tr '\n' ' ')" >&2; exit 2
   fi
   DEST="$ROOT/adapters/$A"
-  echo "→ adapter $A in $DEST (your paths filled in) — merge it into $A's settings as docs/AGENTS.md says"
-  [ "$DRY" = 1 ] && { echo "would: copy $SRC with /Users/you → $HOME"; continue; }
+  note "$A in $DEST (your paths filled in) — merge it into $A's settings as docs/AGENTS.md says"
+  [ "$DRY" != 1 ] || continue
   mkdir -p "$DEST"
   ( cd "$SRC" && find . -type f ) | while IFS= read -r f; do
     mkdir -p "$DEST/$(dirname "$f")"
@@ -192,6 +235,7 @@ for A in $ADAPTERS; do
     if [ -x "$SRC/$f" ]; then chmod +x "$DEST/$f"; fi
   done
 done
+[ -z "$ADAPTERS" ] || end "$WORD" "$ADAPTER_LIST"
 set +f
 
 if [ "$DRY" != 1 ]; then          # the manifest: what is in it now, newest first for a path written again
@@ -205,13 +249,25 @@ SOURCE="archive"
 if [ -d "$HERE/.git" ] && command -v git >/dev/null 2>&1; then SOURCE="git $(git -C "$HERE" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 else case "$HERE" in */Cellar/rainbowomma/*) SOURCE="homebrew" ;; esac; fi
 PREV="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version", ""))' "$ROOT/installed-version" 2>/dev/null || true)"   # the release this replaces
-echo "→ version ${VERSION:-unknown} ($SOURCE) recorded in $ROOT/installed-version"
+begin "version ${VERSION:-unknown} ($SOURCE) recorded in $ROOT/installed-version"
 if [ "$DRY" != 1 ]; then
   printf '{"version": "%s", "source": "%s", "bin": "%s", "at": "%s"}\n' "${VERSION:-unknown}" "$SOURCE" "$BIN" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ROOT/installed-version"
 fi
+end "$WORD" "${PREV:+was $PREV}"
 
 case ":$PATH:" in *":$BIN:"*) ;; *) echo "note: $BIN is not on your PATH — call the tools by their full path, or add it." ;; esac
-cat <<EOF
+if [ "$DRY" = 1 ]; then
+  cat <<EOF
+
+Dry run — nothing was changed. It would:
+  files     $FILES
+  jobs      ${JOBS:-none}
+  settings  $SETTINGS
+  adapters  ${ADAPTER_LIST:-none}${MIGRATE:+
+  migrate   from $MIGRATE (what it would carry over is listed above)}
+EOF
+else
+  cat <<EOF
 
 Done. Next:
   \$EDITOR $BIN/browsers.json                  # port, profile, color, label per agent
@@ -221,5 +277,6 @@ Done. Next:
 Language: English or Hebrew from your Mac's settings; force one with RAINBOW_LANG=en or RAINBOW_LANG=he.
 The first Word → PDF conversion (office-owner pdf) shows a Word permission prompt once — allow it.
 EOF
+fi
 # an upgrade: what changed since the release that was in place, and anything it needs from you
 python3 -I "$HERE/install/changes.py" "$PREV" "${VERSION:-}" "$HERE/CHANGELOG.md" 2>/dev/null || true
