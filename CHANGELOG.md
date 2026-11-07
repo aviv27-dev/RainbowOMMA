@@ -42,6 +42,10 @@ exit codes are an API and change only in a major version.
   `close_job_tabs`) — the tabs a job opened are put to the agent at its end, kept ones (and the tabs they opened)
   stay, the rest close through CDP, or by the scheduled tab job a minute later; never the last tab, a tab another
   client drives, or one that was there before. (#43)
+- `browser-owner presence` and `bin/rainbow_presence.py`: one "is the human at the Mac?" answer (recent input, a locked
+  screen; unknown counts as present) shared by the guard, screen-owner, the cursor proxy and browser-owner. When nobody
+  is, an agent's start or `open` brings its window to the front with that tab; when someone is, it stays in the
+  background. (#35)
 
 ### Changed
 - `install.sh` keeps a manifest (`$RAINBOW_HOME/installed.txt`) of what it put in place, and saves a file of yours it

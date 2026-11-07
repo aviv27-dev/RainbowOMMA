@@ -24,7 +24,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 import time
 
@@ -486,16 +485,8 @@ def _gui_command(name, args):
 
 def human_idle_s():
     """seconds since the human last touched the keyboard or mouse (macOS HIDIdleTime), or None when unknown"""
-    if os.environ.get("RAINBOW_TEST_IDLE_S"):
-        return float(os.environ["RAINBOW_TEST_IDLE_S"])
-    if sys.platform != "darwin":
-        return None
-    try:
-        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, timeout=3).stdout
-        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
-        return int(m.group(1)) / 1e9 if m else None
-    except Exception:
-        return None
+    import rainbow_presence                    # one reading for every tool
+    return rainbow_presence.idle_seconds()
 
 
 def human_active():

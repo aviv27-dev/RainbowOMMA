@@ -55,16 +55,9 @@ def log(msg):
 
 def human_idle_s():
     """seconds since the human last touched the keyboard or mouse (macOS HIDIdleTime), or None when unknown"""
-    if os.environ.get("RAINBOW_TEST_IDLE_S"):
-        return float(os.environ["RAINBOW_TEST_IDLE_S"])
-    if sys.platform != "darwin":
-        return None
-    try:
-        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, timeout=3).stdout
-        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
-        return int(m.group(1)) / 1e9 if m else None
-    except Exception:
-        return None
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import rainbow_presence                    # one reading for every tool
+    return rainbow_presence.idle_seconds()
 
 
 def wait_for_human(name, sleep=time.sleep):
