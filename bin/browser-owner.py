@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
+import rainbow_presence  # noqa: E402
 import rainbow_tabs  # noqa: E402
 from rainbow_i18n import direction, t  # noqa: E402
 
@@ -864,8 +865,9 @@ def do_open(a, url, by):
         tid = c.call("Target.createTarget", {"url": u.geturl()}).get("targetId")
         if tid:
             c.call("Target.activateTarget", {"targetId": tid})
-    log(a, f"open by {by}: {u.hostname}")
-    return 0, {"status": "opened", "targetId": tid, "site": u.hostname}
+    shown = by != "human" and not rainbow_presence.presence()["present"] and do_front(a)[0] == 0   # nobody here: to the front (#35)
+    log(a, f"open by {by}: {u.hostname}{' — brought to the front, nobody at the Mac' if shown else ''}")
+    return 0, {"status": "opened", "targetId": tid, "site": u.hostname, "front": shown}
 
 
 def do_front(a):
@@ -968,10 +970,11 @@ def do_start(a, by):
         return 2, {"status": "closed-by-person", "why": t("bo.closed_by_person", label=a["label"])}
     theme = ensure_theme(a, st) if not a.get("noTheme") else "off"
     painted = paint(a, themed=theme in ("installed", "kept"))
-    before = front_pid() if by != "human" else None
+    away = by != "human" and not rainbow_presence.presence()["present"]     # nobody here: show the agent's window (#35)
+    before = front_pid() if by != "human" and not away else None
     rc, text = launch(a)
     ok = rc == 0 and healthy(a, timeout=5)
-    focus = give_focus_back(a, before) if ok and by != "human" else "human"
+    focus = ("front" if do_front(a)[0] == 0 else "unknown") if ok and away else give_focus_back(a, before) if ok and by != "human" else "human"
     st["lastStart"] = {"at": now_iso(), "by": by, "ok": ok, "out": text[:200], "painted": len(painted), "focus": focus, "theme": theme}
     save(a, st)
     log(a, f"start by {by}: {'ok' if ok else 'FAILED'} {text[:200]}")
@@ -1326,7 +1329,7 @@ def tabs(reg, only=None, apply=None, scheduled=False):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
     ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
-                                    "tabs", "open", "job-start", "job-end", "job-keep", "job-close"])
+                                    "tabs", "open", "job-start", "job-end", "job-keep", "job-close", "presence"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("url", nargs="*", help="open: the address to open in the agent's own browser · job-keep: the tab ids to keep")
     ap.add_argument("--grace", type=float, default=rainbow_tabs.JOB_GRACE_S, help="job-end: seconds before unkept tabs close by themselves")
@@ -1385,6 +1388,9 @@ def main(argv=None):
         except Exception as exc:   # one JSON answer, always
             print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
             return 1
+    if a.cmd == "presence":                  # is the human at the Mac? (the same answer every tool uses)
+        print(json.dumps(rainbow_presence.presence(), ensure_ascii=False))
+        return 0
     if a.cmd == "names":
         # plain words for shell callers (kill-chrome --all): the agents this owner may stop — no JSON parsing in bash
         print(" ".join(n for n, x in reg.items() if not x.get("managedBy")))

@@ -2530,5 +2530,44 @@ check("job tabs (#43): an agent ends and keeps only its own job's tabs", as_agen
 with jb.cdp_for({"name": "x", "port": fj3.port}) as c:
     check("job-end (#43): without a job-start it says how to begin, and closes nothing", rt.job_end(c, jshared, "nobody")[0] == 2)
 
+# ── is the human here? one answer; when nobody is, the working agent's window comes forward (#35) ──
+import rainbow_presence as rpz
+pz = []
+for idle, locked in ((5.0, False), (600.0, False), (None, None), (5.0, True)):
+    rpz.IDLE, rpz.LOCKED = (lambda v=idle: v), (lambda v=locked: v)
+    pz.append(rpz.presence()["present"])
+rpz.IDLE = rpz.LOCKED = None
+check("presence (#35): recent input → here; none for minutes, or a locked screen → away; can't tell → here (never steal focus on a guess)",
+      pz == [True, False, True, False], pz)
+r_pz = subprocess.run(["bash", str(HERE / "browser-owner"), "presence"], capture_output=True, text=True, env=dict(genv, RAINBOW_TEST_IDLE_S="900"))
+check("browser-owner presence (#35): the same answer for every tool, as JSON", json.loads(r_pz.stdout)["present"] is False, r_pz.stdout)
+fp = FakeTabsCDP({"t0": ("https://docs.example/", 0.0, False)})
+pb = load("browser-owner.py"); pb.healthy = lambda a, timeout=2.0: True; pb.auth_sites = lambda path=None: []
+fronts = []; pb.do_front = lambda a: fronts.append(a["name"]) or (0, {"status": "front"})
+pa = {"name": "alpha", "port": fp.port, "label": "Alpha", "log": str(tmp / "pz.log")}
+pb.rainbow_presence.IDLE = lambda: 900.0
+_, away_open = pb.do_open(pa, "https://x.example/", "alpha")
+pb.rainbow_presence.IDLE = lambda: 3.0
+_, here_open = pb.do_open(pa, "https://x.example/", "alpha")
+check("browser-owner open (#35): nobody at the Mac → the agent's window comes to the front with that tab; someone typing → never",
+      away_open["front"] is True and here_open["front"] is False and fronts == ["alpha"], (away_open, here_open, fronts))
+sb = load("browser-owner.py"); fronts2, gave = [], []
+sb.do_front = lambda a: fronts2.append(1) or (0, {"status": "front"})
+sb.give_focus_back = lambda a, before, wait=4.0: gave.append(before) or "restored"
+for k, v in {"view": lambda a, st=None, rows=None: {"status": "down", "roots": []}, "reconcile": lambda a, st, v: st,
+             "profile_unsafe": lambda a: None, "quit_by_person": lambda a, st=None: False, "ensure_theme": lambda a, st: "kept",
+             "paint": lambda a, themed=False: [], "launch": lambda a: (0, "ok"), "healthy": lambda a, timeout=2.0: True,
+             "front_pid": lambda: 4242}.items():
+    setattr(sb, k, v)
+sa = {"name": "alpha", "label": "Alpha", "state": str(tmp / "pz-alpha.json"), "log": str(tmp / "pz.log"), "noTheme": True}
+sb.rainbow_presence.IDLE = lambda: 900.0
+_, st_away = sb.do_start(sa, "alpha")
+sb.rainbow_presence.IDLE = lambda: 3.0
+_, st_here = sb.do_start(sa, "alpha")
+la = json.loads(Path(sa["state"]).read_text())["lastStart"]
+check("browser-owner start (#35): away → the agent's window to the front; here → in the background, the human's focus given back",
+      fronts2 == [1] and gave == [4242] and la["focus"] == "restored", (fronts2, gave, la))
+sb.rainbow_presence.IDLE = None
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

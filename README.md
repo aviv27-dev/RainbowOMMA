@@ -205,6 +205,13 @@ needs (and the tabs those opened), `job-close alpha` closes the rest — or the 
 if nobody answers. Never the browser's last tab, never a tab another client drives, never one that was there before.
 MCP tools: `job_start`, `job_end`, `keep_tabs`, `close_job_tabs`.
 
+### 👀 When nobody's at the Mac, the working agent is in front
+`browser-owner presence` answers one question for every tool: is the human here? (input in the last 2 minutes, a
+screen that isn't locked; when it can't tell, it says yes — focus is never taken on a guess). When nobody is, an agent
+that starts its browser or opens a page brings its window to the front with that tab, so whoever connects later — at
+the Mac or over screen sharing — sees what it is doing. When someone is, it stays in the background and their focus
+is given back, as always.
+
 ### 🧱 When one shared Mac isn't enough
 [docs/ISOLATION.md](docs/ISOLATION.md): when to give an agent its own macOS user, a VM (Lume, Tart) or a container, a
 virtual display of its own, and how to keep its credentials apart (1Password, Keychain).
