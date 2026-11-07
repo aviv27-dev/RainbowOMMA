@@ -2630,5 +2630,74 @@ dc = subprocess.run([sys.executable, "-I", str(HERE / "rainbowomma-doctor.py"), 
                     env=dict(genv, RAINBOW_HOME=str(clean)), timeout=120)
 check("doctor status (#57): nothing wrong → says so, exit 0", dc.returncode == 0 and "Nothing needs attention." in dc.stdout, dc.stdout)
 
+# ── rainbow-panel: the control window's server (no window, no browser — the server's functions and its gate) ──
+panel = load("rainbow-panel.py")
+class _Hd(dict):
+    def get(self, k, d=None): return dict.get(self, k, d)
+class _PFake:
+    server = type("S", (), {"server_port": 8790})()
+def _gate(host, key):
+    f = _PFake(); f.headers = _Hd({"Host": host, "X-Panel-Key": key}); return panel.H._ok(f)
+check("panel: an /api call needs the launch key AND the panel's own Host (no web page can drive it)",
+      _gate("127.0.0.1:8790", panel.KEY) and not _gate("127.0.0.1:8790", "x") and not _gate("evil.example:8790", panel.KEY)
+      and not _gate("localhost:8790", panel.KEY))
+PREG_P = tmp / "panel-reg.json"; PREG_P.write_text(REG.read_text())
+panel.bo.REGISTRY = PREG_P
+panel.bo.processes = lambda: []
+panel.bo.healthy = lambda a, timeout=2.0: False
+before_p = PREG_P.read_text()
+check("panel: a color must be #RRGGBB, a name may not be empty, the human's row is not edited — nothing written",
+      not panel.set_style("alpha", color="red")["ok"] and not panel.set_style("alpha", label="  ")["ok"]
+      and not panel.set_style("human", color="#123456")["ok"] and PREG_P.read_text() == before_p)
+check("panel: a bad agent name (or human) is refused before anything is written",
+      not panel.add_agent("Bad Name!", "x", "#123456")["ok"] and not panel.add_agent("human", "x", "#123456")["ok"]
+      and not panel.add_agent("delta", "x", "pink")["ok"] and PREG_P.read_text() == before_p)
+r_add = panel.add_agent("delta", "Delta", "#123456")
+reg_p = panel.bo.registry(PREG_P)
+check("panel: a new agent gets the next free port and a profile of its own, and the registry still loads",
+      r_add["ok"] and reg_p["delta"]["port"] == 9225 and reg_p["delta"]["profile"].endswith("delta-profile") and len(reg_p) == 4, (r_add, list(reg_p)))
+after_add = PREG_P.read_text()
+check("panel: the same name twice is refused, the file left as it was", not panel.add_agent("delta", "x", "#123456")["ok"] and PREG_P.read_text() == after_add)
+check("panel: a label browser-owner refuses (a quote) is refused through its validation — the file untouched, no check file left",
+      not panel.set_style("delta", label='De"lta')["ok"] and PREG_P.read_text() == after_add
+      and not list(tmp.glob(".panel-reg.panel-check.json")))
+check("panel: color and name saved for an agent", panel.set_style("delta", color="#654321", label="D")["ok"]
+      and panel.bo.registry(PREG_P)["delta"]["color"] == "#654321" and panel.bo.registry(PREG_P)["delta"]["label"] == "D")
+st_p = panel.state()
+check("panel: the state lists every agent with its status, the human's row, and the next free port",
+      [a["agent"] for a in st_p["agents"]] == ["alpha", "bravo", "charlie", "delta"] and st_p["nextPort"] == 9226
+      and st_p["human"]["running"] is False and all(a["status"] == "down" for a in st_p["agents"]), st_p)
+_hj = panel.bo.SHARED / "human.json"; _hj_had = _hj.read_text() if _hj.exists() else None
+_hj.parent.mkdir(parents=True, exist_ok=True); _hj.write_text('{"label": "Dana", "color": "#00ACC1"}')
+h_ok = panel.human(); _hj.write_text('{"color": "bad"}'); h_bad = panel.human()
+_hj.unlink() if _hj_had is None else _hj.write_text(_hj_had)
+check("panel: the human's name and color come from their local human.json (as the Dock group's); a bad color → the default",
+      h_ok == {"label": "Dana", "color": "#00ACC1"} and h_bad["color"] == panel.HUMAN_COLOR and h_bad["label"], (h_ok, h_bad))
+_PCH = panel.CHROME_EXE; _per_p = str(panel.bo.PERSONAL[0])
+check("panel: the human's Chrome = the Chrome itself on the personal profile (or none) — never a helper, an agent's or a headless one",
+      panel.human_running([(1, 0, f"{_PCH} --user-data-dir={_per_p}")]) and panel.human_running([(1, 0, _PCH)])
+      and not panel.human_running([(1, 0, f"{_PCH} --type=renderer"), (2, 0, f"{_PCH} --user-data-dir=/x --remote-debugging-port=9222"),
+                                   (3, 0, f"{_PCH} --headless=new"), (4, 0, f"{_PCH} --user-data-dir=/tmp/other")]))
+ran_p = []
+_prun = panel.subprocess.run
+panel.subprocess.run = lambda *a, **k: ran_p.append(a) or (_ for _ in ()).throw(AssertionError("must not run"))
+check("panel: an unknown action or a made-up name runs nothing", not panel.act("delete", "alpha")["ok"]
+      and not panel.act("open", "../x")["ok"] and not panel.act("open", "Alpha;ls")["ok"] and not ran_p)
+panel.subprocess.run = _prun
+fake_desk = tmp / "fake-desk.sh"
+fake_desk.write_text('[ "$2" = alpha ] && { echo "opened $2"; exit 0; }; echo "nope $2" >&2; exit 1\n')
+panel.DESK = fake_desk
+r_ok, r_no = panel.act("open", "alpha"), panel.act("close", "bravo")
+check("panel: open/close go through desk-browser — its exit code is the answer, its last line the message (stderr on a failure)",
+      r_ok == {"ok": True, "line": "opened alpha"} and r_no == {"ok": False, "line": "nope bravo"}, (r_ok, r_no))
+html_p = (HERE / "rainbow-panel.html").read_text(encoding="utf-8")
+used_p = set(re.findall(r"tr\('([a-z_]+)'", html_p)) | set(re.findall(r'data-(?:t|ph)="([a-z_]+)"', html_p))
+os.environ["RAINBOW_LANG"] = "en"; pg_en = panel.page().decode()
+os.environ["RAINBOW_LANG"] = "he"; pg_he = panel.page().decode()
+check("panel: every word the window shows is in the catalog, in both languages; the page carries the language and direction",
+      used_p and used_p <= set(panel.texts()) and '<html lang="en" dir="ltr">' in pg_en and '<html lang="he" dir="rtl">' in pg_he
+      and "__LANG__" not in pg_en and "/*RAINBOW_TEXT*/" not in pg_en and not re.search("[\u0590-\u05FF]", html_p),
+      sorted(used_p - set(panel.texts())))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="__LANG__" dir="__DIR__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RainbowOMMA</title>
+<style>
+  :root { --bg:#f6f6f4; --card:#fff; --ink:#1d1d1f; --muted:#6e6e73; --line:#e3e3e0; --ok:#2e7d32; --bad:#c62828; --btn:#f0f0ee; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1c1c1e; --card:#2c2c2e; --ink:#f2f2f7; --muted:#a1a1a6; --line:#3a3a3c; --ok:#66bb6a; --bad:#ef5350; --btn:#3a3a3c; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px -apple-system, sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:14px 18px 6px; display:flex; align-items:baseline; gap:10px; }
+  header h1 { margin:0; font-size:18px; background:linear-gradient(90deg,#e53935,#fb8c00,#fdd835,#43a047,#1e88e5,#8e24aa); -webkit-background-clip:text; color:transparent; }
+  header .sub { color:var(--muted); font-size:12px; }
+  main { padding:6px 14px 14px; display:grid; gap:8px; }
+  .row { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; display:grid; grid-template-columns:auto 1fr auto; gap:10px; align-items:center; border-inline-start:6px solid var(--c); }
+  .row.sel { outline:2px solid var(--c); }
+  .dot { width:28px; height:28px; border-radius:50%; background:var(--c); border:none; padding:0; cursor:pointer; }
+  .name { font-weight:600; font-size:15px; }
+  .meta { color:var(--muted); font-size:12px; margin-top:2px; }
+  .pill { display:inline-block; font-size:11.5px; padding:1px 8px; border-radius:99px; margin-inline-start:6px; font-weight:600; }
+  .pill.open { background:color-mix(in srgb, var(--ok) 15%, transparent); color:var(--ok); }
+  .pill.closed { background:var(--btn); color:var(--muted); }
+  .pill.warn { background:color-mix(in srgb, var(--bad) 15%, transparent); color:var(--bad); }
+  .acts { display:flex; gap:6px; }
+  button.b { border:1px solid var(--line); background:var(--btn); color:var(--ink); border-radius:8px; padding:6px 11px; font:inherit; cursor:pointer; }
+  button.b:hover { filter:brightness(.96); }
+  button.b:disabled { opacity:.5; cursor:default; }
+  .edit { grid-column:1 / -1; display:none; gap:8px; align-items:center; flex-wrap:wrap; padding-top:6px; border-top:1px dashed var(--line); }
+  .row.sel .edit { display:flex; }
+  input[type=text] { font:inherit; padding:5px 8px; border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--ink); width:150px; }
+  input[type=color] { width:38px; height:30px; border:none; background:none; padding:0; cursor:pointer; }
+  .swatches { display:flex; gap:4px; }
+  .sw { width:20px; height:20px; border-radius:50%; border:2px solid var(--card); outline:1px solid var(--line); cursor:pointer; }
+  details { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px 12px; }
+  summary { cursor:pointer; font-weight:600; }
+  .add { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  #toast { position:fixed; inset-inline:14px; bottom:12px; background:var(--ink); color:var(--bg); border-radius:10px; padding:10px 14px; display:none; justify-content:space-between; gap:10px; align-items:center; box-shadow:0 4px 18px rgba(0,0,0,.25); }
+  #toast.show { display:flex; }
+  #toast button { background:none; border:1px solid currentColor; color:inherit; border-radius:7px; padding:3px 10px; font:inherit; cursor:pointer; }
+  .hint { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>RainbowOMMA</h1><span class="sub" data-t="sub"></span></header>
+<main id="list"><div class="hint" data-t="loading"></div></main>
+<main>
+  <details id="addbox">
+    <summary data-t="add"></summary>
+    <div class="add">
+      <input type="text" id="n-name" data-ph="name_ph" dir="ltr">
+      <input type="text" id="n-label" data-ph="label_ph">
+      <input type="color" id="n-color" value="#8E24AA">
+      <button class="b" id="n-go" data-t="add_go"></button>
+    </div>
+    <div class="hint" style="margin-top:6px" data-t="add_hint"></div>
+  </details>
+</main>
+<div id="toast"><span id="toast-t"></span><button id="toast-x" data-t="toast_close"></button></div>
+<script>
+const KEY = location.hash.slice(1);
+const T = /*RAINBOW_TEXT*/null || {};
+const tr = (k, v = {}) => String(T[k] ?? k).replace(/\{(\w+)\}/g, (_, n) => v[n] ?? '');
+document.querySelectorAll('[data-t]').forEach(el => { el.textContent = tr(el.dataset.t); });
+document.querySelectorAll('[data-ph]').forEach(el => { el.placeholder = tr(el.dataset.ph); });
+document.title = tr('title');
+const SW = ['#B0BEC5','#8E24AA','#E53935','#D81B60','#3949AB','#F4511E','#00ACC1','#00897B','#757575'];
+let selected = null, busy = new Set(), toastTimer = null, last = null;
+const he = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'X-Panel-Key': KEY, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function toast(t) {
+  const el = document.getElementById('toast');
+  document.getElementById('toast-t').textContent = t; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 5000);
+}
+document.getElementById('toast-x').onclick = () => { clearTimeout(toastTimer); document.getElementById('toast').classList.remove('show'); };
+function rows(s) {
+  const out = [{ who: 'human', label: s.human.label, color: s.human.color, up: s.human.running, kind: 'human', status: s.human.running ? 'up' : 'down', detail: tr('human_detail', { label: s.human.label }), fixed: true }];
+  for (const a of s.agents) {
+    let detail = tr('agent_detail', { port: a.port });
+    if (!a.up && a.offByHuman) detail += tr('off_by_human', { at: String(a.offAt || '').slice(11, 16) });
+    else if (!a.up && a.lastStop && a.lastStop.by) detail += tr('stopped_by', { by: a.lastStop.by, at: String(a.lastStop.at || '').slice(11, 16) });
+    if (a.managedBy) detail += tr('managed');
+    out.push({ who: a.agent, label: a.label, color: a.color, up: a.up, status: a.status, detail, managed: !!a.managedBy });
+  }
+  return out;
+}
+function pill(r) {
+  if (r.up) return `<span class="pill open">${he(tr('st_open'))}</span>`;
+  if (r.status === 'down') return `<span class="pill closed">${he(tr('st_closed'))}</span>`;
+  const m = { hung: tr('st_hung'), blocked: tr('st_blocked'), 'profile-busy': tr('st_busy') };
+  return `<span class="pill warn">${m[r.status] || he(r.status)}</span>`;
+}
+function render(s) {
+  last = s;
+  const list = document.getElementById('list');
+  list.innerHTML = rows(s).map(r => `
+    <div class="row ${selected === r.who ? 'sel' : ''}" style="--c:${he(r.color)}" data-who="${he(r.who)}">
+      <button class="dot" title="${he(tr('style_title'))}" ${r.fixed ? 'disabled' : 'data-sel'}></button>
+      <div><div class="name">${he(r.label)}${pill(r)}</div><div class="meta">${he(r.detail)}</div></div>
+      <div class="acts">${r.managed ? '' : (r.up
+        ? `<button class="b" data-act="front" ${busy.has(r.who) ? 'disabled' : ''}>${he(tr('act_front'))}</button><button class="b" data-act="close" ${busy.has(r.who) ? 'disabled' : ''}>${he(tr('act_close'))}</button>`
+        : `<button class="b" data-act="open" ${busy.has(r.who) ? 'disabled' : ''}>${he(busy.has(r.who) ? tr('act_opening') : tr('act_open'))}</button>`)}</div>
+      <div class="edit">
+        <input type="text" value="${he(r.label)}" data-label>
+        <input type="color" value="${he(r.color)}" data-color>
+        <div class="swatches">${SW.map(c => `<span class="sw" style="background:${c}" data-sw="${c}"></span>`).join('')}</div>
+        <button class="b" data-save>${he(tr('save'))}</button>
+        <span class="hint">${he(tr('save_hint'))}</span>
+      </div>
+    </div>`).join('');
+}
+document.getElementById('list').addEventListener('click', async e => {
+  const row = e.target.closest('.row'); if (!row) return;
+  const who = row.dataset.who;
+  if (e.target.closest('[data-sel]')) { selected = selected === who ? null : who; return render(last); }
+  const sw = e.target.closest('[data-sw]'); if (sw) { row.querySelector('[data-color]').value = sw.dataset.sw; return; }
+  if (e.target.closest('[data-save]')) {
+    const r = await api('/api/style', { who, label: row.querySelector('[data-label]').value, color: row.querySelector('[data-color]').value }).catch(err => ({ line: '✗ ' + err.message }));
+    toast(r.line); selected = null; return refresh();
+  }
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const action = b.dataset.act;
+  busy.add(who); render(last);
+  toast(action === 'open' ? tr('act_opening') : action === 'close' ? tr('act_closing') : '…');
+  try { const r = await api('/api/act', { action, who }); toast(r.line); }
+  catch (err) { toast('✗ ' + err.message); }
+  busy.delete(who); refresh();
+});
+document.getElementById('n-go').onclick = async () => {
+  const r = await api('/api/agent', { name: document.getElementById('n-name').value, label: document.getElementById('n-label').value, color: document.getElementById('n-color').value }).catch(err => ({ line: '✗ ' + err.message }));
+  toast(r.line); if (r.ok) { document.getElementById('addbox').open = false; refresh(); }
+};
+async function refresh() {
+  try { render(await api('/api/state')); }
+  catch (e) { document.getElementById('list').innerHTML = '<div class="hint">' + he(tr('read_failed', { why: e.message })) + '</div>'; }
+}
+refresh(); setInterval(() => { if (!busy.size && !selected) refresh(); }, 3000);
+</script>
+</body>
+</html>
