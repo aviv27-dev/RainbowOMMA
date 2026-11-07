@@ -35,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
+import rainbow_next  # noqa: E402
 
 
 def _load(name, file):
@@ -414,7 +415,7 @@ def main(argv=None):
     elif a.cmd == "reap" and not a.dry_run and (out.get("processes") or out.get("released")):
         rainbow_receipts.write("proc-owner", "reap", a.agent.strip().lower(), "session-end", out.get("status"),
                                pids=out.get("processes"), ports=out.get("released"))
-    print(json.dumps(out, ensure_ascii=False))
+    print(rainbow_next.dumps(out, ensure_ascii=False))
     return code
 
 

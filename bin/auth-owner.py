@@ -28,6 +28,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder
+import rainbow_next  # noqa: E402
 import rainbow_receipts  # noqa: E402
 
 DEFAULT_MINUTES = 10
@@ -160,7 +161,7 @@ def main(argv=None):
     sub.add_parser("list")
     a = ap.parse_args(argv)
     if a.cmd in ("lease", "release", "code") and rainbow_receipts.acting_as(a.agent):
-        print(json.dumps({"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "refused", "why": rainbow_receipts.acting_as(a.agent)}, ensure_ascii=False))
         return 2
     try:
         if a.cmd == "lease":
@@ -175,7 +176,7 @@ def main(argv=None):
             code, out = 0, {"leases": leases()}
     except Exception as exc:   # one JSON answer, always
         code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
-    print(json.dumps(out, ensure_ascii=False))
+    print(rainbow_next.dumps(out, ensure_ascii=False))
     return code
 
 

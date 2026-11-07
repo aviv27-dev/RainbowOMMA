@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
+import rainbow_next  # noqa: E402
 
 LEASE_TTL_S = 600
 
@@ -223,7 +224,7 @@ def main(argv=None):
     agent = (getattr(a, "agent", None) or "").strip().lower() or None
     bad = rainbow_receipts.acting_as(agent) if a.cmd in ("lease", "env", "release") else None
     if bad:
-        print(json.dumps({"status": "refused", "why": bad}, ensure_ascii=False), file=sys.stderr if a.cmd == "env" else sys.stdout)
+        print(rainbow_next.dumps({"status": "refused", "why": bad}, ensure_ascii=False), file=sys.stderr if a.cmd == "env" else sys.stdout)
         return 2
     try:
         if a.cmd in ("lease", "env"):
@@ -243,11 +244,11 @@ def main(argv=None):
                                port=out.get("port"), name=getattr(a, "name", None), why=out.get("why"))
     if a.cmd == "env":
         if code:
-            print(json.dumps(out, ensure_ascii=False), file=sys.stderr)
+            print(rainbow_next.dumps(out, ensure_ascii=False), file=sys.stderr)
         else:
             print(" ".join(f"{v}={out['port']}" for v in ["PORT", *[x.upper() for x in a.var]]))
         return code
-    print(json.dumps(out, ensure_ascii=False))
+    print(rainbow_next.dumps(out, ensure_ascii=False))
     return code
 
 

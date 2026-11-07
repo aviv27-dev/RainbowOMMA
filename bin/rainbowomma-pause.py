@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder
+import rainbow_next  # noqa: E402
 import rainbow_receipts  # noqa: E402
 
 
@@ -58,12 +59,12 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     what = (argv or ["status"])[0]
     if what not in ("on", "off", "toggle", "status"):
-        print(json.dumps({"status": "failed", "why": "usage: rainbowomma-pause on|off|toggle|status"}))
+        print(rainbow_next.dumps({"status": "failed", "why": "usage: rainbowomma-pause on|off|toggle|status"}))
         return 1
     rec = paused()
     if what != "status":
         rec = set_paused(what == "on" or (what == "toggle" and not rec))
-    print(json.dumps({"status": "paused" if rec else "running", **({"since": rec.get("at")} if rec else {})}))
+    print(rainbow_next.dumps({"status": "paused" if rec else "running", **({"since": rec.get("at")} if rec else {})}))
     return 0
 
 

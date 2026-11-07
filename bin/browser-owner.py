@@ -30,6 +30,7 @@ import rainbow_receipts  # noqa: E402
 import rainbow_presence  # noqa: E402
 import rainbow_tabs  # noqa: E402
 from rainbow_i18n import direction, t  # noqa: E402
+import rainbow_next  # noqa: E402
 
 HOME = Path.home()
 HERE = Path(__file__).resolve().parent
@@ -1357,36 +1358,36 @@ def main(argv=None):
     a = ap.parse_args(argv)
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if me and a.by.strip().lower() not in (me, "agent", "keepalive"):        # an agent acts as itself — never as the human or a peer
-        print(json.dumps({"status": "refused", "why": t("bo.idle_not_yours", by=a.by, label=me)}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "refused", "why": t("bo.idle_not_yours", by=a.by, label=me)}, ensure_ascii=False))
         return 2
     if me and a.by.strip().lower() == "agent":
         a.by = me
     try:
         reg = registry()
     except FileNotFoundError:
-        print(json.dumps({"status": "failed", "why": t("bo.no_registry", path=REGISTRY)}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "failed", "why": t("bo.no_registry", path=REGISTRY)}, ensure_ascii=False))
         return 1
     except Exception as exc:
-        print(json.dumps({"status": "failed", "why": f"registry: {type(exc).__name__}: {exc}"[:300]}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "failed", "why": f"registry: {type(exc).__name__}: {exc}"[:300]}, ensure_ascii=False))
         return 1
     if a.cmd == "human-theme":
         d = build_theme({"name": "human-human", "label": t("bo.human_label"), "color": "#B0BEC5"}, text=t("bo.human_text"),
                         title=t("bo.human_title"))
-        print(json.dumps({"status": "built", "folder": str(d)}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "built", "folder": str(d)}, ensure_ascii=False))
         return 0
     if a.cmd == "tabs":
         only = (a.agent or "").strip().lower() or None
         if me and only != me:                                     # an agent sweeps its own browser only
-            print(json.dumps({"status": "refused", "why": f"you are {me}: `browser-owner tabs {me}` sweeps your own tabs only"}))
+            print(rainbow_next.dumps({"status": "refused", "why": f"you are {me}: `browser-owner tabs {me}` sweeps your own tabs only"}))
             return 2
         if only and only not in reg:
-            print(json.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(only), names=", ".join(reg))}, ensure_ascii=False))
+            print(rainbow_next.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(only), names=", ".join(reg))}, ensure_ascii=False))
             return 1
         try:
-            print(json.dumps(tabs(reg, only, True if a.apply else None, a.scheduled), ensure_ascii=False))
+            print(rainbow_next.dumps(tabs(reg, only, True if a.apply else None, a.scheduled), ensure_ascii=False))
             return 0
         except Exception as exc:   # one JSON answer, always
-            print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
             return 1
     if a.cmd == "heal":
         try:
@@ -1397,13 +1398,13 @@ def main(argv=None):
             if a.scheduled:                  # the launchd job: changes only (and a daily heartbeat), stamped, logs rotated
                 rainbow_receipts.quiet_print("heal", res)
             else:
-                print(json.dumps(res, ensure_ascii=False))
+                print(rainbow_next.dumps(res, ensure_ascii=False))
             return 0
         except Exception as exc:   # one JSON answer, always
-            print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
             return 1
     if a.cmd == "presence":                  # is the human at the Mac? (the same answer every tool uses)
-        print(json.dumps(rainbow_presence.presence(), ensure_ascii=False))
+        print(rainbow_next.dumps(rainbow_presence.presence(), ensure_ascii=False))
         return 0
     if a.cmd == "names":
         # plain words for shell callers (kill-chrome --all): the agents this owner may stop — no JSON parsing in bash
@@ -1412,20 +1413,20 @@ def main(argv=None):
     if a.cmd == "list" or (a.cmd == "status" and not a.agent):
         try:
             rows = processes()
-            print(json.dumps({"agents": [view(x, rows=rows) for x in reg.values()]}, ensure_ascii=False))
+            print(rainbow_next.dumps({"agents": [view(x, rows=rows) for x in reg.values()]}, ensure_ascii=False))
             return 0
         except Exception as exc:
-            print(json.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
             return 1
     ag = reg.get((a.agent or "").strip().lower())
     if not ag:
-        print(json.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(a.agent), names=", ".join(reg))}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(a.agent), names=", ".join(reg))}, ensure_ascii=False))
         return 1
     if a.cmd == "status":
-        print(json.dumps(view(ag), ensure_ascii=False))
+        print(rainbow_next.dumps(view(ag), ensure_ascii=False))
         return 0
     if a.cmd == "mcp-config":
-        print(json.dumps(mcp_config(ag, a.tool, a.format), ensure_ascii=False))
+        print(rainbow_next.dumps(mcp_config(ag, a.tool, a.format), ensure_ascii=False))
         return 0
     if a.cmd in ("job-start", "job-end", "job-keep", "job-close"):   # a job's tabs (#43): the agent's own, through its own CDP
         try:
@@ -1445,27 +1446,27 @@ def main(argv=None):
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
         if out.get("closed"):
             rainbow_receipts.write("browser-owner", "job-close", ag["name"], ag["name"], "closed", tabs=len(out["closed"]))
-        print(json.dumps(out, ensure_ascii=False))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
         return code
     if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
         code, out = do_front(ag)
         rainbow_receipts.write("browser-owner", "front", ag["name"], "human", out.get("status"), restored=out.get("restored"))
-        print(json.dumps(out, ensure_ascii=False))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
         return code
     if ag.get("managedBy"):
-        print(json.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
         return 2
     ag["peers"] = list(reg)
     try:
         lk = open_lock(ag["lock"])
     except OSError as exc:
-        print(json.dumps({"status": "failed", "why": f"lock: {type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "failed", "why": f"lock: {type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
         return 1
     with lk:
         try:
             fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            print(json.dumps({"status": "busy", "why": t("bo.busy")}, ensure_ascii=False))
+            print(rainbow_next.dumps({"status": "busy", "why": t("bo.busy")}, ensure_ascii=False))
             return 1
         fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover, "open": do_open}[a.cmd]
         try:
@@ -1474,7 +1475,7 @@ def main(argv=None):
         except Exception as exc:   # one JSON answer, always
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
     rainbow_receipts.write("browser-owner", a.cmd, ag["name"], a.by.strip().lower(), out.get("status"), why=out.get("why"))
-    print(json.dumps(out, ensure_ascii=False))
+    print(rainbow_next.dumps(out, ensure_ascii=False))
     return code
 
 

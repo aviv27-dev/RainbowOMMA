@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))   # -I drops the script's folder
+import rainbow_next  # noqa: E402
 PROTOCOL = "2025-06-18"
 TIMEOUT_S = 120
 
@@ -135,6 +137,7 @@ def answer(msg, me):
     if method == "tools/call":
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
         err, out = run_tool(me, params.get("name"), params.get("arguments") or {})
+        out = rainbow_next.fill(out, "rainbowomma-mcp")   # its own refusals and failures say what to do next too
         return {"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}],
                                                         "structuredContent": out, "isError": err}}
     if method == "ping":

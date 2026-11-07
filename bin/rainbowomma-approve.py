@@ -27,6 +27,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
 from rainbow_i18n import t  # noqa: E402
+import rainbow_next  # noqa: E402
 
 VALID_S = 300
 DIALOG_S = 120
@@ -141,32 +142,32 @@ def main(argv=None):
     sub.add_parser("list")
     a = ap.parse_args(argv)
     if a.cmd == "list":
-        print(json.dumps({"approvals": list(_load().values())}, ensure_ascii=False))
+        print(rainbow_next.dumps({"approvals": list(_load().values())}, ensure_ascii=False))
         return 0
     cmd = " ".join(command).strip()
     if not command:
-        print(json.dumps({"status": "failed", "why": "usage: rainbowomma-approve ask --agent NAME --why TEXT -- COMMAND …"}))
+        print(rainbow_next.dumps({"status": "failed", "why": "usage: rainbowomma-approve ask --agent NAME --why TEXT -- COMMAND …"}))
         return 1
     agent = a.agent.strip().lower()
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if not NAME_RE.fullmatch(agent) or agent == "human" or (me and agent != me):
-        print(json.dumps({"status": "refused", "why": f"--agent must be your own agent name ({me or 'a-z, 0-9, -'})"}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "refused", "why": f"--agent must be your own agent name ({me or 'a-z, 0-9, -'})"}, ensure_ascii=False))
         return 2
     if len(shlex.join(command)) > MAX_COMMAND:
-        print(json.dumps({"status": "refused", "why": f"the command is longer than {MAX_COMMAND} characters — the human must "
+        print(rainbow_next.dumps({"status": "refused", "why": f"the command is longer than {MAX_COMMAND} characters — the human must "
                                                       "be able to read all of it; send a shorter one"}, ensure_ascii=False))
         return 2
     a.why = clean(a.why, MAX_WHY)
     ok = ask_human(agent, a.why, command)
     rainbow_receipts.write("approve", "ask", agent, agent, "approved" if ok else "refused", why=a.why, command=cmd)
     if not ok:
-        print(json.dumps({"status": "refused", "why": t("ap.refused")}, ensure_ascii=False))
+        print(rainbow_next.dumps({"status": "refused", "why": t("ap.refused")}, ensure_ascii=False))
         return 2
     with locked():
         d = _load()
         d[key(command, me)] = {"agent": agent, "command": cmd[:MAX_COMMAND], "until": time.time() + VALID_S}
         _save(d)
-    print(json.dumps({"status": "approved", "validSeconds": VALID_S, "next": t("ap.next")}, ensure_ascii=False))
+    print(rainbow_next.dumps({"status": "approved", "validSeconds": VALID_S, "next": t("ap.next")}, ensure_ascii=False))
     return 0
 
 
