@@ -204,6 +204,7 @@ VERSION="$(tr -d '[:space:]' < "$HERE/VERSION" 2>/dev/null || true)"
 SOURCE="archive"
 if [ -d "$HERE/.git" ] && command -v git >/dev/null 2>&1; then SOURCE="git $(git -C "$HERE" describe --tags --always --dirty 2>/dev/null || echo unknown)"
 else case "$HERE" in */Cellar/rainbowomma/*) SOURCE="homebrew" ;; esac; fi
+PREV="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1])).get("version", ""))' "$ROOT/installed-version" 2>/dev/null || true)"   # the release this replaces
 echo "→ version ${VERSION:-unknown} ($SOURCE) recorded in $ROOT/installed-version"
 if [ "$DRY" != 1 ]; then
   printf '{"version": "%s", "source": "%s", "bin": "%s", "at": "%s"}\n' "${VERSION:-unknown}" "$SOURCE" "$BIN" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$ROOT/installed-version"
@@ -220,3 +221,5 @@ Done. Next:
 Language: English or Hebrew from your Mac's settings; force one with RAINBOW_LANG=en or RAINBOW_LANG=he.
 The first Word → PDF conversion (office-owner pdf) shows a Word permission prompt once — allow it.
 EOF
+# an upgrade: what changed since the release that was in place, and anything it needs from you
+python3 -I "$HERE/install/changes.py" "$PREV" "${VERSION:-}" "$HERE/CHANGELOG.md" 2>/dev/null || true

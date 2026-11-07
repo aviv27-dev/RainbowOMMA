@@ -73,6 +73,12 @@ def run_checks(launch_agents=None):
         out.append(check(t("dr.state"), True, str(root)))
     except OSError as exc:
         out.append(check(t("dr.state"), False, f"{root}: {exc}", t("dr.state_fix", path=root)))
+    try:
+        iv = json.loads((root / "installed-version").read_text())
+        out.append(check(t("dr.version"), bool(iv.get("version")), f'{iv.get("version")} ({iv.get("source")}, {iv.get("at")})',
+                         t("dr.version_fix"), needed=False))
+    except (OSError, ValueError, AttributeError):
+        out.append(check(t("dr.version"), False, str(root / "installed-version"), t("dr.version_fix"), needed=False))
     for tool in ("browser-owner", "office-owner", "port-owner", "proc-owner", "rainbowomma-guard", "rainbow_i18n.py"):
         out.append(check(t("dr.tool", tool=tool), (HERE / tool).exists(), str(HERE / tool), t("dr.tool_fix")))
     if MAC:

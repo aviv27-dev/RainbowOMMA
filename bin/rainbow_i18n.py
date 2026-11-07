@@ -492,6 +492,12 @@ M = {
                        "he": "sim-owner lease {agent}: להשתמש ב-UDID של הסימולטור שלך"},
     "nx.approve.refused": {"en": "the human said no (or didn't answer): don't send it",
                            "he": "האדם אמר לא (או לא ענה): לא לשלוח"},
+    # ── what changed, after an upgrade (install/changes.py) ──
+    "ch.since": {"en": "What changed since {old} (now {new}):", "he": "מה השתנה מאז {old} (עכשיו {new}):"},
+    "ch.action": {"en": "Needs something from you:", "he": "דורש ממך פעולה:"},
+    "ch.full": {"en": "All of it: CHANGELOG.md, or the release notes on GitHub.", "he": "הכול: CHANGELOG.md, או הערות השחרור ב-GitHub."},
+    "dr.version": {"en": "installed version", "he": "הגרסה המותקנת"},
+    "dr.version_fix": {"en": "run install.sh (or brew upgrade rainbowomma): it records the version in place", "he": "להריץ install.sh (או brew upgrade rainbowomma): הוא רושם את הגרסה שמותקנת"},
 }
 
 _detected = None

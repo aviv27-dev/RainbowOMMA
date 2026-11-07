@@ -2092,7 +2092,13 @@ except (OSError, ValueError):
     iv = {}
 check("install records which release is in place (VERSION, where it came from, the folder) for a version check to read",
       iv.get("version") == (HERE.parent / "VERSION").read_text().strip() and iv.get("bin") == str(mh / "bin") and iv.get("source"), iv)
+VER_NOW = (HERE.parent / "VERSION").read_text().strip()
+(mh / ".rainbowomma" / "installed-version").write_text(json.dumps({**iv, "version": "0.2.0"}))   # as if 0.2.0 were in place
 r2 = inst("install.sh")
+since_ = i18n.t("ch.since", old="0.2.0", new=VER_NOW)
+check("an upgrade ends with what changed since the release that was in place; a first install doesn't (#60)",
+      since_ in r2.stdout and "[0.3.0]" in r2.stdout and "[0.2.0]" not in r2.stdout.split(since_)[-1] and i18n.t("ch.since", old="", new="")[:8] not in r1.stdout,
+      r2.stdout[-600:])
 (mh / "bin" / "port-owner").write_text((mh / "bin" / "port-owner").read_text() + "# my change\n")
 r3 = inst("uninstall.sh")
 left_ = sorted(x.name for x in (mh / "bin").iterdir())
@@ -2826,6 +2832,62 @@ seen = [json.loads(x) for x in NEXT_AUDIT.read_text(encoding="utf-8").splitlines
 bad_seen = [r for r in seen if not str(r.get("why") or "").strip() or not str(r.get("next") or "").strip()]
 check("next: every refusal and failure an owner printed in this suite (what an agent reads) has a why and a next",
       len(seen) >= 20 and {"browser-owner", "port-owner", "proc-owner", "office-owner", "screen-owner"} <= {r["tool"] for r in seen} and not bad_seen, (len(seen), sorted({r["tool"] for r in seen}), bad_seen[:3]))
+
+# ── what changed, after an upgrade (#60) ──
+chg = load("../install/changes.py")
+CL = """# Changelog
+
+## [Unreleased]
+
+### Added
+- not released yet
+
+## [0.4.0] — 2026-12-01
+
+The summary paragraph.
+
+### Added
+- `alpha-tool`: does a thing, and here is a very long first line that goes on and on past the width a terminal shows comfortably
+  and a second line that is not shown.
+- `bravo-tool`: another.
+
+### Action needed
+- Run `install.sh --with-heal` again: the heal job now passes `--scheduled`.
+  Without it the job keeps the old log format.
+
+## [0.3.1] — 2026-11-07
+
+### Fixed
+- a fix in 0.3.1.
+
+## [0.3.0] — 2026-11-01
+
+### Changed
+- a change in 0.3.0.
+
+[0.4.0]: https://example.com/v0.4.0
+"""
+rep = chg.report("0.3.0", "v0.4.0", CL)
+rl = rep.splitlines()
+check("what changed: every release after the old one up to the new one — headings and the first line of each entry, shortened",
+      rl[0] == i18n.t("ch.since", old="0.3.0", new="0.4.0") and "  [0.4.0] — 2026-12-01" in rl and "  [0.3.1] — 2026-11-07" in rl
+      and "a change in 0.3.0." not in rep and "not released yet" not in rep and "second line" not in rep and "summary paragraph" not in rep
+      and any(x.startswith("      · `alpha-tool`") and x.endswith("…") and len(x) <= 8 + chg.WIDTH for x in rl) and "https://example.com" not in rep, rep)
+check("what changed: an Action needed entry is printed in full at the end, with its release",
+      rl[rl.index(i18n.t("ch.action")) + 1] == "  · Run `install.sh --with-heal` again: the heal job now passes `--scheduled`. Without it the job keeps the old log format. (0.4.0)"
+      and "    Action needed" not in rl, rep)
+check("what changed: nothing for a first install, a reinstall, a downgrade or a version it can't read",
+      chg.report("", "0.4.0", CL) == chg.report("0.4.0", "0.4.0", CL) == chg.report("0.4.0", "0.3.1", CL) == chg.report("unknown", "0.4.0", CL) == "")
+dvh = tmp / "doctor-version-home"; dvh.mkdir()
+def doc_version(home):
+    r = subprocess.run(["bash", str(HERE / "rainbowomma-doctor"), "--json"], capture_output=True, text=True, env=dict(denv, RAINBOW_HOME=str(home), RAINBOW_LANG="en"))
+    return r.returncode, next((c for c in json.loads(r.stdout)["checks"] if c["check"] == "installed version"), None)
+rc_none, dv_none = doc_version(dvh)
+(dvh / "installed-version").write_text(json.dumps({"version": "0.3.1", "source": "homebrew", "bin": "/x", "at": "2026-11-07T08:00:00Z"}))
+rc_v, dv = doc_version(dvh)
+check("doctor shows the installed version (and where it came from); none recorded is optional, never a failure",
+      dv and dv["ok"] and dv["detail"].startswith("0.3.1 (homebrew") and dv_none and not dv_none["ok"] and not dv_none["needed"]
+      and dv_none["fix"] and rc_none == rc_v, (dv, dv_none, rc_none, rc_v))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
