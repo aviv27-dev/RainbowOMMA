@@ -5,6 +5,19 @@ exit codes are an API and change only in a major version.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-11-07
+
+Word recovers from a blocking dialog and never stays open over a failed conversion; agents' sign-ins open in their
+own browser, never the human's; idle browsers stop by themselves; a job's tabs close when it ends (after asking);
+the working agent comes forward when nobody is at the Mac; an agent's Chrome can run with no open DevTools port;
+one agent at a time signs in to a site; an agent can have a macOS user of its own; quiet, rotated logs; Homebrew; and
+a move from a pre-release install that keeps a stopped browser stopped.
+
+Pull requests since 0.2.0: #26 (process start time), #27 (Homebrew), #28 (GPU in tabs), #29 (`--agent-chrome`),
+#30 (install manifest), #31 (auth-owner), #32 (file tools in every adapter), #33 (isolate-agent), #34 (cdp-broker),
+#48 (Word recovery, #36–#38), #49 (`--migrate-from`, #41), #50 (auto idle-stop, missing colors, #44–#45),
+#51 (logs, #46), #52 (sign-ins in the agent's browser, #42), #53 (a job's tabs, #43), #54 (presence, #35).
+
 ### Added
 - `install.sh --agent-chrome beta|dev|canary|cft`: a new `browsers.json` gives every agent a Chrome of its own (the
   human's ⌘Q, ⌘-Tab and updates never reach it); the installer says when that Chrome isn't installed yet.
@@ -241,5 +254,6 @@ First public release.
 - Desktop open/close icons, the human's Chrome theme, and `kill-chrome.sh` that spares every agent browser.
 - Tests on macOS in CI (fakes only — never a real browser or app).
 
+[0.3.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.0
 [0.2.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.2.0
 [0.1.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.1.0
