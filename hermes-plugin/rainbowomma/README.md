@@ -42,6 +42,17 @@ agent's coloured Chrome instead of a throwaway Chromium, select the provider the
 hermes config set browser.cloud_provider rainbowomma
 ```
 
+The agent's Chrome runs on this Mac, so it can reach your local dev servers. Hermes sends private addresses
+(`localhost`, your LAN) to a separate local browser by default when a provider is selected; to keep those in the
+agent's own Chrome too:
+
+```
+hermes config set browser.auto_local_for_private_urls false
+hermes config set browser.allow_private_urls true
+```
+
+If the agent's browser can't be started (you closed it), Hermes falls back to its own throwaway browser for that call.
+
 Then, in a session: `/rainbow`, or ask the agent to "open example.com in your browser".
 
 ## What the agent gets (31 tools, toolset `rainbowomma`)
