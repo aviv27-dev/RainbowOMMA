@@ -34,3 +34,4 @@ allowed commands the existing adapters are tested with.
    with that section as its notes.
 3. Homebrew: point `Formula/rainbowomma.rb` at the new tag and its checksum —
    `curl -sL https://github.com/aviv27-dev/RainbowOMMA/archive/refs/tags/vX.Y.Z.tar.gz | shasum -a 256` — and merge.
+   Do it right after the release: the next release refuses to go out while the formula still points at an older tag.

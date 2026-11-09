@@ -39,6 +39,11 @@ jobs:
       - name: VERSION says the same
         run: |
           test "$(tr -d '[:space:]' < VERSION)" = "$VERSION" || { echo "VERSION says $(cat VERSION), the release is $VERSION" >&2; exit 1; }
+      - name: Homebrew points at the release before this one
+        run: |
+          prev="$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -vx "v$VERSION" | head -1)"
+          [ -z "$prev" ] || grep -q "/refs/tags/$prev.tar.gz" Formula/rainbowomma.rb || {
+            echo "Formula/rainbowomma.rb doesn't point at $prev — bump it to $prev (url and sha256) before releasing $VERSION" >&2; exit 1; }
       - name: Release notes from CHANGELOG.md
         run: |
           awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > notes.md
