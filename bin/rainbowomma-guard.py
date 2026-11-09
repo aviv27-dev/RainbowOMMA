@@ -20,6 +20,7 @@ cheap ways around RainbowOMMA, not every way a program running as you could take
 
     rainbowomma-guard [--format exit2|cline] < payload.json
 """
+import contextvars
 import json
 import os
 import re
@@ -35,6 +36,8 @@ WHY = {
     "search-kill": "killing what a process search found (pgrep / ps / lsof) is pkill by another name",
     "port-kill": "freeing a port by killing whatever holds it (kill-port, fkill, fuser -k) can hit another agent's or the human's server",
     "osascript": "quitting Chrome through AppleScript closes every Chrome window, the human's too",
+    "office-script": "quitting or closing Word, Excel, PowerPoint or Acrobat through AppleScript reaches the human's documents too — "
+                     "use `office-owner` (it closes only what you leased, saved, and quits only an app it launched)",
     "debug-port": "an agent's Chrome is started only by browser-owner",
     "rm-home": "rm -r of your home folder, the whole disk or a system folder can't be undone — name the exact folder inside your work",
     "human-active": "the human is using the keyboard or mouse right now — wait a few seconds and try again (a GUI action now would land in their window)",
@@ -86,6 +89,7 @@ AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease",
              "browser-owner": {"start", "stop", "recover", "idle-stop", "front", "heal", "mcp-config", "tabs", "open", "job-start", "job-end", "job-keep", "job-close"}}
 HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
 INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
+OFFICE_APPS = re.compile(r"microsoft (?:word|excel|powerpoint)|\bacrobat\b", re.I)   # the apps office-owner owns
 INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")
 RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
                          r"rainbow_human_idle_s|rainbow_human_present_s|rainbow_agent|rainbow_session)=")
@@ -228,8 +232,12 @@ HERESTRING = re.compile(r"<<<\s*(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
 SHELL_STRING = re.compile(r'do shell script\s+(?:"((?:[^"\\]|\\.)*)"|(.))')
 
 
+_ME = contextvars.ContextVar("rainbowomma_agent", default=None)   # the agent an in-process caller judges for
+
+
 def _me():
-    return (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    who = _ME.get()                                    # set by decide() for an in-process caller (the Hermes plugin)
+    return who if who is not None else (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
 
 
 CDP_DIR = re.compile(r"(?:\.rainbowomma|\$\{?rainbow_home\}?)/cdp/([a-z][a-z0-9-]*)")
@@ -347,6 +355,8 @@ def verdict(command):
                     return why
             if "chrome" in text and re.search(r"\b(quit|close)\b", text):
                 return WHY["chrome-script"]
+            if OFFICE_APPS.search(text) and re.search(r"\b(quit|close)\b", text):
+                return WHY["office-script"]
             if re.search(r"tell application\s*\(", text) and re.search(r"\b(quit|close)\b", text):
                 return WHY["chrome-script"]
         if name == "osascript" and "quit" in " ".join(args) and "chrome" in " ".join(args):
@@ -586,7 +596,7 @@ APP_KEYS = ("app", "app_name", "application", "bundle_id", "bundle", "name", "pr
 
 
 def _denied():
-    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower() or None
+    me = _me() or None
     try:
         return set(_port_owner().BO.denied_apps(me))
     except Exception:
@@ -679,7 +689,7 @@ def screen_verdict(foreground):
         return WHY["human-screen"]
     if not foreground:
         return None
-    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    me = _me()
     if not me:
         return f"the screen is {cur['holder']}'s right now — wait for it" if cur else None
     ok, lease = so.try_take(me, so.AUTO_TTL_S, auto=True)
@@ -695,7 +705,7 @@ CDP_URL = re.compile(r"[\w.\]-]:(92(?:2[2-9]|[3-9]\d))\b")         # any host: 1
 
 def cdp_verdict(low):
     """with RAINBOW_AGENT set: a CDP endpoint of ANOTHER agent's browser (--browserUrl, --cdp-endpoint, curl …) is not yours"""
-    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    me = _me()
     ports = {int(p) for p in CDP_URL.findall(low)}
     if not me or not ports:
         return None
@@ -752,7 +762,7 @@ def kill_verdict(cmds):
         _, own = pc.ownership(reg)
     except Exception as exc:                          # whose it is can't be told: no
         return f"whose process {pids[0]} is can't be checked ({type(exc).__name__}) — `proc-owner kill <pid> --by <you>`"
-    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    me = _me()
     for pid in pids:
         if pid not in own:
             continue                                  # no such process: kill fails on its own
@@ -792,7 +802,7 @@ def port_verdict(ports):
         reg, leases, humans = po.registry(), po.leases_of(), set(po.human_ports())
     except Exception:
         return None                                   # no registry here → nothing to compare against
-    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    me = _me()
     for p in ports:
         owner, why = po.owner_of(p, reg, leases, humans)
         if me and owner != me:
@@ -880,6 +890,42 @@ def commands(event):
     return out
 
 
+def decide(event, me=None, record=True):
+    """the guard's verdict on one tool call, in-process → the reason it is refused, or None to let it run.
+    event: the hook payload in any shape commands() reads (tool_name + tool_input, …); me: the agent it judges for
+    (None: RAINBOW_AGENT from the environment). An error while judging is a refusal ("can't tell" never means yes)."""
+    token = _ME.set(str(me).strip().lower()) if me is not None else None
+    try:
+        who = _me()
+        if who:
+            track(who)
+        try:
+            cmds = commands(event)
+        except Exception:
+            cmds = []
+        for cmd in [None] + cmds:
+            try:
+                why = (file_verdict(event) or app_tool_verdict(event) or gui_tool_verdict(event) or browser_tool_verdict(event)) \
+                    if cmd is None else verdict(cmd)
+                if cmd is None and not why and is_paused() and (cmds or event.get("tool_name") or event.get("toolName")):
+                    why = WHY["paused"]
+            except Exception as exc:                   # can't tell → no
+                why = f"{WHY['guard-error']} ({type(exc).__name__})"
+            if why:
+                if record:
+                    try:
+                        import rainbow_receipts
+                        rainbow_receipts.write("guard", "blocked", who or None, who or None, "blocked", why=why,
+                                               command=cmd or str(event.get("tool_name") or event.get("toolName") or ""))
+                    except Exception:
+                        pass
+                return why
+        return None
+    finally:
+        if token is not None:
+            _ME.reset(token)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     fmt = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else "exit2"
@@ -889,36 +935,15 @@ def main(argv=None):
         return 0
     if not isinstance(event, dict):
         return 0
-    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
-    if me:
-        track(me)
-    try:
-        cmds = commands(event)
-    except Exception:
-        cmds = []
-    for cmd in [None] + cmds:
-        try:
-            why = (file_verdict(event) or app_tool_verdict(event) or gui_tool_verdict(event) or browser_tool_verdict(event)) \
-                if cmd is None else verdict(cmd)
-            if cmd is None and not why and is_paused() and (cmds or event.get("tool_name") or event.get("toolName")):
-                why = WHY["paused"]
-        except Exception as exc:                       # can't tell → no
-            why = f"{WHY['guard-error']} ({type(exc).__name__})"
-        if why:
-            try:
-                import rainbow_receipts
-                me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower() or None
-                rainbow_receipts.write("guard", "blocked", me, me, "blocked", why=why,
-                                       command=cmd or str(event.get("tool_name") or event.get("toolName") or ""))
-            except Exception:
-                pass
-            msg = f"Blocked by RainbowOMMA: {why}. {HELP}"
-            if fmt == "cline":
-                print(json.dumps({"cancel": True, "errorMessage": msg}))
-                return 0
-            print(msg, file=sys.stderr)
-            return 2
-    return 0
+    why = decide(event)
+    if not why:
+        return 0
+    msg = f"Blocked by RainbowOMMA: {why}. {HELP}"
+    if fmt == "cline":
+        print(json.dumps({"cancel": True, "errorMessage": msg}))
+        return 0
+    print(msg, file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

@@ -1,0 +1,46 @@
+name: rainbowomma
+version: "0.1.0"
+description: "One Mac, many agents: every Hermes agent gets its own Chrome in its own color, its own ports, processes and Office documents, and a guard on every tool call keeps it off the human's browser, apps and processes and off the other agents'. Needs RainbowOMMA installed on the Mac (install.sh or Homebrew); the tools stay hidden until it is."
+author: "RainbowOMMA contributors"
+license: Apache-2.0
+homepage: https://github.com/aviv27-dev/RainbowOMMA
+manifest_version: 2
+api_version: 1
+requires_hermes: ">=0.22.0"
+tags: [macos, browser, multi-agent, guardrails]
+provides_tools:
+  - rainbow_start_my_browser
+  - rainbow_browser_status
+  - rainbow_recover_my_browser
+  - rainbow_open_in_my_browser
+  - rainbow_job_start
+  - rainbow_job_end
+  - rainbow_keep_tabs
+  - rainbow_close_job_tabs
+  - rainbow_take_screen
+  - rainbow_release_screen
+  - rainbow_lease_port
+  - rainbow_release_port
+  - rainbow_who_port
+  - rainbow_whose_process
+  - rainbow_stop_process
+  - rainbow_my_processes
+  - rainbow_office_open
+  - rainbow_office_close
+  - rainbow_word_to_pdf
+provides_hooks:
+  - pre_tool_call
+  - on_session_finalize
+config_schema:
+  agent:
+    type: str
+    default: ""
+    description: "This agent's name in RainbowOMMA's browsers.json. Empty: the Hermes profile's name (when browsers.json has a row for it)."
+  bin_dir:
+    type: str
+    default: "~/bin"
+    description: "Where RainbowOMMA's tools are installed (install.sh --bin; Homebrew links them into its own bin)."
+  guard:
+    type: bool
+    default: true
+    description: "Run RainbowOMMA's guard on every tool call (pre_tool_call). Off only to diagnose; the agent then answers to nothing but Hermes' own approvals."

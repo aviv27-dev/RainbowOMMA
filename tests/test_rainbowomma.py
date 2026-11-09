@@ -3115,5 +3115,130 @@ r_pc = subprocess.run(["bash", str(pk / "desk-browser.sh"), "pick"], capture_out
 check("desk-browser pick (#77): cancelling the list does nothing", r_pc.returncode == 0 and not any(c.startswith(("start", "front")) for c in pk_log.read_text().split("\n")),
       r_pc.stdout)
 
+# ── the Hermes plugin (hermes-plugin/rainbowomma): tools, the guard hook, the manifest (fakes only) ──
+PLUG = HERE.parent / "hermes-plugin" / "rainbowomma"
+def load_plugin():
+    spec_ = importlib.util.spec_from_file_location("rainbowomma_hermes_plugin", PLUG / "__init__.py", submodule_search_locations=[str(PLUG)])
+    m_ = importlib.util.module_from_spec(spec_); sys.modules[spec_.name] = m_; spec_.loader.exec_module(m_); return m_
+hp = load_plugin()
+def manifest_list(key):
+    out_, on_ = [], False
+    for ln in (PLUG / "plugin.yaml").read_text().splitlines():
+        if on_ and ln.startswith("  - "):
+            out_.append(ln[4:].strip())
+        elif on_ and ln.strip():
+            break
+        on_ = on_ or ln.strip() == f"{key}:"
+    return out_
+class FakeHermesCtx:
+    def __init__(self, cfg=None, profile="default"):
+        self.cfg, self.profile_name, self.tools, self.hooks = dict(cfg or {}), profile, {}, {}
+    def get_config(self, key, default=None): return self.cfg.get(key, default)
+    def register_tool(self, name, toolset, schema, handler, check_fn=None, **kw): self.tools[name] = (toolset, schema, handler, check_fn)
+    def register_hook(self, name, fn): self.hooks[name] = fn
+hbin = tmp / "hermes-bin"; hbin.mkdir()
+(hbin / "browsers.json").write_text(json.dumps({"agents": {"alpha": {}, "bravo": {}}}))
+hcalls = tmp / "hermes-calls.txt"
+for tool_ in ("browser-owner", "port-owner", "proc-owner", "screen-owner", "office-owner"):
+    (hbin / tool_).write_text(f"#!/bin/sh\necho \"{tool_} $@ agent=$RAINBOW_AGENT secret=${{HERMES_TEST_SECRET:-none}}\" >> {hcalls}\n"
+                              f"echo '{{\"status\": \"ok\", \"tool\": \"{tool_}\"}}'\n")
+    (hbin / tool_).chmod(0o755)
+hctx = FakeHermesCtx({"bin_dir": str(hbin), "agent": "Alpha"})
+hp.register(hctx)
+check("hermes plugin: register() registers exactly the tools and hooks plugin.yaml declares, in one toolset, each hidden until installed",
+      sorted(hctx.tools) == sorted(manifest_list("provides_tools")) and sorted(hctx.hooks) == sorted(manifest_list("provides_hooks"))
+      and {v[0] for v in hctx.tools.values()} == {"rainbowomma"} and all(v[3] is not None for v in hctx.tools.values())
+      and all(v[1]["name"] == k and v[1]["parameters"]["type"] == "object" for k, v in hctx.tools.items()),
+      (sorted(set(hctx.tools) ^ set(manifest_list("provides_tools"))), sorted(hctx.hooks)))
+check("hermes plugin: the tools show once RainbowOMMA is installed in bin_dir, and stay hidden where it isn't",
+      hctx.tools["rainbow_lease_port"][3]() is True and FakeHermesCtx({"bin_dir": str(tmp / "nothing-here")}) and
+      (lambda c_: (hp.register(c_), c_.tools["rainbow_lease_port"][3]())[1])(FakeHermesCtx({"bin_dir": str(tmp / "nothing-here")})) is False)
+os.environ["HERMES_TEST_SECRET"] = "s3cret-value"
+r_lp = json.loads(hctx.tools["rainbow_lease_port"][2]({"name": "web", "prefer": 41001}))
+r_sp = json.loads(hctx.tools["rainbow_stop_process"][2]({"pid": "123", "force": True}))
+r_ko = json.loads(hctx.tools["rainbow_keep_tabs"][2]({"ids": ["t1", None, "t2"]}))
+os.environ.pop("HERMES_TEST_SECRET", None)
+hlog = hcalls.read_text().splitlines()
+check("hermes plugin: a tool runs its owner as this agent and returns the owner's one JSON answer",
+      r_lp == {"status": "ok", "tool": "port-owner"} and r_sp["tool"] == "proc-owner" and r_ko["tool"] == "browser-owner"
+      and "port-owner lease alpha --name web --prefer 41001 agent=alpha secret=none" in hlog
+      and "proc-owner kill 123 --by alpha --force agent=alpha secret=none" in hlog and "browser-owner job-keep alpha t1 t2 agent=alpha secret=none" in hlog, hlog)
+check("hermes plugin: the commands get only what they need from the environment — no key or token of Hermes'", all("secret=none" in x for x in hlog), hlog)
+nobody = FakeHermesCtx({"bin_dir": str(hbin)}, profile="default"); hp.register(nobody)
+as_prof = FakeHermesCtx({"bin_dir": str(hbin)}, profile="bravo"); hp.register(as_prof)
+missing = FakeHermesCtx({"bin_dir": str(tmp / "nothing-here"), "agent": "alpha"}); hp.register(missing)
+r_nb = json.loads(nobody.tools["rainbow_browser_status"][2]({}))
+hcalls.write_text(""); json.loads(as_prof.tools["rainbow_browser_status"][2]({}))
+r_ms = json.loads(missing.tools["rainbow_browser_status"][2]({}))
+check("hermes plugin: the agent is the setting, else the profile's name — only with a row in browsers.json; without one, refused with what to set",
+      r_nb["status"] == "refused" and "settings.agent" in r_nb["next"] and "browser-owner status bravo agent=bravo secret=none" in hcalls.read_text()
+      and r_ms["status"] == "failed" and "install" in r_ms["next"], (r_nb, r_ms))
+def _timeout(*a, **k): raise subprocess.TimeoutExpired("x", 1)
+def _boom(*a, **k): raise RuntimeError("no")
+r_to = json.loads(hp.tools.run(str(hbin), "alpha", "rainbow_my_processes", {}, runner=_timeout))
+r_bm = json.loads(hp.tools.run(str(hbin), "alpha", "rainbow_my_processes", {}, runner=_boom))
+r_odd = [json.loads(hctx.tools[n][2](a)) for n, a in (("rainbow_who_port", {"port": "x"}), ("rainbow_take_screen", {"minutes": "lots"}),
+                                                     ("rainbow_keep_tabs", "not a dict"), ("rainbow_office_open", {}))]
+check("hermes plugin: a tool never raises — a timeout, a crash or odd arguments come back as JSON",
+      r_to["status"] == "failed" and "did not answer" in r_to["why"] and r_bm["status"] == "failed" and "RuntimeError" in r_bm["why"]
+      and all(isinstance(x, dict) and x.get("status") for x in r_odd), (r_to, r_bm, r_odd))
+os.environ["BROWSER_OWNER_REGISTRY"] = str(REG)
+pre = FakeHermesCtx({"bin_dir": str(HERE), "agent": "alpha"}); pre.cfg["agent"] = "alpha"
+gs = hp.Settings(pre); gs.registry_path = lambda: REG
+g_ = lambda tool_, args_, agent_="alpha": hp.guard.check(str(HERE), agent_, tool_, args_)   # noqa: E731
+g_kill = g_("terminal", {"command": "pkill -f 'Google Chrome'"})
+g_quit = g_("terminal", {"command": "osascript -e 'tell application \"Microsoft Word\" to quit'"})
+g_ls = g_("terminal", {"command": "ls -la"})
+g_code = g_("execute_code", {"code": "import os, signal\nos.kill(4242, signal.SIGTERM)"})
+g_codeok = g_("execute_code", {"code": "print(sum(range(10)))"})
+g_file = g_("write_file", {"path": str(HERE / "browsers.json"), "content": "{}"})
+check("hermes plugin guard: RainbowOMMA's rules on Hermes' own tools — pkill Chrome, quitting Word, inline kill code and an agent "
+      "writing browsers.json are blocked; ordinary commands and code run",
+      g_kill and g_kill["action"] == "block" and g_kill["message"].startswith("Blocked by RainbowOMMA:") and g_quit and g_quit["action"] == "block"
+      and g_code and g_code["action"] == "block" and g_file and g_file["action"] == "block" and g_ls is None and g_codeok is None,
+      (g_kill, g_quit, g_code, g_file, g_ls, g_codeok))
+check("hermes plugin guard: judged in-process through decide() — the same verdict the hook every framework runs gives",
+      callable(getattr(hp.guard.load(str(HERE)), "decide", None))
+      and run_guard({"tool_name": "terminal", "tool_input": {"command": "pkill -f 'Google Chrome'"}})[0] == 2)
+def _raise_loader(b): raise SyntaxError("broken install")
+class _BadMod:
+    HELP = ""
+    def decide(self, event, me=None): raise ValueError("bad")
+g_load = hp.guard.check(str(HERE), "alpha", "terminal", {"command": "ls"}, loader=_raise_loader)
+g_bad = hp.guard.check(str(HERE), "alpha", "terminal", {"command": "ls"}, loader=lambda b: _BadMod())
+g_none = hp.guard.check(str(HERE), "alpha", "terminal", {"command": "pkill Chrome"}, loader=lambda b: None)
+check("hermes plugin guard: fails closed — an install it can't load or an error while judging blocks; with no install at all it stays out of the way",
+      g_load["action"] == "block" and "could not be loaded" in g_load["message"] and g_bad["action"] == "block" and "can't tell" in g_bad["message"]
+      and g_none is None, (g_load, g_bad))
+legacy = tmp / "legacy-bin"; legacy.mkdir()
+(legacy / "rainbowomma-guard.py").write_text("import json, sys\nev = json.load(sys.stdin)\n"
+                                             "if 'pkill' in json.dumps(ev): print('Blocked by RainbowOMMA: old rule', file=sys.stderr); sys.exit(2)\n")
+g_old = hp.guard.check(str(legacy), "alpha", "terminal", {"command": "pkill x"})
+g_oldok = hp.guard.check(str(legacy), "alpha", "terminal", {"command": "ls"})
+check("hermes plugin guard: an install from before decide() (0.4.0) is still judged — through its hook, once per call",
+      g_old and g_old["action"] == "block" and "old rule" in g_old["message"] and g_oldok is None, (g_old, g_oldok))
+hpre = FakeHermesCtx({"bin_dir": str(HERE), "agent": "alpha"}); hp.register(hpre)
+hoff = FakeHermesCtx({"bin_dir": str(HERE), "agent": "alpha", "guard": False}); hp.register(hoff)
+check("hermes plugin guard: the hook vetoes through Hermes' directive; the plugin's own tools go through their owners; guard: false turns it off",
+      (hpre.hooks["pre_tool_call"](tool_name="terminal", args={"command": "killall 'Google Chrome'"}, task_id="t") or {}).get("action") == "block"
+      and hpre.hooks["pre_tool_call"](tool_name="rainbow_stop_process", args={"pid": 1}, task_id="t") is None
+      and hoff.hooks["pre_tool_call"](tool_name="terminal", args={"command": "killall 'Google Chrome'"}, task_id="t") is None)
+os.environ.pop("BROWSER_OWNER_REGISTRY", None)
+hcalls.write_text("")
+fin = FakeHermesCtx({"bin_dir": str(hbin), "agent": "alpha"}); hp.register(fin)
+fin.hooks["on_session_finalize"](session_id="s1", platform="cli")
+check("hermes plugin: when a session is torn down, the agent's orphaned servers and port leases are given back (proc-owner reap)",
+      "proc-owner reap alpha agent=alpha secret=none" in hcalls.read_text(), hcalls.read_text())
+plug_files = [f for f in PLUG.rglob("*") if f.is_file()]
+bad_payload = [f.name for f in plug_files if f.suffix in (".pyc", ".pyo", ".so", ".dylib") or "__pycache__" in f.parts
+               or f.read_bytes()[:4] in (b"\x7fELF", b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\x00asm") or f.read_bytes()[:2] == b"MZ"]
+code_txt = "\n".join(f.read_text(encoding="utf-8") for f in plug_files if f.suffix == ".py")
+check("hermes plugin: only readable source in the plugin (no bytecode, no binaries), and no core override, sudo, environ dump or self-update",
+      not bad_payload and not re.search(r"os\.environ\b(?!\.get\()", code_txt) and not re.search(r"\bsudo\b|setattr\(|sys\.modules\[|\.\./\.\./\.\.|urlopen|requests\.|http\.client", code_txt)
+      and all(n in code_txt for n in ("register_tool", "register_hook")), bad_payload)
+check("hermes plugin: plugin.yaml carries a quoted version, a SemVer requires_hermes floor and a config_schema for every setting it reads",
+      re.search(r'^version: "\d+\.\d+\.\d+"$', (PLUG / "plugin.yaml").read_text(), re.M) and re.search(r'^requires_hermes: ">=0\.\d+\.\d+"$', (PLUG / "plugin.yaml").read_text(), re.M)
+      and all(re.search(rf"^  {k}:$", (PLUG / "plugin.yaml").read_text(), re.M) for k in ("agent", "bin_dir", "guard")))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
