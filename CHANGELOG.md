@@ -30,6 +30,14 @@ upgrade prints those in full.
   installs and prints every release in between, short (headings and the first line of each entry), then, in full,
   anything listed under `### Action needed` (a job to reinstall, a setting to add). `rainbowomma-doctor` shows the
   installed version and where it came from. (#60)
+- Hermes works in the agent's own browser: `adapters/hermes/browser-cdp.yaml` (`browser.cdp_url` = the agent's port;
+  `install.sh --adapter hermes` writes one per agent). Without it Hermes opened a throwaway browser and its credential
+  vault filled passwords there. With `"hermesConfig"` in an agent's row, `rainbowomma-doctor` checks that `cdp_url` is on
+  the agent's own port (not missing, not another agent's) and that no browser MCP under `mcp_servers` runs without
+  `--cdp-endpoint` / `--browserUrl`, and prints the fix. (#78, #79)
+- `rainbowomma-doctor status` lists every Chrome that is neither the human's nor an agent's (a browser MCP started
+  without `--cdp-endpoint`, a test run): who started it, through which MCP, and the `browser-owner mcp-config` line to use
+  instead. (#79)
 
 ## [0.3.1] — 2026-11-07
 

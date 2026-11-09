@@ -234,6 +234,23 @@ for A in $ADAPTERS; do
     sed -e "s|/Users/you/bin|$BIN|g" -e "s|/Users/you|$HOME|g" "$SRC/$f" > "$DEST/$f"
     if [ -x "$SRC/$f" ]; then chmod +x "$DEST/$f"; fi
   done
+  if [ "$A" = hermes ] && [ -f "$BIN/browsers.json" ]; then   # browser.cdp_url per agent: Hermes works in the agent's own browser
+    HERMES_CDP="$(python3 -I - "$SRC/browser-cdp.yaml" "$BIN/browsers.json" "$DEST" <<'PY'
+import json, re, sys
+tpl, reg, dest = sys.argv[1:]
+text = open(tpl, encoding="utf-8").read()
+names = []
+for name, row in (json.load(open(reg, encoding="utf-8")).get("agents") or {}).items():
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", name) or not str(row.get("port", "")).isdigit():
+        continue
+    out = re.sub(r"cdp_url: http://127\.0\.0\.1:\d+\s*#.*", f"cdp_url: http://127.0.0.1:{row['port']}     # {name}'s port in browsers.json", text)
+    open(f"{dest}/browser-cdp.{name}.yaml", "w", encoding="utf-8").write(out)
+    names.append(name)
+print(", ".join(names))
+PY
+)"
+    [ -z "$HERMES_CDP" ] || note "hermes: browser-cdp.<agent>.yaml for $HERMES_CDP — add the one for each Hermes agent to its config.yaml"
+  fi
 done
 [ -z "$ADAPTERS" ] || end "$WORD" "$ADAPTER_LIST"
 set +f

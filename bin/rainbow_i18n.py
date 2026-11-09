@@ -498,6 +498,27 @@ M = {
     "ch.full": {"en": "All of it: CHANGELOG.md, or the release notes on GitHub.", "he": "הכול: CHANGELOG.md, או הערות השחרור ב-GitHub."},
     "dr.version": {"en": "installed version", "he": "הגרסה המותקנת"},
     "dr.version_fix": {"en": "run install.sh (or brew upgrade rainbowomma): it records the version in place", "he": "להריץ install.sh (או brew upgrade rainbowomma): הוא רושם את הגרסה שמותקנת"},
+    # ── Hermes and browser MCPs in the agent's own browser (doctor) ──
+    "dr.hermes": {"en": "Hermes ({agent}) works in its own browser",
+                  "he": "Hermes ({agent}) עובד בדפדפן שלו"},
+    "dr.hermes_unread": {"en": "{path} can't be read",
+                         "he": "אי אפשר לקרוא את {path}"},
+    "dr.hermes_path_fix": {"en": "\"hermesConfig\" in browsers.json: the path of that agent's Hermes config.yaml",
+                           "he": "\"hermesConfig\" ב-browsers.json: הנתיב של config.yaml של Hermes של הסוכן"},
+    "dr.hermes_no_cdp": {"en": "no browser.cdp_url: Hermes opens a browser of its own, and its credential vault fills passwords there",
+                         "he": "אין browser.cdp_url: Hermes פותח דפדפן משלו, וכספת הסיסמאות שלו ממלאת שם"},
+    "dr.hermes_cdp_other": {"en": "browser.cdp_url points at {other}'s browser (port {port})",
+                            "he": "browser.cdp_url מצביע על הדפדפן של {other} (פורט {port})"},
+    "dr.hermes_cdp_wrong": {"en": "browser.cdp_url is {url}, not the agent's own port {own}",
+                            "he": "browser.cdp_url הוא {url}, לא הפורט של הסוכן {own}"},
+    "dr.hermes_cdp_fix": {"en": "in {path}, under browser:, set cdp_url: http://127.0.0.1:{own} — and start its browser first (browser-owner start {agent} --by {agent})",
+                          "he": "ב-{path}, תחת browser:, לקבוע cdp_url: http://127.0.0.1:{own} — ולהפעיל קודם את הדפדפן שלו (browser-owner start {agent} --by {agent})"},
+    "dr.mcp_stray": {"en": "MCP server {server} starts a browser of its own (no --cdp-endpoint or --browserUrl): no colors, no owner, no idle-stop",
+                     "he": "שרת ה-MCP {server} מפעיל דפדפן משלו (בלי --cdp-endpoint או --browserUrl): בלי צבעים, בלי בעלים, בלי idle-stop"},
+    "dr.mcp_other": {"en": "MCP server {server} drives {other}'s browser",
+                     "he": "שרת ה-MCP {server} שולט בדפדפן של {other}"},
+    "dr.mcp_fix": {"en": "replace it with: browser-owner mcp-config {agent} --tool {tool}",
+                   "he": "להחליף ב: browser-owner mcp-config {agent} --tool {tool}"},
 }
 
 _detected = None

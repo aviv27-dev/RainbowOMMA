@@ -2913,5 +2913,63 @@ check("doctor shows the installed version (and where it came from); none recorde
       dv and dv["ok"] and dv["detail"].startswith("0.3.1 (homebrew") and dv_none and not dv_none["ok"] and not dv_none["needed"]
       and dv_none["fix"] and rc_none == rc_v, (dv, dv_none, rc_none, rc_v))
 
+# ── Hermes works in the agent's own browser; no browser MCP or Chrome outside RainbowOMMA (#78, #79) ──
+os.environ["RAINBOW_LANG"] = "en"
+rdh = load("rainbowomma-doctor.py")
+hreg = {"alpha": {"port": 9222, "hermesConfig": "cfg-alpha"}, "bravo": {"port": 9223, "hermesConfig": "cfg-bravo"},
+        "charlie": {"port": 9224, "hermesConfig": "cfg-charlie"}, "delta": {"port": 9225}}
+hcfg = {
+    "cfg-alpha": "model: x\nbrowser:\n  cdp_url: http://127.0.0.1:9222   # alpha\nmcp_servers:\n  playwright:\n    command: npx\n"
+                 "    args: [\"@playwright/mcp@latest\", \"--cdp-endpoint\", \"http://127.0.0.1:9222\"]\n  files:\n    command: files-mcp\n",
+    "cfg-bravo": "browser:\n  headless: false\nmcp_servers:\n  web:\n    command: npx\n    args:\n      - \"@playwright/mcp@latest\"\n",
+    "cfg-charlie": "browser:\n  cdp_url: 'http://localhost:9222'\nmcp_servers:\n  dt:\n    command: npx\n    args: [chrome-devtools-mcp, --browserUrl, http://127.0.0.1:9223]\n",
+}
+hf = rdh.hermes_findings(hreg, read=lambda path: hcfg.get(path, ""))
+by_ = lambda a: [x for x in hf if x["agent"] == a]   # noqa: E731
+check("hermes (#78): cdp_url on the agent's own port and a browser MCP attached to it → fine; an agent without hermesConfig isn't checked",
+      [x["ok"] for x in by_("alpha")] == [True] and not by_("delta"), hf)
+check("hermes (#78, #79): no cdp_url → what to add (its own port, start the browser first); a Playwright MCP without --cdp-endpoint → its mcp-config",
+      len(by_("bravo")) == 2 and not any(x["ok"] for x in by_("bravo")) and "cdp_url: http://127.0.0.1:9223" in by_("bravo")[0]["fix"]
+      and "browser-owner start bravo --by bravo" in by_("bravo")[0]["fix"] and "credential vault" in by_("bravo")[0]["what"]
+      and by_("bravo")[1]["fix"].endswith("browser-owner mcp-config bravo --tool playwright") and "web" in by_("bravo")[1]["what"], by_("bravo"))
+check("hermes (#78, #79): cdp_url or a browser MCP on another agent's port is named as that agent's",
+      [x["what"] for x in by_("charlie")] == ["browser.cdp_url points at alpha's browser (port 9222)", "MCP server dt drives bravo's browser"]
+      and by_("charlie")[1]["fix"].endswith("--tool devtools"), by_("charlie"))
+check("hermes (#78): a hermesConfig that can't be read says so",
+      [x["ok"] for x in rdh.hermes_findings({"alpha": {"port": 9222, "hermesConfig": "nope"}}, read=lambda p: "")] == [False])
+pers = str(bo.PERSONAL[0])
+srows = [(10, 1, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+         (11, 1, f"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir={pers} --flag-switches-begin"),
+         (12, 1, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --remote-debugging-port=9222 --user-data-dir=/agents/alpha-profile"),
+         (40, 1, "python3 -m hermes gateway --profile bravo"),
+         (50, 40, "node /tmp/npx/node_modules/@playwright/mcp/cli.js"),
+         (60, 50, "/u/Library/Caches/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium --user-data-dir=/u/Library/Caches/ms-playwright-mcp/mcp-chrome-1 --remote-debugging-pipe"),
+         (61, 60, "/u/Library/Caches/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium Helper --type=renderer"),
+         (70, 1, "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing --user-data-dir=/tmp/some-test-run")]
+sreg = {"alpha": {"dir_re": re.compile(r"(?:^|\s)--user-data-dir=/agents/alpha-profile(?:\s|$)")}, "bravo": {"dir_re": re.compile(r"--user-data-dir=/agents/bravo-profile")}}
+sb = rdh.stray_browsers(srows, sreg, {60: ("bravo", "ancestor"), 70: ("human", "none")})
+check("doctor status (#79): a Chrome that is neither the human's nor an agent's is listed, with who started it and through which MCP",
+      [(x["pid"], x["agent"], x["via"]) for x in sb] == [(60, "bravo", "Playwright MCP"), (70, None, None)], sb)
+sp = [rdh.stray_problem(x) for x in sb]
+check("doctor status (#79): the fix for an agent's stray browser is its own mcp-config; for an unknown one, who started it",
+      "browser-owner mcp-config bravo --tool playwright" in sp[0]["fix"] and "started by bravo through Playwright MCP" in sp[0]["what"]
+      and sp[1]["fix"].startswith("proc-owner whose 70"), sp)
+hreg_file = tmp / "hermes-registry.json"; hcfg_file = tmp / "hermes-config.yaml"; hcfg_file.write_text(hcfg["cfg-bravo"])
+hraw = json.loads(Path(REG).read_text()); first_ = next(iter(hraw["agents"])); hraw["agents"][first_]["hermesConfig"] = str(hcfg_file)
+hreg_file.write_text(json.dumps(hraw))
+rh_ = subprocess.run(["bash", str(HERE / "rainbowomma-doctor"), "--json"], capture_output=True, text=True,
+                     env=dict(os.environ, BROWSER_OWNER_REGISTRY=str(hreg_file), RAINBOW_LANG="en"))
+hck = [c for c in json.loads(rh_.stdout)["checks"] if c["check"].startswith("Hermes (")]
+check("doctor (#78): an agent whose row names its Hermes config is checked, and a missing cdp_url fails doctor with the fix",
+      rh_.returncode == 1 and hck and not hck[0]["ok"] and hck[0]["needed"] and f"cdp_url: http://127.0.0.1:{hraw['agents'][first_]['port']}" in hck[0]["fix"], hck)
+ah = tmp / "hermes-adapter-home"; ah.mkdir()
+ra_ = subprocess.run(["bash", str(HERE.parent / "install.sh"), "--adapter", "hermes"], capture_output=True, text=True,
+                     env=dict(os.environ, HOME=str(ah), RAINBOW_INSTALL_ANY_OS="1", RAINBOW_HOME=str(ah / ".rainbowomma")))
+bcdp = ah / ".rainbowomma" / "adapters" / "hermes" / "browser-cdp.bravo.yaml"
+check("install --adapter hermes (#78): browser.cdp_url written per agent with its own port",
+      ra_.returncode == 0 and bcdp.exists() and "cdp_url: http://127.0.0.1:9223" in bcdp.read_text() and "browser-cdp.<agent>.yaml for alpha, bravo, charlie" in ra_.stdout,
+      ra_.stdout[-500:] + ra_.stderr[-300:])
+os.environ["RAINBOW_LANG"] = "he"
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
