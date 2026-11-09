@@ -1852,6 +1852,22 @@ evil_prof = tmp / "evil-profile"; evil_prof.mkdir(); (evil_prof / "Default").sym
 check("security: a link inside an agent's profile (to the human's Default) stops start, recover and heal before anything is written",
       bool(sbo.profile_unsafe({"profile": str(evil_prof)})) and not sbo.profile_unsafe({"profile": str(tmp / "bravo")})
       and json.loads((human_prof / "Preferences").read_text())["profile"]["name"] == "Me")
+mk_prof = tmp / "marker-profile"; mk_prof.mkdir(); (mk_prof / "Default").mkdir()
+for n_, tgt in (("RunningChromeVersion", "156.0.8078.80:1"), ("SingletonLock", "somehost-4242"), ("SingletonCookie", "4711"),
+                ("SingletonSocket", "/var/folders/ab/cd1234/T/com.google.Chrome.XyZ123/SingletonSocket")):
+    (mk_prof / n_).symlink_to(tgt)
+marker_ok = sbo.profile_unsafe({"profile": str(mk_prof)})
+bad_markers = []
+for n_, tgt in (("RunningChromeVersion", str(human_prof)), ("SingletonLock", "../human-chrome-default/x"), ("SingletonCookie", "/tmp/x"),
+                ("SingletonSocket", str(human_prof / "SingletonSocket")), ("SingletonSocket", "/var/folders/ab/cd/T/com.google.Chrome.x/../../evil"),
+                ("Local State", "abc")):
+    bp = tmp / f"marker-bad-{len(bad_markers)}"; bp.mkdir(); (bp / n_).symlink_to(tgt)
+    bad_markers.append((n_, tgt, bool(sbo.profile_unsafe({"profile": str(bp)}))))
+nested = tmp / "marker-nested"; (nested / "Default").mkdir(parents=True); (nested / "Default" / "Cookies").symlink_to("SingletonLock")
+check("security (#82): Chrome's own marker links at the top of a profile (RunningChromeVersion, Singleton*) never stop a start",
+      marker_ok is None, marker_ok)
+check("security (#82): the same names pointing anywhere else — another profile, a path, a socket outside Chrome's temp folder — and any other link still do",
+      all(x[2] for x in bad_markers) and bool(sbo.profile_unsafe({"profile": str(nested)})), bad_markers)
 sbo.THEMES = tmp / "sec-themes"
 sbo.build_theme({"name": "alpha", "label": "Alpha", "color": "#E53935"})
 (sbo.THEMES / "alpha" / "x.js").write_text("steal()")
