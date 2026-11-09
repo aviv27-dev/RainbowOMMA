@@ -59,6 +59,11 @@ upgrade prints those in full.
   opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
   every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
 
+- `docs/DOCK.md`: why every running agent browser is "Google Chrome" in the Dock, what tells them apart today (the
+  named applets, `--window-name`, the panel, the menu bar), and the options for naming the running icon, each with what
+  must be measured on a Mac (the Keychain and `--password-store`, updates, disk, Gatekeeper). `rainbowomma-doctor` shows
+  whether the agents' named Dock group is built and in the Dock. (#77)
+
 ## [0.3.1] — 2026-11-07
 
 One window for every browser (`rainbow-panel`), issues filed only after a privacy scan (`rainbowomma-report`), a

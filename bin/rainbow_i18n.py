@@ -519,6 +519,17 @@ M = {
                      "he": "שרת ה-MCP {server} שולט בדפדפן של {other}"},
     "dr.mcp_fix": {"en": "replace it with: browser-owner mcp-config {agent} --tool {tool}",
                    "he": "להחליף ב: browser-owner mcp-config {agent} --tool {tool}"},
+    # ── the agents in the Dock (doctor, #77) ──
+    "dr.dock": {"en": "the agents' group in the Dock (one named icon per agent)",
+                "he": "קבוצת הסוכנים ב-Dock (סמל עם שם לכל סוכן)"},
+    "dr.dock_detail": {"en": "{n} applets for {agents} agents",
+                       "he": "{n} יישומונים ל-{agents} סוכנים"},
+    "dr.dock_in": {"en": "in the Dock",
+                   "he": "ב-Dock"},
+    "dr.dock_out": {"en": "not in the Dock",
+                    "he": "לא ב-Dock"},
+    "dr.dock_fix": {"en": "install/make-dock-tray.sh — every running agent Chrome is named \"Google Chrome\" in the Dock; these name them (docs/DOCK.md)",
+                    "he": "install/make-dock-tray.sh — כל Chrome של סוכן נקרא \"Google Chrome\" ב-Dock; אלה נותנים להם שם (docs/DOCK.md)"},
 }
 
 _detected = None

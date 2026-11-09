@@ -318,6 +318,8 @@ right after Chrome: a circle in each agent's color with its name. A click opens 
 front if it's already open, even when it's minimized. Your own Chrome closes the group, in your color
 (`~/.rainbowomma/human.json`: `{"label": …, "color": …}`). `--remove` takes the group out again; the rest of your Dock is
 never touched.
+Each running agent browser still shows in the Dock as "Google Chrome". Why it can't simply be renamed, and the options
+that would need measuring, are in [docs/DOCK.md](docs/DOCK.md).
 
 `bin/rainbow-panel.sh` opens one window for all of it: every browser on the Mac — yours and each agent's — with open,
 close and bring to front, a color and a name per agent, and a form that adds an agent to `browsers.json` (through

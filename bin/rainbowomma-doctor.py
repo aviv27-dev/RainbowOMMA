@@ -100,6 +100,18 @@ def run_checks(launch_agents=None):
     guard_users = [f for f in ("~/.claude/settings.json", "~/.codex/hooks.json", "~/.gemini/settings.json", "~/.cursor/hooks.json")
                    if "rainbowomma-guard" in _read(f)]
     out.append(check(t("dr.guard"), bool(guard_users), ", ".join(guard_users), t("dr.guard_fix"), needed=False))
+    tray = Path(os.path.expanduser(os.environ.get("RAINBOW_DOCK_APPS") or "~/Applications/RainbowOMMA"))   # the agents' group in the Dock (#77)
+    apps = sorted(tray.glob("*.app")) if tray.is_dir() else []
+    docked = None
+    if MAC and apps:
+        try:
+            docked = str(tray) in subprocess.run(["defaults", "read", "com.apple.dock", "persistent-apps"], capture_output=True,
+                                                 text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            docked = None
+    out.append(check(t("dr.dock"), bool(apps) and docked is not False,
+                     t("dr.dock_detail", n=len(apps), agents=len(reg)) + ("" if docked is None else " · " + t("dr.dock_in" if docked else "dr.dock_out")),
+                     t("dr.dock_fix"), needed=False))
     for h in hermes_findings(reg):                       # only agents whose row names their Hermes config
         out.append(check(t("dr.hermes", agent=h["agent"]), h["ok"], h["what"], h["fix"]))
     return out

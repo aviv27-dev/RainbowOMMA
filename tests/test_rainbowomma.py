@@ -3041,5 +3041,23 @@ check("restoreTabs (#76): lastJob by default (the last session comes back); none
       r_def[n0]["restoreTabs"] == "lastJob" and r_def[n0]["maxTabs"] == 8 and "--restore-last-session" in jb.chrome_args(r_def[n0])
       and "--restore-last-session" not in jb.chrome_args(r_none[n0]) and r_none[n0]["maxTabs"] == 5 and not bad_, bad_)
 
+# ── the agents in the Dock: doctor shows whether the named group is built (#77) ──
+dk = tmp / "Dock-Apps" / "RainbowOMMA"
+def doc_dock(apps):
+    if apps:
+        dk.mkdir(parents=True, exist_ok=True)
+        for n_ in apps:
+            (dk / f"{n_}.app").mkdir(exist_ok=True)
+    r_ = subprocess.run(["bash", str(HERE / "rainbowomma-doctor"), "--json"], capture_output=True, text=True,
+                        env=dict(os.environ, BROWSER_OWNER_REGISTRY=str(REG), RAINBOW_LANG="en", RAINBOW_DOCK_APPS=str(dk)))
+    return next((c for c in json.loads(r_.stdout)["checks"] if c["check"].startswith("the agents' group in the Dock")), None)
+dk_none, dk_two = doc_dock([]), doc_dock(["1 Alpha", "2 Bravo"])
+check("doctor (#77): the agents' named Dock group — missing is optional, with the way to build it; built, it counts the applets",
+      dk_none and not dk_none["ok"] and not dk_none["needed"] and "make-dock-tray.sh" in dk_none["fix"] and "docs/DOCK.md" in dk_none["fix"]
+      and dk_two and (dk_two["ok"] or sys.platform == "darwin") and dk_two["detail"].startswith("2 applets for"), (dk_none, dk_two))
+check("docs (#77): the Dock options are written down with what each needs measured, and the fallback in use",
+      all(x in (HERE.parent / "docs" / "DOCK.md").read_text() for x in ("Chrome Safe Storage", "--password-store=basic", "APFS clone", "Gatekeeper",
+                                                                        "NSDockTile", "--window-name", "make-dock-tray.sh")))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
