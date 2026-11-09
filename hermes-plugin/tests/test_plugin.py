@@ -438,6 +438,25 @@ check("browser provider: declared in plugin.yaml, registered through ctx.registe
       "provides_browser_providers:\n  - rainbowomma" in manifest and "register_browser_provider" in (PLUGIN / "__init__.py").read_text()
       and re.findall(r"https?://[^\s\"']+", (PLUGIN / "own_browser.py").read_text()) == ["http://127.0.0.1:{int(port)}/json/version"])
 
+# ---- the frame survives a restart ---------------------------------------------------------------------------------------
+os.environ["RAINBOW_HOME"], os.environ["BROWSER_OWNER_REGISTRY"] = str(tmp / "s8"), str(tmp / "s8" / "browsers.json")
+ld = importlib.machinery.SourceFileLoader("rb_browser_owner", str(PLUGIN / "vendor" / "browser-owner.py"))
+bo = importlib.util.module_from_spec(importlib.util.spec_from_loader(ld.name, ld))
+ld.exec_module(bo)
+os.environ.pop("RAINBOW_HOME", None)
+os.environ.pop("BROWSER_OWNER_REGISTRY", None)
+TID = "abcdefghijklmnopabcdefghijklmnop"
+prof = tmp / "s8" / "profiles" / "alpha" / "Default"
+prof.mkdir(parents=True)
+(prof / "Preferences").write_text(json.dumps({"extensions": {"theme": {"id": TID}}}))
+only_prefs = bo.theme_saved({"profile": str(prof.parent)})
+(prof / "Secure Preferences").write_text(json.dumps({"extensions": {"settings": {TID: {"location": 4}}}}))
+held = bo.theme_saved({"profile": str(prof.parent)})
+(prof / "Secure Preferences").write_text(json.dumps({"extensions": {"settings": {"x" * 32: {}}}}))
+dropped = bo.theme_saved({"profile": str(prof.parent)})
+check("browser frame: a theme Chrome dropped when its session ended (its id still named in Preferences) does not count "
+      "as installed — the next start installs it again", (only_prefs, held, dropped) == (TID, TID, ""), (only_prefs, held, dropped))
+
 # ---- what ships -------------------------------------------------------------------------------------------------------
 r = subprocess.run([sys.executable, str(HERE.parent / "tools" / "sync_vendor.py"), "--check"], capture_output=True, text=True)
 check("vendor: the owners inside the plugin are byte-for-byte the ones in bin/", r.returncode == 0, r.stdout)

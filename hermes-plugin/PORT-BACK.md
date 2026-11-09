@@ -13,8 +13,13 @@ Notes for carrying these changes into the stand-alone tools and the other adapte
 2. `bin/agent-office.py`: `add_apps()` / `OFFICE_EXTRA_APPS` — more document apps from a setting, with fixed AppleScript
    expressions (`SUITES`). Not verified against a live app yet (TextEdit did not answer Apple Events in the test run:
    the one-time Automation consent). Verify, then document in README + `browsers.json` (`officeApps`?).
-3. Ideas the plugin has that the stand-alone tools don't:
+3. `bin/browser-owner.py` `theme_saved()`: Chrome 156 drops an unpacked theme when the session that loaded it ends — the
+   id stays in Preferences (`extensions.theme.id`) but the extension is gone from `Secure Preferences`
+   (`extensions.settings`), and every later window opens without the frame. `theme_saved` now also wants the id in the
+   profile's extension settings, so `ensure_theme` installs again before the next start (about 12 s per start). Worth a
+   cheaper way (keeping the windowless install instance's result alive, or installing in the background after start).
+4. Ideas the plugin has that the stand-alone tools don't:
    - an agent's registry row created on first use (free colour, free port, skipping another registry's ports);
    - owner hints translated to the host's tool names (`tool_defs.CLI_TO_TOOL`) — the MCP server could do the same;
    - a multiplexed host (one process, several agents): never register the process as a root; mark each shell command.
-4. Tests to add to `tests/test_rainbowomma.py`: `judge()`, `doc-app` (blocked and allowed rows), `add_apps()`.
+5. Tests to add to `tests/test_rainbowomma.py`: `judge()`, `doc-app` (blocked and allowed rows), `add_apps()`, `theme_saved()`.
