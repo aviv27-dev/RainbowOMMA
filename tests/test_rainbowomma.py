@@ -2,7 +2,7 @@
 """RainbowOMMA tests — fake process table, fake osascript, fake Chrome; never a real browser or app.
 Run: python3 tests/test_rainbowomma.py
 """
-import importlib.machinery, importlib.util, json, os, re, sys, tempfile, time
+import importlib.machinery, importlib.util, json, os, re, shutil, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parents[1] / "bin"
@@ -3058,6 +3058,46 @@ check("doctor (#77): the agents' named Dock group — missing is optional, with 
 check("docs (#77): the Dock options are written down with what each needs measured, and the fallback in use",
       all(x in (HERE.parent / "docs" / "DOCK.md").read_text() for x in ("Chrome Safe Storage", "--password-store=basic", "APFS clone", "Gatekeeper",
                                                                         "NSDockTile", "--window-name", "make-dock-tray.sh")))
+
+# ── the Dock's "Agents" applet: running agent windows by name, the chosen one to the front (#77) ──
+wb = load("browser-owner.py"); wb.REGISTRY = REG; wb.processes = lambda: []
+wb.view = lambda x, rows=None, **k: {"status": "up" if x["name"] in ("alpha", "charlie") else "down"}
+wbuf = io.StringIO()
+with contextlib.redirect_stdout(wbuf):
+    w_rc = wb.main(["windows"])
+wj = json.loads(wbuf.getvalue().strip().splitlines()[-1])
+check("browser-owner windows (#77): the agent browsers running now, each with its label, color and window name",
+      w_rc == 0 and [x["agent"] for x in wj["windows"]] == ["alpha", "charlie"]
+      and wj["windows"][0]["window"] == f"{reg['alpha']['label']}-CDP" and wj["windows"][0]["color"] == reg["alpha"]["color"], wj)
+pk = tmp / "pick-bin"; pk.mkdir()
+for f_ in ("desk-browser.sh", "rainbow_i18n.py"):
+    shutil.copy(HERE / f_, pk / f_)
+pk_log = tmp / "pick-calls.txt"
+(pk / "browser-owner").write_text(f"""#!/bin/sh
+echo "$@" >> {pk_log}
+case "$1" in
+  windows) echo '{{"windows": [{{"agent": "alpha", "label": "Alpha \\\\"A\\\\"", "color": "#7E57C2", "window": "x"}}, {{"agent": "charlie", "label": "Charlie", "color": "#F4511E", "window": "y"}}]}}' ;;
+  names) echo "alpha charlie" ;;
+  start) echo '{{"status": "already-up"}}' ;;
+  front) echo '{{"status": "front"}}' ;;
+  status) echo '{{"label": "Charlie"}}' ;;
+esac
+""")
+(pk / "browser-owner").chmod(0o755)
+pk_stub = tmp / "pick-stub"; pk_stub.mkdir()
+(pk_stub / "osascript").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$2\" > {tmp / 'pick-script.txt'}\necho \"${{PICK_ANSWER:-Charlie}}\"\n")
+(pk_stub / "osascript").chmod(0o755)
+penv = dict(os.environ, PATH=f"{pk_stub}:{os.environ['PATH']}", RAINBOW_LANG="en")
+r_pk = subprocess.run(["bash", str(pk / "desk-browser.sh"), "pick"], capture_output=True, text=True, env=penv)
+calls_pk = pk_log.read_text().split("\n") if pk_log.exists() else []
+pscript = (tmp / "pick-script.txt").read_text() if (tmp / "pick-script.txt").exists() else ""
+check("desk-browser pick (#77): the running agent windows are offered by name (quotes kept safe); the chosen one comes to the front",
+      r_pk.returncode == 0 and "start charlie --by human" in calls_pk and "front charlie" in calls_pk
+      and 'choose from list {"Alpha \\"A\\"", "Charlie"}' in pscript and "Charlie" in r_pk.stdout, (r_pk.stdout, r_pk.stderr, calls_pk, pscript))
+pk_log.unlink(missing_ok=True)
+r_pc = subprocess.run(["bash", str(pk / "desk-browser.sh"), "pick"], capture_output=True, text=True, env=dict(penv, PICK_ANSWER="false"))
+check("desk-browser pick (#77): cancelling the list does nothing", r_pc.returncode == 0 and not any(c.startswith(("start", "front")) for c in pk_log.read_text().split("\n")),
+      r_pc.stdout)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

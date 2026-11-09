@@ -1,5 +1,6 @@
 #!/bin/bash
-# What the desktop icons and the Dock tray run: open|close <agent> (any agent in browsers.json), open|close human, close agents.
+# What the desktop icons and the Dock tray run: open|close <agent> (any agent in browsers.json), open|close human, close agents,
+# pick (choose a running agent window by name — the Dock's "Agents" applet).
 # open <agent> on a browser that is already open brings it to the front, un-minimized. Exit 1 (message on stderr) on failure.
 case "${1:-}" in -h|--help)   # --help: one shape for every tool (bin/rainbow_help.py), and it never acts
   for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
@@ -32,6 +33,24 @@ fail() { "$@" >&2; exit 1; }   # a failure: the message on stderr and exit 1 (th
 is_agent() { case " $("$OWNER" names 2>/dev/null) " in *" $1 "*) return 0 ;; esac; return 1; }
 
 case "$ACT:$WHO" in
+  pick:)   # the Dock's "Agents" applet: the agent browsers running now, by name — the chosen one comes to the front (#77)
+    LIST=$("$OWNER" windows 2>/dev/null | py -I -c 'import json, sys
+try:
+    w = json.loads(sys.stdin.read().strip().splitlines()[-1]).get("windows", [])
+except Exception:
+    w = []
+for x in w:
+    print(x["agent"] + "\t" + x["label"])') || LIST=""
+    [ -n "$LIST" ] || { msg desk.none_running; exit 0; }
+    SCRIPT=$(printf '%s\n' "$LIST" | py -I -c 'import sys
+q = lambda s: "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+labels = [ln.split("\t", 1)[1] for ln in sys.stdin.read().splitlines() if "\t" in ln]
+print("choose from list {" + ", ".join(q(x) for x in labels) + "} with prompt " + q(sys.argv[1]) + " default items {" + q(labels[0]) + "}")' "$(msg desk.pick_prompt)")
+    CHOSEN=$(osascript -e "$SCRIPT" 2>/dev/null) || CHOSEN=""
+    [ -n "$CHOSEN" ] && [ "$CHOSEN" != false ] || exit 0          # cancelled: nothing to do
+    AG=$(printf '%s\n' "$LIST" | awk -F '\t' -v l="$CHOSEN" '$2 == l {print $1; exit}')
+    [ -n "$AG" ] || exit 0
+    exec "$0" open "$AG" ;;
   open:human)
     "$DIR/human-chrome.sh" >/dev/null 2>&1 && msg desk.human_open || fail msg desk.human_open_failed ;;
   close:human)

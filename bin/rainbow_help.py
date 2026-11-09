@@ -28,7 +28,7 @@ HEAD = ("help.commands", "help.exits", "help.more", "help.eg")   # the headings,
 H = {
     "browser-owner": {
         "commands": [
-            ("list | names | status AGENT", "help.browser-owner.1", "browser-owner list"),
+            ("list | names | windows | status AGENT", "help.browser-owner.1", "browser-owner list"),
             ("start AGENT --by WHO", "help.browser-owner.2", "browser-owner start alpha --by alpha"),
             ("stop AGENT --by human [--allow-reopen]", "help.browser-owner.3", "browser-owner stop alpha --by human"),
             ("idle-stop | recover | front AGENT", "help.browser-owner.4", "browser-owner front alpha"),
@@ -185,6 +185,7 @@ H = {
         "commands": [
             ("open | close AGENT", "help.desk-browser.sh.1", "desk-browser.sh open alpha"),
             ("open | close human · close agents", "help.desk-browser.sh.2", "desk-browser.sh close agents"),
+            ("pick", "help.desk-browser.sh.3", "desk-browser.sh pick"),
         ],
         "exits": [(0, "help.x.ok"), (2, "help.desk-browser.sh.x2"), (1, "help.desk-browser.sh.x1")], "more": "README.md (One-click desktop controls)",
     },

@@ -56,6 +56,29 @@ rm -rf "$OUT"/*.app
 CLOSE="$(asq "$(msg desk.btn_close)")"; QB="$(asq "$BIN/desk-browser.sh")"
 LIST="$WORK/apps.txt"; : > "$LIST"
 i=0
+# first in the group: "Agents" — every running agent window by name, the chosen one to the front (desk-browser.sh pick).
+# The running Chromes all say "Google Chrome" in the Dock; this is how a minimized one is found by name (#77, docs/DOCK.md)
+pname="$(msg dock.pick_name)"; app="$OUT/$pname.app"; qn="$(asq "$pname")"
+cat > "$WORK/a.applescript" <<AS
+-- $qn — made by RainbowOMMA/make-dock-tray.sh; the work is desk-browser.sh pick
+on run
+  try
+    do shell script quoted form of "$QB" & " pick"
+  on error e
+    activate
+    display dialog e with title "$qn" buttons {"$CLOSE"} default button 1 giving up after 8
+  end try
+end run
+AS
+osacompile -o "$app" "$WORK/a.applescript"
+icon "$WORK/applet.icns" "#607D8B" "$(msg dock.pick_label)" 40 300
+cp "$WORK/applet.icns" "$app/Contents/Resources/applet.icns"
+rm -f "$app/Contents/Resources/Assets.car"
+/usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$app/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$app/Contents/Info.plist" 2>/dev/null || true
+codesign --force --deep -s - "$app" >/dev/null 2>&1 || true
+touch "$app"
+echo "$app" >> "$LIST"
 while IFS=$'\t' read -r who label color; do
   [ -n "$who" ] || continue
   i=$((i + 1))
