@@ -13,13 +13,15 @@ Notes for carrying these changes into the stand-alone tools and the other adapte
 2. `bin/agent-office.py`: `add_apps()` / `OFFICE_EXTRA_APPS` — more document apps from a setting, with fixed AppleScript
    expressions (`SUITES`). Not verified against a live app yet (TextEdit did not answer Apple Events in the test run:
    the one-time Automation consent). Verify, then document in README + `browsers.json` (`officeApps`?).
-3. `bin/browser-owner.py` `theme_saved()`: Chrome 156 drops an unpacked theme when the session that loaded it ends — the
-   id stays in Preferences (`extensions.theme.id`) but the extension is gone from `Secure Preferences`
-   (`extensions.settings`), and every later window opens without the frame. `theme_saved` now also wants the id in the
-   profile's extension settings, so `ensure_theme` installs again before the next start (about 12 s per start). Worth a
-   cheaper way (keeping the windowless install instance's result alive, or installing in the background after start).
+3. `bin/browser-owner.py` `THEME_FILES` now includes `Cached Theme.pak`. Chrome compiles the theme into that file inside
+   the theme folder on install and paints the frame from it at every later start (the unpacked extension itself does
+   not outlive the session that loaded it). `theme_clean()` saw the file as foreign, so the first "kept" start rebuilt
+   the folder, the cache was gone, and the agent's second window opened without its colour and name — while
+   `theme_saved()` still read the id in Preferences, so `heal` did not notice. Any install of the stand-alone tools has
+   this: after the fix a start no longer rebuilds, and a profile that already lost its frame gets it back by clearing
+   `theme` in its state file (or `heal` after Chrome drops the id).
 4. Ideas the plugin has that the stand-alone tools don't:
    - an agent's registry row created on first use (free colour, free port, skipping another registry's ports);
    - owner hints translated to the host's tool names (`tool_defs.CLI_TO_TOOL`) — the MCP server could do the same;
    - a multiplexed host (one process, several agents): never register the process as a root; mark each shell command.
-5. Tests to add to `tests/test_rainbowomma.py`: `judge()`, `doc-app` (blocked and allowed rows), `add_apps()`, `theme_saved()`.
+5. Tests to add to `tests/test_rainbowomma.py`: `judge()`, `doc-app` (blocked and allowed rows), `add_apps()`, `theme_clean()` with `Cached Theme.pak`.

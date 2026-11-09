@@ -445,17 +445,19 @@ bo = importlib.util.module_from_spec(importlib.util.spec_from_loader(ld.name, ld
 ld.exec_module(bo)
 os.environ.pop("RAINBOW_HOME", None)
 os.environ.pop("BROWSER_OWNER_REGISTRY", None)
-TID = "abcdefghijklmnopabcdefghijklmnop"
-prof = tmp / "s8" / "profiles" / "alpha" / "Default"
-prof.mkdir(parents=True)
-(prof / "Preferences").write_text(json.dumps({"extensions": {"theme": {"id": TID}}}))
-only_prefs = bo.theme_saved({"profile": str(prof.parent)})
-(prof / "Secure Preferences").write_text(json.dumps({"extensions": {"settings": {TID: {"location": 4}}}}))
-held = bo.theme_saved({"profile": str(prof.parent)})
-(prof / "Secure Preferences").write_text(json.dumps({"extensions": {"settings": {"x" * 32: {}}}}))
-dropped = bo.theme_saved({"profile": str(prof.parent)})
-check("browser frame: a theme Chrome dropped when its session ended (its id still named in Preferences) does not count "
-      "as installed — the next start installs it again", (only_prefs, held, dropped) == (TID, TID, ""), (only_prefs, held, dropped))
+bo.THEMES = tmp / "s8" / "themes"
+td = bo.THEMES / "alpha"
+td.mkdir(parents=True)
+(td / "manifest.json").write_text(json.dumps({"manifest_version": 3, "name": "x", "version": "1", "theme": {}}))
+(td / "frame.png").write_bytes(b"png")
+plain = bo.theme_clean("alpha")
+(td / "Cached Theme.pak").write_bytes(b"pak")                      # Chrome writes it on install and paints from it later
+with_cache = bo.theme_clean("alpha")
+(td / "background.js").write_text("// not ours")
+foreign = bo.theme_clean("alpha")
+check("browser frame: Chrome's own cached theme file is not a reason to rebuild the theme folder (rebuilding it threw the "
+      "frame away at the second start); a script someone added still is", (plain, with_cache, foreign) == (True, True, False),
+      (plain, with_cache, foreign))
 
 check("browser provider: every browser_exec call runs under the agent's own session name, so two Hermes processes never "
       "share one browser daemon", own_browser.session_for("alpha") == "rb-alpha" and own_browser.session_for("alpha", "r7k2") == "rb-alpha-r7k2"

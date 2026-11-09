@@ -539,7 +539,10 @@ def build_theme(a, text=None, title=None):
     return d
 
 
-THEME_FILES = {"manifest.json", "frame.png"}
+# "Cached Theme.pak" is Chrome's own: it compiles the theme into it on install and paints the frame from it at every later
+# start (the unpacked extension itself does not outlive the session that loaded it). Rebuilding the folder because of
+# that file threw the frame away at the agent's second start.
+THEME_FILES = {"manifest.json", "frame.png", "Cached Theme.pak"}
 THEME_KEYS = {"manifest_version", "name", "version", "description", "theme"}
 
 
@@ -559,21 +562,9 @@ def theme_saved(a):
     try:
         d = json.loads((Path(a["profile"]) / "Default" / "Preferences").read_text(encoding="utf-8"))
         tid = (d.get("extensions", {}).get("theme") or {}).get("id") or ""
-        if not re.fullmatch(r"[a-p]{32}", tid):
-            return ""
+        return tid if re.fullmatch(r"[a-p]{32}", tid) else ""
     except (OSError, ValueError):
         return ""
-    # Chrome forgets an unpacked theme when the session that loaded it ends (seen on Chrome 156): its id stays in
-    # Preferences as the profile's theme, but the extension itself is gone from the profile's extension settings, and the
-    # next window opens without the frame. Only a theme Chrome still holds counts as saved — so the next start installs it again.
-    try:
-        secure = json.loads((Path(a["profile"]) / "Default" / "Secure Preferences").read_text(encoding="utf-8"))
-        held = (secure.get("extensions", {}).get("settings") or {}), (d.get("extensions", {}).get("settings") or {})
-        if tid not in held[0] and tid not in held[1]:
-            return ""
-    except (OSError, ValueError):
-        pass                                          # no readable Secure Preferences: Preferences' word stands
-    return tid
 
 
 def install_theme(a, folder, timeout=25.0):
