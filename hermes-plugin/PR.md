@@ -18,6 +18,8 @@ a neighbour's:
 - cleanup at session end and on an idle timer (job tabs, hot tabs, expired document leases, an app an agent launched and
   left empty, orphaned servers, an idle browser);
 - `/rainbow` (who holds what) and `/rainbow pause | resume` (one stop button for every agent on the Mac);
+- a browser provider (`browser.cloud_provider: rainbowomma`): Hermes's own browser tools drive the agent's framed
+  Chrome instead of a throwaway Chromium — the human sees what the agent sees;
 - a Desktop panel with the same picture.
 
 Why a plugin and not a skill: the guard has to run before the tool does, and ownership has to be decided outside the
@@ -28,7 +30,7 @@ model.
 `ctx.register_tool` (30 tools, toolset `rainbowomma`, `check_fn` macOS), `ctx.register_hook` (`pre_tool_call` with
 `block` / `approve` / `modify` directives; `on_session_start`; `on_session_finalize`), `ctx.register_command`
 (`/rainbow`), `ctx.register_system_prompt_section`, `ctx.get_config` + `config_schema`, `ctx.profile_name`,
-`ctx.on_unload`, the Desktop plugin SDK (`desktop/plugin.js`). No core imports, no overrides, no middleware.
+`ctx.on_unload`, `ctx.register_browser_provider` (`agent.browser_provider.BrowserProvider`), the Desktop plugin SDK (`desktop/plugin.js`). No core imports, no overrides, no middleware.
 
 ## Disclosures (rule 13)
 
@@ -50,7 +52,7 @@ model.
   (`mark_commands: auto | always | never`).
 - **Approvals:** nothing is auto-approved; the plugin only adds an `approve` escalation (Messages/Mail sends). It opens no
   dialog of its own, so unattended runs fall under Hermes's approval timeout.
-- **Network:** none in the plugin. CDP on 127.0.0.1 to the agent's own Chrome. The vendored receipts module has an OTLP
+- **Network:** one request, to `http://127.0.0.1:<port>/json/version` of the agent's own Chrome (the browser provider). Nothing leaves the machine. The vendored receipts module has an OTLP
   export command that the plugin never calls.
 - **Credentials:** none read or stored. **Updates:** no self-update code.
 - **Vendored code:** `vendor/` is a byte-for-byte copy of this repository's `bin/` owners (Apache-2.0, same author); a

@@ -33,6 +33,13 @@ Nothing to configure: the agent's name is the Hermes profile's name, and the fir
 and a free port in the shared registry (`~/.rainbowomma/browsers.json`). Install it in every profile that works on the
 same Mac — they find each other through that folder.
 
+To make Hermes's **own browser tools** (navigate, click, snapshot, the CDP tools, the credential vault) drive the
+agent's coloured Chrome instead of a throwaway Chromium, select the provider the plugin registers:
+
+```
+hermes config set browser.cloud_provider rainbowomma
+```
+
 Then, in a session: `/rainbow`, or ask the agent to "open example.com in your browser".
 
 ## What the agent gets (30 tools, toolset `rainbowomma`)
@@ -73,7 +80,8 @@ The plugin adds a row for a new agent and never changes an existing one.
 
 ## What it does on your machine
 
-Everything below is local. The plugin has no network code, no updater, reads no credential files and never approves
+Everything below is local. The plugin's only request is to `127.0.0.1` (the agent's own Chrome, to read its DevTools
+address for Hermes's browser tools). It has no updater, reads no credential files and never approves
 anything on your behalf.
 
 - **Starts programs.** Google Chrome for the agent (its own `--user-data-dir` under `~/.rainbowomma/profiles/<agent>`,

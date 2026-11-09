@@ -402,13 +402,49 @@ check("panel: reads and acts only through the plugin's own /rainbow command (jso
 check("panel: documents are shown by file name only, and nothing private is written into the file",
       "baseName(d)" in js and not re.search(r"/Users/|/home/|@[\w-]+\.(?:com|net|org)\b", js))
 
+# ---- Hermes's own browser tools in the agent's own Chrome --------------------------------------------------------------
+from rainbowomma import own_browser  # noqa: E402
+
+
+class FakeOwner:
+    me = "alpha"
+
+    def __init__(self, start):
+        self.start, self.calls = start, []
+
+    def run(self, script, *args, **kw):
+        self.calls.append([script, *args])
+        return True, (self.start if args[0] == "start" else {"status": "up", "port": 9240})
+
+
+fo = FakeOwner({"status": "started", "detail": "CDP up on 9240"})
+prov = own_browser.make_provider(fo, object, read_url=lambda port: f"ws://127.0.0.1:{port}/devtools/browser/abc")
+sess = prov.create_session("t1")
+check("browser provider: a session is this agent's own Chrome, started by its owner; ending it leaves the browser running",
+      prov.name == "rainbowomma" and sess == {"session_name": "rainbowomma-alpha-t1", "bb_session_id": "alpha",
+                                               "cdp_url": "ws://127.0.0.1:9240/devtools/browser/abc",
+                                               "features": {"own_browser": True, "visible": True}}
+      and fo.calls == [["browser-owner.py", "start", "alpha", "--by", "alpha"], ["browser-owner.py", "status", "alpha"]]
+      and prov.close_session("alpha") is True and prov.emergency_cleanup("alpha") is None and len(fo.calls) == 2, (sess, fo.calls))
+closed = own_browser.make_provider(FakeOwner({"status": "closed-by-person", "why": "the human closed it"}), object)
+try:
+    closed.create_session("t2")
+    raised = ""
+except RuntimeError as exc:
+    raised = str(exc)
+check("browser provider: a browser the human closed is not reopened — the session fails with the owner's reason",
+      "closed-by-person" in raised and "the human closed it" in raised, raised)
+check("browser provider: declared in plugin.yaml, registered through ctx.register_browser_provider, 127.0.0.1 only",
+      "provides_browser_providers:\n  - rainbowomma" in manifest and "register_browser_provider" in (PLUGIN / "__init__.py").read_text()
+      and re.findall(r"https?://[^\s\"']+", (PLUGIN / "own_browser.py").read_text()) == ["http://127.0.0.1:{int(port)}/json/version"])
+
 # ---- what ships -------------------------------------------------------------------------------------------------------
 r = subprocess.run([sys.executable, str(HERE.parent / "tools" / "sync_vendor.py"), "--check"], capture_output=True, text=True)
 check("vendor: the owners inside the plugin are byte-for-byte the ones in bin/", r.returncode == 0, r.stdout)
 shipped = sorted(p.name for p in (PLUGIN / "vendor").iterdir())
 check("vendor: nothing that sends data anywhere or patches Hermes ships (no reporter, no menu bar, no cursor proxy, no web panel)",
       not [n for n in shipped if re.search(r"report|menubar|cua-color|panel|doctor|mcp", n)], shipped)
-src = "\n".join(p.read_text() for p in PLUGIN.glob("*.py"))
+src = "\n".join(p.read_text() for p in PLUGIN.glob("*.py") if p.name != "own_browser.py")   # its one URL is checked above
 check("plugin: no self-update, no credential files, no auto-approval, Hermes's environment left alone",
       not re.search(r"auth\.json|[\"'/]\.env\b|hooks_auto_accept|yolo|check_for_update|urllib|requests\.|os\.environ\[|os\.environ\.update|os\.putenv", src, re.I))
 check("plugin: no compiled files are committed beside the sources",

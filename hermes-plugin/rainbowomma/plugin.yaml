@@ -38,6 +38,8 @@ provides_tools:
   - rainbow_sim_lease
   - rainbow_sim_release
   - rainbow_status
+provides_browser_providers:
+  - rainbowomma
 provides_hooks:
   - pre_tool_call
   - on_session_start

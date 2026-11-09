@@ -15,7 +15,7 @@ import json
 import logging
 import sys
 
-from . import guard_hook, status, tool_defs
+from . import guard_hook, own_browser, status, tool_defs
 from .core import Rainbow
 from .housekeeping import Housekeeper
 
@@ -115,6 +115,12 @@ def register(ctx):
             keeper.session_end(session_id or "")
         except Exception as exc:
             logger.warning("rainbowomma session end: %s: %s", type(exc).__name__, exc)
+
+    try:                                               # Hermes's own browser tools → this agent's own Chrome
+        from agent.browser_provider import BrowserProvider
+        ctx.register_browser_provider(own_browser.make_provider(rb, BrowserProvider))
+    except Exception as exc:                           # an older Hermes without browser providers: the rainbow_* tools remain
+        logger.warning("rainbowomma: browser provider not registered (%s: %s)", type(exc).__name__, exc)
 
     ctx.register_hook("pre_tool_call", pre_tool_call)
     ctx.register_hook("on_session_start", on_session_start)
