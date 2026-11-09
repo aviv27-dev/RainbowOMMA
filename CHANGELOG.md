@@ -7,6 +7,14 @@ upgrade prints those in full.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-09
+
+Every tool answers `--help` the same way and never acts on it; every refusal and failure says what to do next (`next`);
+an upgrade prints what changed; the installer counts its steps and sums up a dry run. Agent browsers stay tidy (`restoreTabs`,
+`maxTabs`, a tidy pass on start and before idle-stop); Hermes works in the agent's own browser and doctor finds any Chrome
+outside RainbowOMMA; the Dock lists the running agent windows by name. Fixed: `browser-owner start` refused every agent
+whose browser had run under a current Chrome (its own marker links).
+
 ### Added
 - Every refusal and failure says what to do next: a `next` field beside `why` — a command to run, or "ask the human"
   (`port-owner list alpha` after a refused lease, `browser-owner recover alpha --by alpha` for a hung browser,
@@ -353,6 +361,7 @@ First public release.
 - Desktop open/close icons, the human's Chrome theme, and `kill-chrome.sh` that spares every agent browser.
 - Tests on macOS in CI (fakes only — never a real browser or app).
 
+[0.4.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.4.0
 [0.3.1]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.1
 [0.3.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.0
 [0.2.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.2.0

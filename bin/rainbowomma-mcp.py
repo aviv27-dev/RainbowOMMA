@@ -128,7 +128,7 @@ def answer(msg, me):
         return {"jsonrpc": "2.0", "id": mid, "result": {
             "protocolVersion": want if isinstance(want, str) and want else PROTOCOL,
             "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "rainbowomma", "version": "0.3.1"},
+            "serverInfo": {"name": "rainbowomma", "version": "0.4.0"},
             "instructions": "You share this Mac with a human and other agents. Use lease_port for every server you start, "
                             "stop_process instead of kill, and your own browser only. A refused answer is final: ask the human."}}
     if method == "tools/list":
