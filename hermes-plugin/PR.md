@@ -67,4 +67,7 @@ model.
 - Live on Hermes 0.22.5 with two profiles and a real model: registry rows created on first use, both browsers framed,
   `pkill` and the human's port refused, a Word → PDF conversion, job tabs closed at job end, `/rainbow`.
 
+Screenshot (two profiles, each in its own framed Chrome; the human's Chrome untouched; refusals in the terminals):
+`hermes-plugin/assets/overview.jpg`. The demo video shows the same run.
+
 Submitted by the repository owner.

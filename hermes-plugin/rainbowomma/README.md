@@ -21,6 +21,8 @@ collisions impossible to cause by accident:
 - **`/rainbow`** — who holds what, in any Hermes surface. **`/rainbow pause`** stops every agent on the Mac at once;
   **`/rainbow resume`** lets them go on.
 
+![Two Hermes profiles, each in its own framed Chrome](../assets/overview.jpg)
+
 macOS only. Needs Google Chrome for the browser tools; Word / Excel / Acrobat only for the document tools.
 
 ## Install
