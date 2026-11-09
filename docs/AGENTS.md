@@ -165,6 +165,20 @@ file isn't refused. Devin Desktop replaced Cascade with Devin Local, whose hooks
   [`adapters/hermes/approvals-deny.yaml`](../adapters/hermes/approvals-deny.yaml) to the profile's `config.yaml`.
 - Cursor: Hermes uses its built-in computer use; apply [`adapters/hermes/cua-cursor-theme.patch`](../adapters/hermes/cua-cursor-theme.patch)
   and add [`adapters/hermes/cursor-config.yaml`](../adapters/hermes/cursor-config.yaml).
+- Its own browser: add [`adapters/hermes/browser-cdp.yaml`](../adapters/hermes/browser-cdp.yaml) (`browser.cdp_url` = the
+  agent's port in `browsers.json`; `install.sh --adapter hermes` writes one per agent with the port filled in). Without it
+  Hermes opens a throwaway browser of its own — empty profile, no colors, no owner — and the human watching the agent's
+  browser sees nothing happen. Hermes' credential vault (`browser_vault`) fills a saved password over the browser the
+  task uses, so with `cdp_url` set it fills into the agent's RainbowOMMA browser, never a throwaway one. Start that
+  browser before a task (`browser-owner start alpha --by alpha`); what Hermes does when the port doesn't answer depends
+  on its version, so check `browser-owner status alpha` first rather than count on a fallback.
+- Browser MCPs: an entry under `mcp_servers` running `@playwright/mcp` or `chrome-devtools-mcp` without `--cdp-endpoint`
+  (or `--browserUrl`) starts yet another Chrome of its own, which nothing colors, owns or idle-stops. Use the entry
+  `browser-owner mcp-config alpha --tool playwright` prints instead.
+- Checked: put `"hermesConfig": "~/.hermes/profiles/alpha/config.yaml"` (wherever that agent's Hermes config is) in the
+  agent's row, and `rainbowomma-doctor` checks both — `cdp_url` on the agent's own port (not missing, not another
+  agent's), and no browser MCP without an endpoint. `rainbowomma-doctor status` also lists any Chrome running outside
+  RainbowOMMA and who started it.
 
 ## Goose
 - Guardrail: copy the folder [`adapters/goose/rainbowomma/`](../adapters/goose/rainbowomma/) to `~/.agents/plugins/rainbowomma/`.

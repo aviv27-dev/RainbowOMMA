@@ -100,7 +100,145 @@ def run_checks(launch_agents=None):
     guard_users = [f for f in ("~/.claude/settings.json", "~/.codex/hooks.json", "~/.gemini/settings.json", "~/.cursor/hooks.json")
                    if "rainbowomma-guard" in _read(f)]
     out.append(check(t("dr.guard"), bool(guard_users), ", ".join(guard_users), t("dr.guard_fix"), needed=False))
+    for h in hermes_findings(reg):                       # only agents whose row names their Hermes config
+        out.append(check(t("dr.hermes", agent=h["agent"]), h["ok"], h["what"], h["fix"]))
     return out
+
+
+# ── Hermes and browser MCPs: the agent works in its own browser (#78, #79) ──
+BROWSER_MCP = re.compile(r"@playwright/mcp|chrome-devtools-mcp|mcp-server-puppeteer|puppeteer-mcp")
+ATTACHED = re.compile(r"--cdp-endpoint|--browserUrl|--browser-url|--wsEndpoint|--ws-endpoint")
+LOOPBACK_PORT = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)")
+
+
+def yaml_block(text, key):
+    """the lines under a top-level `key:` in a YAML file (enough for Hermes' config; no YAML library on a stock Mac)"""
+    out, on = [], False
+    for ln in text.splitlines():
+        if on:
+            if not ln.strip() or ln[:1] in (" ", "\t") or ln.lstrip().startswith("#"):
+                out.append(ln)
+                continue
+            break
+        if re.match(rf"^{re.escape(key)}:\s*(?:#.*)?$", ln):
+            on = True
+    return "\n".join(out)
+
+
+def yaml_value(block, key):
+    m = re.search(rf"^\s*{re.escape(key)}:\s*(\S.*?)\s*(?:#.*)?$", block, re.M)
+    return m.group(1).strip().strip("'\"") if m else None
+
+
+def yaml_children(block):
+    """{name: its lines} for each entry right under a block (mcp_servers → one per server)"""
+    kids, name, buf, ind = {}, None, [], None
+    for ln in block.splitlines():
+        if not ln.strip() or ln.lstrip().startswith("#"):
+            continue
+        cur = len(ln) - len(ln.lstrip())
+        ind = cur if ind is None else ind
+        m = re.match(r"^\s*([^\s:#'\"][^:]*|'[^']+'|\"[^\"]+\"):\s*(.*)$", ln)
+        if cur == ind and m:
+            if name:
+                kids[name] = "\n".join(buf)
+            name, buf = m.group(1).strip().strip("'\""), [m.group(2)]
+        elif name:
+            buf.append(ln)
+    if name:
+        kids[name] = "\n".join(buf)
+    return kids
+
+
+def hermes_findings(reg, read=None):
+    """each agent with "hermesConfig" in browsers.json: does its Hermes work in the agent's own browser? → [{agent, ok, what, fix}]"""
+    read = read or _read
+    by_port = {a["port"]: n for n, a in reg.items()}
+    out = []
+    for name, a in reg.items():
+        path = a.get("hermesConfig")
+        if not path:
+            continue
+        own = a["port"]
+        text = read(path)
+        if not text:
+            out.append({"agent": name, "ok": False, "what": t("dr.hermes_unread", path=path), "fix": t("dr.hermes_path_fix")})
+            continue
+        bad = []
+        cdp = yaml_value(yaml_block(text, "browser"), "cdp_url")
+        fix = t("dr.hermes_cdp_fix", path=path, own=own, agent=name)
+        if not cdp:
+            bad.append((t("dr.hermes_no_cdp"), fix))
+        else:
+            m = LOOPBACK_PORT.search(cdp)
+            port = int(m.group(1)) if m else None
+            if port != own:
+                other = by_port.get(port)
+                bad.append((t("dr.hermes_cdp_other", other=other, port=port) if other else t("dr.hermes_cdp_wrong", url=cdp, own=own), fix))
+        for server, body in yaml_children(yaml_block(text, "mcp_servers")).items():
+            if not BROWSER_MCP.search(body):
+                continue
+            tool = "playwright" if "playwright" in body else "devtools"
+            mfix = t("dr.mcp_fix", agent=name, tool=tool)
+            if not ATTACHED.search(body):
+                bad.append((t("dr.mcp_stray", server=server), mfix))
+            else:
+                m = LOOPBACK_PORT.search(body)
+                port = int(m.group(1)) if m else None
+                if port is not None and port != own and by_port.get(port):
+                    bad.append((t("dr.mcp_other", server=server, other=by_port[port]), mfix))
+        if not bad:
+            out.append({"agent": name, "ok": True, "what": cdp, "fix": ""})
+        for what, f in bad:
+            out.append({"agent": name, "ok": False, "what": what, "fix": f})
+    return out
+
+
+def stray_browsers(rows, reg, own=None):
+    """every Chrome (any flavor) that is neither the human's nor a registry agent's — a browser MCP started without
+    --cdp-endpoint, a test run … → [{pid, profile, agent (who started it, if known), via (which MCP, if seen)}]"""
+    bo = _load("rainbow_browser_owner_s", "browser-owner.py")
+    own = own or {}
+    cmds = {pid: (ppid, cmd) for pid, ppid, cmd in rows}
+    personal = [os.path.realpath(str(x)) for x in bo.PERSONAL]
+    out = []
+    for pid, ppid, cmd in rows:
+        if not bo.CHROME_ANY.search(cmd) or " --type=" in cmd:
+            continue
+        if any(a["dir_re"].search(cmd) for a in reg.values()):
+            continue                                                   # an agent's own browser
+        m = re.search(r"--user-data-dir=(.+?)(?=\s--|$)", cmd)
+        prof = os.path.realpath(os.path.expanduser(m.group(1))) if m else None
+        if prof is None or any(prof == x or prof.startswith(x + os.sep) for x in personal):
+            continue                                                   # the human's Chrome
+        via, p, seen = None, ppid, set()
+        while p in cmds and p not in seen and p > 1:
+            seen.add(p)
+            c = cmds[p][1]
+            if "@playwright/mcp" in c or "mcp-server-playwright" in c:
+                via = "Playwright MCP"
+            elif "chrome-devtools-mcp" in c:
+                via = "Chrome DevTools MCP"
+            elif "puppeteer" in c.lower():
+                via = "Puppeteer"
+            if via:
+                break
+            p = cmds[p][0]
+        who = (own.get(pid) or ("human", "none"))[0]
+        out.append({"pid": pid, "profile": prof, "agent": who if who in reg else None, "via": via})
+    return out
+
+
+def stray_problem(sb):
+    who = (f", started by {sb['agent']}" if sb["agent"] else "") + (f" through {sb['via']}" if sb["via"] else "")
+    what = f"a Chrome outside RainbowOMMA (pid {sb['pid']}{who}): no colors, no owner, no idle-stop"
+    if sb["agent"]:
+        tool = "playwright" if sb["via"] == "Playwright MCP" else "devtools"
+        fix = (f"browser-owner mcp-config {sb['agent']} --tool {tool}  (point its MCP at its own browser), "
+               f"then stop that Chrome: proc-owner kill {sb['pid']} --by human")
+    else:
+        fix = f"proc-owner whose {sb['pid']}  (who started it) — a browser MCP without --cdp-endpoint starts a Chrome of its own"
+    return {"what": what, "fix": fix}
 
 
 def _read(path):
@@ -165,7 +303,15 @@ def status():
     recent = [r for r in rainbow_receipts.read(n=400) if r.get("status") in BAD_STATUS and (_ago_min(r.get("at")) or 0) <= 24 * 60]
     if any(r.get("status") == "blocked-by-dialog" for r in recent[-5:]):
         problems.append({"what": "Word showed a dialog that blocked a conversion", "fix": "close the dialog in Word (or quit Word), then retry"})
-    return {"agents": agents, "ports": {"leases": len(ports.get("leases", [])), "byAgent": {
+    try:
+        po = _load("rainbow_proc_owner_s", "proc-owner.py")
+        preg = po.registry()
+        rows, own = po.ownership(preg)
+        strays = stray_browsers(rows, preg, own)
+    except Exception:
+        strays = []
+    problems += [stray_problem(x) for x in strays]
+    return {"agents": agents, "strays": strays, "ports": {"leases": len(ports.get("leases", [])), "byAgent": {
                 n: sum(1 for x in ports.get("leases", []) if x.get("agent") == n) for n in ports.get("ranges", {})}},
             "presence": presence, "office": {k: {"launchedBy": v.get("launchedBy"), "running": v.get("running"),
                                                  "inflight": v.get("inflight")} for k, v in office.items()},

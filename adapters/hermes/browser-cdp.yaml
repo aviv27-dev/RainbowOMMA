@@ -1,0 +1,7 @@
+# Hermes Agent — profile config.yaml. Hermes drives the agent's OWN browser (its "port" in browsers.json) instead of opening
+# a throwaway one of its own; its credential vault (browser_vault) then fills passwords in that browser too. Start the
+# browser before a task: browser-owner start <agent> --by <agent>. `install.sh --adapter hermes` writes one of these per
+# agent, its port filled in (browser-cdp.<agent>.yaml); `rainbowomma-doctor` checks it when the agent's row names its
+# Hermes config ("hermesConfig").
+browser:
+  cdp_url: http://127.0.0.1:9222     # the agent's port in browsers.json (9222 = alpha in the example)
