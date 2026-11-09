@@ -20,6 +20,10 @@ Notes for carrying these changes into the stand-alone tools and the other adapte
    `theme_saved()` still read the id in Preferences, so `heal` did not notice. Any install of the stand-alone tools has
    this: after the fix a start no longer rebuilds, and a profile that already lost its frame gets it back by clearing
    `theme` in its state file (or `heal` after Chrome drops the id).
+   Also in `bin/agent-office.py`: `save` (save a leased document in place; a shared lease is refused; Acrobat is
+   unsupported), and the document loops are by index (`repeat with i from 1 to (count of documents)`): Word was seen
+   answering `repeat with d in (every document)` with -1708 for as long as it ran, which made close and the open-paths
+   check report `unknown`.
 4. Ideas the plugin has that the stand-alone tools don't:
    - an agent's registry row created on first use (free colour, free port, skipping another registry's ports);
    - owner hints translated to the host's tool names (`tool_defs.CLI_TO_TOOL`) — the MCP server could do the same;

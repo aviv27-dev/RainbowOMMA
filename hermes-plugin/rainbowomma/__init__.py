@@ -26,8 +26,8 @@ PROMPT = (
     "You share this Mac with a human and with other AI agents (RainbowOMMA keeps you apart). Your identity here is "
     "`{me}`. Use your own browser (rainbow_start_browser, rainbow_open_url), never the human's Chrome. Lease a port "
     "with rainbow_lease_port for every server you start. Stop only your own processes, with rainbow_stop_process. "
-    "Open Word/Excel/PDF documents with rainbow_open_document and close them with rainbow_close_document when you are "
-    "done; convert to PDF with rainbow_convert_to_pdf. Take the screen (rainbow_take_screen) before driving the "
+    "Open Word/Excel/PDF documents with rainbow_open_document, save with rainbow_save_document and close them with "
+    "rainbow_close_document when you are done; convert to PDF with rainbow_convert_to_pdf. Take the screen (rainbow_take_screen) before driving the "
     "foreground and give it back. When a rainbow_* tool or the guard answers refused, that is final: ask the human."
 )
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """agent-office / office-owner — the ONE owner of the shared Office/PDF apps an AI agent touches.
 
-    office-owner open|close|renew --agent NAME <file> · office-owner pdf --agent NAME <file.docx> [--out file.pdf] [--force]
+    office-owner open|save|close|renew --agent NAME <file> · office-owner pdf --agent NAME <file.docx> [--out file.pdf] [--force]
     office-owner xlsx --agent NAME <book.xlsx> [--out other.xlsx] [--pdf sheet.pdf] [--force]   formulas recalculated by Excel
     office-owner sweep [--max-age-h 3] [--dry-run] · office-owner list · office-owner apps
 
@@ -169,8 +169,10 @@ def open_paths(app):
     if not r:
         return []
     name, coll, path_of, _, _ = APPS[app]
+    # by index, not `repeat with d in (every document)`: Word sometimes answers that form with -1708 ("every document
+    # doesn't understand count") for as long as it runs, while `count of documents` and `document i` keep working
     script = (f'with timeout of {TIMEOUT_S - 5} seconds\ntell application {q(name)}\nset out to {{}}\n'
-              f'repeat with d in (every {coll[:-1]})\ntry\nset end of out to ({path_of})\non error\nset end of out to "?"\nend try\nend repeat\n'
+              f'repeat with i from 1 to (count of {coll})\ntry\nset d to {coll[:-1]} i\nset end of out to ({path_of})\non error\nset end of out to "?"\nend try\nend repeat\n'
               f'set AppleScript\'s text item delimiters to {q(SEP)}\nreturn ((count of out) as text) & {q(SEP)} & (out as text)\nend tell\nend timeout')
     code, out = osa(script)
     if code != 0:
@@ -201,11 +203,51 @@ def close_if_saved(app, paths):
     name, coll, path_of, saved_expr, close_stmt = APPS[app]
     plist = "{" + ", ".join(q(p) for p in paths) + "}"
     script = (f'with timeout of {TIMEOUT_S - 5} seconds\ntell application {q(name)}\nset hits to {{}}\n'
-              f'repeat with d in (every {coll[:-1]})\ntry\nif {plist} contains ({path_of}) then set end of hits to contents of d\nend try\nend repeat\n'
-              f'if (count of hits) is 0 then return "gone"\nif (count of hits) > 1 then return "ambiguous"\nset d to item 1 of hits\n'
+              f'repeat with i from 1 to (count of {coll})\ntry\nset d to {coll[:-1]} i\nif {plist} contains ({path_of}) then set end of hits to i\nend try\nend repeat\n'
+              f'if (count of hits) is 0 then return "gone"\nif (count of hits) > 1 then return "ambiguous"\nset d to {coll[:-1]} (item 1 of hits)\n'
               f'if not ({saved_expr}) then return "unsaved"\n{close_stmt}\nreturn "closed"\nend tell\nend timeout')
     code, out = osa(script)
     return out.strip() if code == 0 and out.strip() in ("closed", "unsaved", "ambiguous", "gone") else "unknown"
+
+
+def save_doc(app, paths):
+    """ONE AppleScript: find the document at one of these spellings of ONE path; if exactly one → save it where it is.
+    → saved|ambiguous|gone|unknown. Acrobat has no plain save in its dictionary: unsupported."""
+    if app == "acrobat":
+        return "unsupported"
+    r = running(app)
+    if r is None:
+        return "unknown"
+    if not r:
+        return "gone"
+    name, coll, path_of, _saved, _close = APPS[app]
+    plist = "{" + ", ".join(q(p) for p in paths) + "}"
+    script = (f'with timeout of {TIMEOUT_S - 5} seconds\ntell application {q(name)}\nset hits to {{}}\n'
+              f'repeat with i from 1 to (count of {coll})\ntry\nset d to {coll[:-1]} i\nif {plist} contains ({path_of}) then set end of hits to i\nend try\nend repeat\n'
+              f'if (count of hits) is 0 then return "gone"\nif (count of hits) > 1 then return "ambiguous"\nset d to {coll[:-1]} (item 1 of hits)\n'
+              f'save d\nreturn "saved"\nend tell\nend timeout')
+    code, out = osa(script)
+    return out.strip() if code == 0 and out.strip() in ("saved", "ambiguous", "gone") else "unknown"
+
+
+def cmd_save(agent, path):
+    """save a document the agent leased, in place. One the human already had open (a shared lease) is theirs to save."""
+    ds = mine(agent, path)
+    if not ds:
+        return 1, {"status": "failed", "why": t("ao.no_lease")}
+    d = ds[0]
+    if d.get("shared"):
+        return 2, {"status": "refused", "why": "the human had this document open before you: saving it is theirs to do",
+                   "next": "ask the human to save it, or work on a copy of your own"}
+    res = save_doc(d["app"], d.get("paths") or forms(d["path"]))
+    if res == "saved":
+        touch(d["app"])
+        log(f"saved {agent} {d['app']} {d['path']}")
+        return 0, {"status": "saved"}
+    why = {"gone": "the document is not open in the app any more", "ambiguous": "more than one open document has this path",
+           "unsupported": "this app has no plain save through AppleScript — save from the app, or export a copy",
+           "unknown": "the app did not answer (a dialog or a permission prompt may be open)"}[res]
+    return (3 if res in ("gone", "ambiguous") else 1), {"status": "failed", "why": why}
 
 
 def leases():
@@ -789,6 +831,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     o = sub.add_parser("open"); o.add_argument("--agent", required=True); o.add_argument("--app"); o.add_argument("file")
     c = sub.add_parser("close"); c.add_argument("--agent", required=True); c.add_argument("file")
+    sv = sub.add_parser("save"); sv.add_argument("--agent", required=True); sv.add_argument("file")
     r = sub.add_parser("renew"); r.add_argument("--agent", required=True); r.add_argument("file")
     s = sub.add_parser("sweep"); s.add_argument("--max-age-h", type=float, default=3.0); s.add_argument("--dry-run", action="store_true")
     s.add_argument("--scheduled", action="store_true", help="the launchd run: print only what changed (stamped), rotate the logs")
@@ -820,6 +863,8 @@ def main(argv=None):
                 code, out = cmd_open(a.agent.strip().lower(), a.file, a.app)
             elif a.cmd == "close":
                 code, out = cmd_close(a.agent.strip().lower(), a.file)
+            elif a.cmd == "save":
+                code, out = cmd_save(a.agent.strip().lower(), a.file)
             elif a.cmd == "renew":
                 code, out = cmd_renew(a.agent.strip().lower(), a.file)
             elif a.cmd == "sweep":

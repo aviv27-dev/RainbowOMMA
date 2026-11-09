@@ -34,6 +34,7 @@ capabilities:
     - rainbow_take_login
     - rainbow_release_login
     - rainbow_open_document
+    - rainbow_save_document
     - rainbow_close_document
     - rainbow_renew_document
     - rainbow_convert_to_pdf

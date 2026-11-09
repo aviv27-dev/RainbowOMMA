@@ -44,7 +44,7 @@ hermes config set browser.cloud_provider rainbowomma
 
 Then, in a session: `/rainbow`, or ask the agent to "open example.com in your browser".
 
-## What the agent gets (30 tools, toolset `rainbowomma`)
+## What the agent gets (31 tools, toolset `rainbowomma`)
 
 | | |
 |---|---|
@@ -53,7 +53,7 @@ Then, in a session: `/rainbow`, or ask the agent to "open example.com in your br
 | Processes | `rainbow_whose_process` · `rainbow_stop_process` · `rainbow_my_processes` |
 | Screen | `rainbow_take_screen` · `rainbow_release_screen` |
 | Sign-ins | `rainbow_take_login` · `rainbow_release_login` |
-| Documents | `rainbow_open_document` · `rainbow_close_document` · `rainbow_renew_document` · `rainbow_convert_to_pdf` · `rainbow_recalc_workbook` · `rainbow_documents` |
+| Documents | `rainbow_open_document` · `rainbow_save_document` · `rainbow_close_document` · `rainbow_renew_document` · `rainbow_convert_to_pdf` · `rainbow_recalc_workbook` · `rainbow_documents` |
 | Clipboard | `rainbow_clip_copy` · `rainbow_clip_paste` |
 | iOS Simulator | `rainbow_sim_lease` · `rainbow_sim_release` |
 | Overview | `rainbow_status` |

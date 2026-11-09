@@ -27,7 +27,7 @@ model.
 
 ## Hermes surfaces used
 
-`ctx.register_tool` (30 tools, toolset `rainbowomma`, `check_fn` macOS), `ctx.register_hook` (`pre_tool_call` with
+`ctx.register_tool` (31 tools, toolset `rainbowomma`, `check_fn` macOS), `ctx.register_hook` (`pre_tool_call` with
 `block` / `approve` / `modify` directives; `on_session_start`; `on_session_finalize`), `ctx.register_command`
 (`/rainbow`), `ctx.register_system_prompt_section`, `ctx.get_config` + `config_schema`, `ctx.profile_name`,
 `ctx.on_unload`, `ctx.register_browser_provider` (`agent.browser_provider.BrowserProvider`), the Desktop plugin SDK (`desktop/plugin.js`). No core imports, no overrides, no middleware.

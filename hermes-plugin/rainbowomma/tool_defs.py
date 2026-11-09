@@ -115,6 +115,10 @@ TOOLS = [
      _obj({"file": _d(STR, "absolute path"), "app": _d(STR, "word | excel | acrobat | preview (default: by extension)")},
           ["file"]), "agent-office.py",
      lambda me, a: ["open", "--agent", me, *(["--app", _s(a["app"])] if a.get("app") else []), _s(a["file"])], {}),
+    ("rainbow_save_document",
+     "Save, in place, a document you opened with rainbow_open_document (Word, Excel, Preview). A document the human "
+     "already had open is theirs to save: refused.",
+     _obj({"file": STR}, ["file"]), "agent-office.py", lambda me, a: ["save", "--agent", me, _s(a["file"])], {}),
     ("rainbow_close_document",
      "Close a document you opened with rainbow_open_document. It closes only if you leased it, nobody had it open "
      "before you, and the app says it is saved; otherwise it is left open and the answer says why.",
@@ -181,7 +185,7 @@ CLI_TO_TOOL = {
     "auth-owner lease": "rainbow_take_login", "auth-owner release": "rainbow_release_login",
     "auth-owner who": "rainbow_status", "auth-owner list": "rainbow_status",
     "auth-owner code": "the clarify tool (ask the human for the code)",
-    "office-owner open": "rainbow_open_document", "office-owner close": "rainbow_close_document",
+    "office-owner open": "rainbow_open_document", "office-owner save": "rainbow_save_document", "office-owner close": "rainbow_close_document",
     "office-owner renew": "rainbow_renew_document", "office-owner pdf": "rainbow_convert_to_pdf",
     "office-owner xlsx": "rainbow_recalc_workbook", "office-owner list": "rainbow_documents",
     "office-owner apps": "rainbow_documents",

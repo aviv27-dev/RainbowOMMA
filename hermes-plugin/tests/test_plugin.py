@@ -125,7 +125,7 @@ check("answers: the owner's last JSON line; plain text; a silent success; a cras
 manifest = (PLUGIN / "plugin.yaml").read_text()
 declared = re.findall(r"^  - (rainbow_\w+)$", manifest, re.M)
 check("tools: plugin.yaml declares exactly the tools the plugin registers, all under the rainbow_ prefix",
-      declared == tool_defs.NAMES and len(set(declared)) == len(declared) == 30, declared)
+      declared == tool_defs.NAMES and len(set(declared)) == len(declared) == 31, declared)
 SAMPLE = {"url": "https://example.com", "ids": ["A", "B"], "port": 41000, "pid": 4242, "site": "accounts.example.com",
           "file": "/tmp/a.docx", "text": "hello", "name": "web"}
 built, bad = {}, []
@@ -166,7 +166,7 @@ check("tools: every owner call a tool makes has its hint translation",
 ctx = Ctx("alpha", {"home": str(tmp / "s4"), "housekeeping_minutes": 0})
 was_mac, rb_mod.IS_MAC = rb_mod.IS_MAC, True
 rb_mod.register(ctx)
-check("register: 30 tools in one toolset, three hooks, /rainbow, a prompt section, cleanup on unload",
+check("register: 31 tools in one toolset, three hooks, /rainbow, a prompt section, cleanup on unload",
       list(ctx.tools) == tool_defs.NAMES and {t["toolset"] for t in ctx.tools.values()} == {"rainbowomma"}
       and set(ctx.hooks) == {"pre_tool_call", "on_session_start", "on_session_finalize"} and "rainbow" in ctx.commands
       and "rainbowomma.shared-mac" in ctx.sections and len(ctx.unload) == 2, (list(ctx.hooks), len(ctx.unload)))
@@ -276,7 +276,7 @@ check("hook: in a shared process an allowed shell command is passed on with the 
 off = Ctx("alpha", {"home": str(tmp / "s4"), "guard": False, "housekeeping_minutes": 0})
 rb_mod.register(off)
 check("hook: guard: false turns the refusals off (the tools stay)",
-      off.hooks["pre_tool_call"](tool_name="terminal", args={"command": "pkill -f rainbowomma-test-no-such-process"}) is None and len(off.tools) == 30)
+      off.hooks["pre_tool_call"](tool_name="terminal", args={"command": "pkill -f rainbowomma-test-no-such-process"}) is None and len(off.tools) == 31)
 for c in (ctx, off):
     for cb in c.unload:
         cb()
