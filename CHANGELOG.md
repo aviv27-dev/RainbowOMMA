@@ -38,8 +38,23 @@ upgrade prints those in full.
   for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
   yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
   touch; a failure names the step it stopped at. (#61)
+- `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
+  codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
+  stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
+- The installer prints numbered steps, each with one result word (`[3/5] state in ~/.rainbowomma — done`; `kept`
+  for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
+  yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
+  touch; a failure names the step it stopped at. (#61)
 
 ### Fixed
+- `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
+  opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
+  every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
+- `browser-owner start` refused every agent whose browser had run under a current Chrome: Chrome's own marker links at
+  the top of a profile (`RunningChromeVersion`, `SingletonLock`, `SingletonCookie` to a bare name; `SingletonSocket` in
+  Chrome's temp folder, left behind after an idle-stop) were taken for a link out of the profile, so an idle-stopped agent
+  could never start again. Exactly those are allowed now; any other link, or the same names pointing elsewhere, is
+  still refused. (#82)
 - `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
   opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
   every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.

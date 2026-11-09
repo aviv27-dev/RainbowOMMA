@@ -221,6 +221,22 @@ def open_lock(path):
 PROFILE_TOP = ("Default", "Local State", "First Run")
 
 
+CHROME_MARKERS = ("RunningChromeVersion", "SingletonLock", "SingletonCookie")   # Chrome's own links, to a bare name (no "/")
+CHROME_SOCKET = re.compile(r"^(?:/private)?/var/folders/[^/]+/[^/]+/T/com\.google\.Chrome\.[^/]+/SingletonSocket$")
+
+
+def chrome_marker(e):
+    """one of the links Chrome itself keeps at the top of a profile — a version or lock marker to a bare name, or its
+    socket in Chrome's own temp folder (left behind when the browser was stopped). Anything else is not."""
+    try:
+        target = os.readlink(str(e))
+    except OSError:
+        return False
+    if e.name in CHROME_MARKERS:
+        return "/" not in target
+    return e.name == "SingletonSocket" and bool(CHROME_SOCKET.match(target))
+
+
 def profile_unsafe(a):
     """a link inside the agent's profile could lead its Chrome — or paint() — into another profile (the human's) → the reason, or None"""
     prof = Path(a["profile"])
@@ -234,6 +250,8 @@ def profile_unsafe(a):
     except OSError as exc:
         return f"{prof}: {exc}"
     for e in [*entries, *[prof / "Default" / x for x in ("Preferences", "Secure Preferences", "Cookies")]]:
+        if e.parent == prof and e.is_symlink() and chrome_marker(e):
+            continue                                  # Chrome's own marker (#82) — refusing it would refuse every start
         if e.is_symlink() or (e.exists() and not os.path.realpath(str(e)).startswith(real + os.sep)):
             return f"{e} is a link out of the agent's profile"
     return None
