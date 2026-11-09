@@ -185,6 +185,15 @@ def registry(path=None):
             raise ValueError(f"{name}: cdp must be port or pipe, not {a['cdp']!r}")
         if a["cdp"] == "pipe" and a.get("launcher"):
             raise ValueError(f"{name}: cdp pipe starts Chrome itself — it can't go with a launcher")
+        a["restoreTabs"] = str(r.get("restoreTabs") or "lastJob").strip()
+        if a["restoreTabs"] not in RESTORE:
+            raise ValueError(f"{name}: restoreTabs must be one of {', '.join(RESTORE)}, not {a['restoreTabs']!r}")
+        try:
+            a["maxTabs"] = int(rainbow_tabs.MAX_TABS if r.get("maxTabs") is None else r["maxTabs"])
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: maxTabs must be a number of tabs") from None
+        if not 1 <= a["maxTabs"] <= 100:
+            raise ValueError(f"{name}: maxTabs must be between 1 and 100")
         a["tcp_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
         a["port_re"] = re.compile(r"(?:^|\s)--remote-debugging-pipe(?:\s|$)") if a["cdp"] == "pipe" else a["tcp_re"]
         a["dir_re"] = re.compile(r"(?:^|\s)--user-data-dir=" + re.escape(a["profile"]) + r"(?:\s|$)")
@@ -619,13 +628,47 @@ def ensure_theme(a, st):
     return "failed"
 
 
+RESTORE = ("lastJob", "all", "none")   # restoreTabs: the last session less a finished job's tabs (default) · all of it · none
+
+
+def restore_flags(a):
+    """--restore-last-session unless the agent's row says restoreTabs "none" (then it opens on a fresh window)"""
+    return [] if a.get("restoreTabs") == "none" else ["--restore-last-session"]
+
+
 def chrome_args(a):
     port = a["port"]
     return [f"--user-data-dir={a['profile']}", f"--remote-debugging-port={port}",
             f"--remote-allow-origins=http://127.0.0.1:{port},http://localhost:{port}",
             "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
             "--disable-features=OptimizationGuideOnDeviceModel", "--no-first-run", "--no-default-browser-check",
-            "--restore-last-session", "--hide-crash-restore-bubble", f"--window-name={a['label']}-CDP"]
+            *restore_flags(a), "--hide-crash-restore-bubble", f"--window-name={a['label']}-CDP"]
+
+
+def tidy_apply():
+    """the tidy pass acts only when tabSweep.mode is "apply" — a dry run (the default) only reports, like the sweep"""
+    try:
+        raw = json.loads(Path(REGISTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    return rainbow_tabs.config(raw)["mode"] == "apply"
+
+
+def tidy_tabs(a, when):
+    """the tidy pass on the agent's own browser (#76) → its answer, or None when it can't run (never blocks start or idle-stop)"""
+    if a.get("managedBy") or a.get("tabSweep") is False or a.get("restoreTabs") == "all":
+        return None
+    try:
+        with cdp_for(a, timeout=10) as c:
+            res = rainbow_tabs.tidy(c, SHARED, a["name"], a.get("maxTabs", rainbow_tabs.MAX_TABS), tidy_apply())
+    except Exception as exc:
+        log(a, f"tidy on {when} failed: {type(exc).__name__}: {exc}"[:200])
+        return None
+    if res["close"]:
+        log(a, f"tidy on {when}: {res['status']} " + ", ".join(f"{x['site']} ({x['reason']})" for x in res["close"])[:300])
+    if res["closed"]:
+        rainbow_receipts.write("browser-owner", "tidy", a["name"], when, "closed", tabs=len(res["closed"]))
+    return res
 
 
 def launch_pipe(a):
@@ -990,10 +1033,11 @@ def do_start(a, by):
     rc, text = launch(a)
     ok = rc == 0 and healthy(a, timeout=5)
     focus = ("front" if do_front(a)[0] == 0 else "unknown") if ok and away else give_focus_back(a, before) if ok and by != "human" else "human"
+    tidied = tidy_tabs(a, "start") if ok and by != "human" else None    # the human opened it to look: nothing closes under them
     st["lastStart"] = {"at": now_iso(), "by": by, "ok": ok, "out": text[:200], "painted": len(painted), "focus": focus, "theme": theme}
     save(a, st)
     log(a, f"start by {by}: {'ok' if ok else 'FAILED'} {text[:200]}")
-    return (0 if ok else 1), {"status": "started" if ok else "failed", "detail": text[:200]}
+    return (0 if ok else 1), {"status": "started" if ok else "failed", "detail": text[:200], **({"tidy": tidied} if tidied else {})}
 
 
 def do_stop(a, by, allow_reopen=False):
@@ -1032,11 +1076,19 @@ def do_idle_stop(a, by):
         return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=0, idle=a["idleMinutes"])}
     if 0 <= ago < a["idleMinutes"] * 60:   # opened more recently than its idle time — cannot be idle yet
         return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=int(ago // 60), idle=a["idleMinutes"])}
+    jobs = None                          # first: what its job opened closes (no question — it is idle), then the tidy pass
+    try:
+        with cdp_for(a, timeout=10) as c:
+            jobs = rainbow_tabs.idle_close(c, SHARED, a["name"])
+    except Exception as exc:
+        log(a, f"idle-stop: closing the job's tabs failed: {type(exc).__name__}: {exc}"[:200])
+    tidied = tidy_tabs(a, "idle-stop") if jobs is not None else None    # its CDP answered: tidy too
     st["lastStop"] = {"at": now_iso(), "by": by, "pids": len(tree), "idle": True}
     save(a, st)
     left = terminate_tree(tree)
     log(a, f"idle-stop by {by}: {len(tree)} processes, {len(left)} needed KILL")
-    return 0, {"status": "stopped", "processes": len(tree), "killed": len(left), "idle": True}
+    return 0, {"status": "stopped", "processes": len(tree), "killed": len(left), "idle": True,
+               **({"jobTabs": jobs} if jobs and jobs.get("closed") else {}), **({"tidy": tidied} if tidied else {})}
 
 
 def do_recover(a, by):

@@ -2971,5 +2971,59 @@ check("install --adapter hermes (#78): browser.cdp_url written per agent with it
       ra_.stdout[-500:] + ra_.stderr[-300:])
 os.environ["RAINBOW_LANG"] = "he"
 
+# ── a tidy agent browser: restoreTabs, the tidy pass on start and before idle-stop (#76) ──
+pg = lambda i, u, att=False: {"id": i, "url": u, "title": "x", "attached": att, "opener": None}   # noqa: E731
+tp = rt.tidy_plan([pg("now", "https://a.example/1"), pg("dup", "https://a.example/1"), pg("blank", "about:blank"),
+                   pg("ntp", "chrome://newtab/"), pg("drv", "https://a.example/1", att=True), pg("b", "https://b.example/"),
+                   pg("c", "https://c.example/"), pg("d", "https://d.example/"), pg("old", "https://e.example/")], max_tabs=3)
+check("tidy (#76): an exact duplicate (the most recently used kept), blank and new-tab pages, then the least recently used past maxTabs",
+      [(x["id"], x["reason"]) for x in tp] == [("dup", "duplicate"), ("blank", "blank"), ("ntp", "blank"), ("old", "over-cap"), ("d", "over-cap"), ("c", "over-cap")]
+      and "drv" not in [x["id"] for x in tp] and "now" not in [x["id"] for x in tp], tp)
+check("tidy (#76): never a tab a client is attached to, never the most recently used, never the last tab",
+      rt.tidy_plan([pg("x", "about:blank")]) == [] and rt.tidy_plan([pg("x", "https://a.example/"), pg("y", "https://a.example/", att=True)]) == []
+      and [x["id"] for x in rt.tidy_plan([pg(f"t{i}", f"https://s{i}.example/", att=True) for i in range(12)], max_tabs=2)] == [], tp)
+ft = FakeTabsCDP({"t1": ("https://docs.example/a", 0.0, False), "t2": ("https://docs.example/a", 0.0, False),
+                  "t3": ("about:blank", 0.0, False), "t4": ("https://app.example/", 0.0, True)})
+tshared = tmp / "tidy-home"; ta = {"name": "alpha", "port": ft.port}
+with jb.cdp_for(ta) as c:
+    td_dry = rt.tidy(c, tshared, "alpha", apply=False)
+dry_calls = [m for m, _, _ in ft.calls if m == "Target.closeTarget"]
+with jb.cdp_for(ta) as c:
+    td_app = rt.tidy(c, tshared, "alpha", apply=True)
+check("tidy (#76): tabSweep's dry run only says what it would close; apply closes it through CDP",
+      td_dry["status"] == "would-tidy" and not dry_calls and {x["reason"] for x in td_dry["close"]} == {"duplicate", "blank"}
+      and td_app["status"] == "tidied" and sorted(td_app["closed"]) == ["t2", "t3"] and set(ft.pages) == {"t1", "t4"}, (td_dry, td_app))
+fi_ = FakeTabsCDP({"home": ("https://docs.example/", 0.0, False)}); ia = {"name": "bravo", "port": fi_.port}
+with jb.cdp_for(ia) as c:
+    rt.job_start(c, tshared, "bravo")
+fi_.pages.update({"j1": ("https://shop.example/cart", 0.0, False), "j2": ("https://pay.example/", 0.0, False)})
+with jb.cdp_for(ia) as c:
+    ic = rt.idle_close(c, tshared, "bravo")
+jst = rt.load_state(rt.jobs_path(tshared, "bravo"))
+check("idle-stop (#76): the tabs the job opened close first, without asking (the agent is idle), and their addresses are kept",
+      sorted(ic["closed"]) == ["j1", "j2"] and set(fi_.pages) == {"home"} and jst["lastJobUrls"] == ["https://pay.example/", "https://shop.example/cart"]
+      and not jst.get("start"), (ic, jst))
+fr = FakeTabsCDP({"r0": ("https://docs.example/", 0.0, False), "r1": ("https://shop.example/cart", 0.0, False), "r2": ("https://pay.example/", 0.0, False)})
+with jb.cdp_for({"name": "bravo", "port": fr.port}) as c:
+    rs = rt.tidy(c, tshared, "bravo", apply=True)
+check("restoreTabs lastJob (#76): a relaunch that restores the last session drops what the finished job left, once",
+      sorted(rs["closed"]) == ["r1", "r2"] and {x["reason"] for x in rs["close"]} == {"job"}
+      and "lastJobUrls" not in rt.load_state(rt.jobs_path(tshared, "bravo")), rs)
+rreg = tmp / "restore-reg.json"
+def reg_with(**extra):
+    raw_ = json.loads(Path(REG).read_text()); n_ = next(iter(raw_["agents"])); raw_["agents"][n_].update(extra)
+    rreg.write_text(json.dumps(raw_)); return n_, jb.registry(rreg)
+n0, r_def = reg_with()
+_, r_none = reg_with(restoreTabs="none", maxTabs=5)
+bad_ = []
+for kw in ({"restoreTabs": "some"}, {"maxTabs": 0}, {"maxTabs": "many"}):
+    try:
+        reg_with(**kw); bad_.append(kw)
+    except ValueError:
+        pass
+check("restoreTabs (#76): lastJob by default (the last session comes back); none opens a fresh window; a bad value or maxTabs is refused",
+      r_def[n0]["restoreTabs"] == "lastJob" and r_def[n0]["maxTabs"] == 8 and "--restore-last-session" in jb.chrome_args(r_def[n0])
+      and "--restore-last-session" not in jb.chrome_args(r_none[n0]) and r_none[n0]["maxTabs"] == 5 and not bad_, bad_)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

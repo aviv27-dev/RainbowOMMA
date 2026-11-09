@@ -7,20 +7,6 @@ upgrade prints those in full.
 
 ## [Unreleased]
 
-### Changed
-- `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
-  codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
-  stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
-- The installer prints numbered steps, each with one result word (`[3/5] state in ~/.rainbowomma — done`; `kept`
-  for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
-  yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
-  touch; a failure names the step it stopped at. (#61)
-
-### Fixed
-- `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
-  opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
-  every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
-
 ### Added
 - Every refusal and failure says what to do next: a `next` field beside `why` — a command to run, or "ask the human"
   (`port-owner list alpha` after a refused lease, `browser-owner recover alpha --by alpha` for a hung browser,
@@ -38,6 +24,25 @@ upgrade prints those in full.
 - `rainbowomma-doctor status` lists every Chrome that is neither the human's nor an agent's (a browser MCP started
   without `--cdp-endpoint`, a test run): who started it, through which MCP, and the `browser-owner mcp-config` line to use
   instead. (#79)
+- A tidy agent browser: per agent `restoreTabs` — `lastJob` (default: the last session, less the tabs a finished job
+  left), `all` or `none` (no `--restore-last-session`) — and `maxTabs` (default 8). On `start` and before every idle-stop
+  a tidy pass closes exact-duplicate URLs, blank and new-tab pages and the least recently used tabs past `maxTabs` —
+  never an attached tab, the most recently used one or the last one; it follows `tabSweep.mode` (a dry run only reports).
+  Idle-stop closes the job's own tabs first, without asking. (#76)
+
+### Changed
+- `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
+  codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
+  stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
+- The installer prints numbered steps, each with one result word (`[3/5] state in ~/.rainbowomma — done`; `kept`
+  for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
+  yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
+  touch; a failure names the step it stopped at. (#61)
+
+### Fixed
+- `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
+  opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
+  every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
 
 ## [0.3.1] — 2026-11-07
 

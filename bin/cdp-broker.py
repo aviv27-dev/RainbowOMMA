@@ -271,7 +271,8 @@ def chrome_argv(a):
     return [str(app / "Contents" / "MacOS" / app.name[:-4]), f"--user-data-dir={a['profile']}", "--remote-debugging-pipe",
             "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
             "--disable-features=OptimizationGuideOnDeviceModel", "--no-first-run", "--no-default-browser-check",
-            "--restore-last-session", "--hide-crash-restore-bubble", f"--window-name={a['label']}-CDP"]
+            *([] if a.get("restoreTabs") == "none" else ["--restore-last-session"]), "--hide-crash-restore-bubble",
+            f"--window-name={a['label']}-CDP"]
 
 
 def run(a, shared):

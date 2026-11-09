@@ -289,6 +289,15 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   for every close; with `--scheduled` (the launchd job), the day's totals, and one summary notification the next day.
 - **Dry run first.** `tabSweep.mode` is `dry-run` unless set to `apply`; `--apply` acts once, by hand. An agent may sweep
   its own browser only (owner and guard).
+- **A tidy browser** (#76). Per agent, `restoreTabs` decides what a relaunch (after an idle-stop, a crash, a heal) brings
+  back: `lastJob` (the default — the last session, less the tabs a finished job left), `all` (everything, untouched) or
+  `none` (no `--restore-last-session`: a fresh window). On `start` (not when the human opens it) and before every
+  idle-stop, a tidy pass (`tidy_plan()`, no I/O) closes exact-duplicate URLs (the most recently used copy stays), blank
+  and new-tab pages, and the least recently used tabs past `maxTabs` (default 8). Never: a tab another client is
+  attached to, the most recently used tab, the browser's last tab. It follows `tabSweep.mode`: a dry run reports (log,
+  answer), `apply` closes. Before idle-stop the tabs the agent's job opened close first, with no question asked — the
+  agent is idle by definition — and their addresses are kept (`lastJobUrls`), so the restored session drops them once.
+  Human-activated tabs aren't tracked, so the pass never runs while the human is the one opening the browser.
 
 ## 16. auth-owner — one agent at a time signs in (optional)
 - **Off by default.** Only sites under `"authSites"` in `browsers.json` count (a host or any subdomain of it).
