@@ -98,6 +98,10 @@ def register(ctx):
                 marked = rb.mark_command((args or {}).get("command"))
                 if marked:
                     return {"action": "modify", "args": {"command": marked}}
+            if verdict is None and tool_name == "browser_exec":
+                named = own_browser.session_for(rb.me, (args or {}).get("session"))
+                if named != (args or {}).get("session"):
+                    return {"action": "modify", "args": {"session": named}}
             return verdict
         except Exception as exc:                       # the guard itself fails closed; this is the wrapper around it
             logger.warning("rainbowomma guard: %s: %s", type(exc).__name__, exc)

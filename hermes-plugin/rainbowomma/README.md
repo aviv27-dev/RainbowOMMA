@@ -100,6 +100,9 @@ anything on your behalf.
   process started by a shell command can't be told apart by its ancestry, so the plugin prefixes the command with
   `export RAINBOW_AGENT=<agent> RAINBOW_HOME=… BROWSER_OWNER_REGISTRY=…;` (a `modify` directive). `mark_commands: never`
   turns it off, `always` does it in every process.
+- **Names browser sessions.** A `browser_exec` call is given the session name `rb-<agent>` (a `modify` directive), so
+  two Hermes processes on one Mac never share one browser daemon — without it the second agent's call can land in the
+  first agent's browser.
 - **Asks you.** A Messages/Mail send becomes a Hermes approval prompt (`approve` directive). Under cron or a gateway
   with nobody to answer, Hermes's own approval timeout applies; the plugin never waits on a dialog of its own.
 - **macOS prompts you will see once.** The document tools drive Word, Excel, Acrobat, Preview and System Events through

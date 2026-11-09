@@ -457,6 +457,19 @@ dropped = bo.theme_saved({"profile": str(prof.parent)})
 check("browser frame: a theme Chrome dropped when its session ended (its id still named in Preferences) does not count "
       "as installed — the next start installs it again", (only_prefs, held, dropped) == (TID, TID, ""), (only_prefs, held, dropped))
 
+check("browser provider: every browser_exec call runs under the agent's own session name, so two Hermes processes never "
+      "share one browser daemon", own_browser.session_for("alpha") == "rb-alpha" and own_browser.session_for("alpha", "r7k2") == "rb-alpha-r7k2"
+      and own_browser.session_for("alpha", "rb-alpha-r7k2") == "rb-alpha-r7k2" and own_browser.session_for("alpha", "rb-alpha") == "rb-alpha"
+      and len(own_browser.session_for("a" * 31, "x" * 80)) <= 64)
+shared_ctx = Ctx("alpha", {"home": str(tmp / "s4"), "housekeeping_minutes": 0})
+rb_mod.register(shared_ctx)
+m1 = shared_ctx.hooks["pre_tool_call"](tool_name="browser_exec", args={"code": "goto('https://example.com')"})
+m2 = shared_ctx.hooks["pre_tool_call"](tool_name="browser_exec", args={"code": "x", "session": "rb-alpha"})
+for cb in shared_ctx.unload:
+    cb()
+check("hook: a browser_exec call without the agent's session name gets it (modify); one that has it is left alone",
+      m1 == {"action": "modify", "args": {"session": "rb-alpha"}} and m2 is None, (m1, m2))
+
 # ---- what ships -------------------------------------------------------------------------------------------------------
 r = subprocess.run([sys.executable, str(HERE.parent / "tools" / "sync_vendor.py"), "--check"], capture_output=True, text=True)
 check("vendor: the owners inside the plugin are byte-for-byte the ones in bin/", r.returncode == 0, r.stdout)

@@ -50,6 +50,8 @@ model.
 - **Tool-call changes:** in a process shared by several profiles the `terminal` command is prefixed with
   `export RAINBOW_AGENT=… RAINBOW_HOME=… BROWSER_OWNER_REGISTRY=…;` so the processes it starts are known as the agent's
   (`mark_commands: auto | always | never`).
+  A `browser_exec` call is given the session name `rb-<agent>`, so two Hermes processes on one Mac never share one
+  browser daemon (found in testing: the second profile's browser call landed in the first profile's Chrome).
 - **Approvals:** nothing is auto-approved; the plugin only adds an `approve` escalation (Messages/Mail sends). It opens no
   dialog of its own, so unattended runs fall under Hermes's approval timeout.
 - **Network:** one request, to `http://127.0.0.1:<port>/json/version` of the agent's own Chrome (the browser provider). Nothing leaves the machine. The vendored receipts module has an OTLP

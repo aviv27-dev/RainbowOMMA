@@ -20,6 +20,20 @@ CHROME = "/Applications/Google Chrome.app"
 UP = ("started", "up", "already-up", "running")
 
 
+def session_for(me: str, session=None) -> str:
+    """the browser_exec session name this agent's call runs under. Hermes's browser daemon is found by its session name
+    (`default` when the model gives none), and two Hermes processes on one Mac that use the same name share one daemon —
+    the second agent would drive the first one's browser. Every call is put under the agent's own name."""
+    import re
+    own = "rb-" + re.sub(r"[^A-Za-z0-9_-]", "-", me)[:28]
+    given = str(session or "").strip()
+    if not given:
+        return own
+    if given == own or given.startswith(own + "-"):
+        return given
+    return (own + "-" + re.sub(r"[^A-Za-z0-9_-]", "-", given))[:64]
+
+
 def debugger_url(port: int, timeout: float = 5.0) -> str:
     """the browser's websocket address, read from its own DevTools port on this Mac (127.0.0.1 only)"""
     with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/json/version", timeout=timeout) as resp:
