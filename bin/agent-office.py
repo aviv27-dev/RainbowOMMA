@@ -62,6 +62,48 @@ WORD_DIR = Path(os.environ.get("OFFICE_WORD_DIR") or (ROOT / "word-convert"))
 APP_BIN = {"word": "/Microsoft Word.app/Contents/MacOS/", "excel": "/Microsoft Excel.app/Contents/MacOS/",
            "acrobat": "/Adobe Acrobat.app/Contents/MacOS/", "preview": "/Preview.app/Contents/MacOS/"}
 PGREP = None   # tests replace it: (app) -> pid | None
+APP_NAME_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 .+_-]{0,59}$")
+SUITES = {      # how an added app is asked for its documents: AppleScript's standard suite, or Microsoft Office's
+    "standard": ("documents", "path of d", "not (modified of d)", "close d saving no"),
+    "office": (None, "POSIX path of (full name of d as text)", "saved of d", "close d saving no"),
+}
+OFFICE_COLLECTIONS = ("documents", "workbooks", "presentations")
+
+
+def add_apps(spec):
+    """more document apps than the built-in four, from OFFICE_EXTRA_APPS (JSON) — the human's setting, never an agent's:
+        {"textedit": {"app": "TextEdit", "extensions": [".txt"]},
+         "powerpoint": {"app": "Microsoft PowerPoint", "suite": "office", "collection": "presentations", "extensions": [".pptx"]}}
+    An added app is asked with fixed AppleScript expressions (SUITES) — the setting chooses among them, it never supplies
+    script text. A built-in app can't be replaced; a bad entry is skipped and named in the answer. → the keys skipped."""
+    skipped = []
+    try:
+        rows = json.loads(spec) if isinstance(spec, str) else spec
+    except ValueError:
+        return ["(not JSON)"]
+    if not isinstance(rows, dict):
+        return ["(not an object)"]
+    for key, row in rows.items():
+        key = str(key).strip().lower()
+        name = str((row or {}).get("app") or "").strip() if isinstance(row, dict) else ""
+        suite = str(row.get("suite") or "standard") if isinstance(row, dict) else ""
+        coll = str(row.get("collection") or "documents") if isinstance(row, dict) else ""
+        if (not re.fullmatch(r"[a-z][a-z0-9-]{0,30}", key) or key in BUILTIN_APPS or not APP_NAME_OK.match(name)
+                or suite not in SUITES or (suite == "office" and coll not in OFFICE_COLLECTIONS)):
+            skipped.append(key or "?")
+            continue
+        base, path_of, saved, close = SUITES[suite]
+        APPS[key] = (name, coll if suite == "office" else base, path_of, saved, close)
+        APP_BIN[key] = f"/{name}.app/Contents/MacOS/"
+        for ext in row.get("extensions") or []:
+            ext = str(ext).strip().lower()
+            if re.fullmatch(r"\.[a-z0-9]{1,10}", ext) and ext not in BUILTIN_EXT:
+                EXT_APP[ext] = key
+    return skipped
+
+
+BUILTIN_APPS, BUILTIN_EXT = frozenset(APPS), frozenset(EXT_APP)
+EXTRA_SKIPPED = add_apps(os.environ["OFFICE_EXTRA_APPS"]) if os.environ.get("OFFICE_EXTRA_APPS") else []
 
 
 def log(msg):

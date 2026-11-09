@@ -60,6 +60,8 @@ WHY = {
                     "reads or changes it",
     "shell-script": "AppleScript's `do shell script` with a text built at run time can't be checked — run the shell command directly",
     "chrome-script": "closing or quitting Chrome windows through AppleScript reaches the human's windows too — use `browser-owner`",
+    "doc-app": "quitting Word, Excel, PowerPoint, Acrobat, Preview or an iWork app through AppleScript, or closing its documents "
+               "or windows, closes the human's too — close only the document you leased: `office-owner close --agent <you> <file>`",
     "guard-error": "the guard couldn't judge this command, and \"can't tell\" is a refusal",
 }
 HELP = ("Use the owner instead: `browser-owner start|recover <agent> --by <agent>` for your browser "
@@ -87,7 +89,7 @@ AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease",
 HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
 INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
 INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")
-RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
+RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|office_extra_apps|office_word_dir|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
                          r"rainbow_human_idle_s|rainbow_human_present_s|rainbow_agent|rainbow_session)=")
 STATE_WORDS = re.compile(r"(\.rainbowomma|\$\{?rainbow_home\}?)/(state|logs|cdp)\b|proc-roots\.json|approvals\.json|approval-pending\.json|"
                          r"paused\.json|screen\.json|ports\.json|auth\.json|browsers\.json|receipts\.jsonl")
@@ -309,7 +311,7 @@ def verdict(command):
     names = {n for n, _ in cmds}
     me = _me()
     if any(n in SHELLS or n.startswith("python") for n, a in cmds if not [x for x in a if not x.startswith("-")]):
-        for n, a in cmds:                              # echo 'cmd' | sh: what the shell reads from its input runs
+        for n, a in cmds:                              # a printed command fed to a shell on its input: what the shell reads there runs
             if n in ("echo", "printf") and a:
                 why = verdict(" ".join(x for x in a if not x.startswith("-")).replace("\\n", "\n"))
                 if why:
@@ -351,6 +353,8 @@ def verdict(command):
                 return WHY["chrome-script"]
         if name == "osascript" and "quit" in " ".join(args) and "chrome" in " ".join(args):
             return WHY["osascript"]
+        if name == "osascript" and DOC_APP_CLOSE.search(" ".join(args)):
+            return WHY["doc-app"]
         debug = any(a.startswith("--remote-debugging-port") for a in args)
         if debug and name in CHROMES:
             return WHY["debug-port"]
@@ -647,6 +651,12 @@ def sim_verdict(name, args, me):
     return None
 
 
+# the shared document apps: `quit app "Microsoft Word"`, `tell application "Preview" to close every window`, `… to quit`
+DOC_APPS = r"(?:microsoft (?:word|excel|powerpoint)|adobe acrobat(?: [a-z]+)*|acrobat reader|preview|pages|numbers|keynote)"
+DOC_APP_CLOSE = re.compile(r'quit\s+app(?:lication)?\s+"' + DOC_APPS + r'"|(?:application|app)\s+"' + DOC_APPS
+                           + r'".*\b(?:quit\b|close\s+(?:every|all|windows?|documents?|(?:the\s+)?(?:front|active)))', re.S)
+
+
 SEND = re.compile(r'tell application "?(messages|mail)"?.*\b(send|outgoing message)\b', re.S)
 
 
@@ -880,15 +890,10 @@ def commands(event):
     return out
 
 
-def main(argv=None):
-    argv = sys.argv[1:] if argv is None else argv
-    fmt = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else "exit2"
-    try:
-        event = json.load(sys.stdin)
-    except ValueError:
-        return 0
-    if not isinstance(event, dict):
-        return 0
+def judge(event):
+    """one payload's decision → (why, command): why is None when nothing in it is refused. main() prints it for the hook
+    frameworks; a host that loads the guard in-process (the Hermes plugin) calls this directly. An error while judging is a
+    refusal ("can't tell" never means yes)."""
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if me:
         track(me)
@@ -907,17 +912,31 @@ def main(argv=None):
         if why:
             try:
                 import rainbow_receipts
-                me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower() or None
-                rainbow_receipts.write("guard", "blocked", me, me, "blocked", why=why,
+                rainbow_receipts.write("guard", "blocked", me or None, me or None, "blocked", why=why,
                                        command=cmd or str(event.get("tool_name") or event.get("toolName") or ""))
             except Exception:
                 pass
-            msg = f"Blocked by RainbowOMMA: {why}. {HELP}"
-            if fmt == "cline":
-                print(json.dumps({"cancel": True, "errorMessage": msg}))
-                return 0
-            print(msg, file=sys.stderr)
-            return 2
+            return why, cmd
+    return None, None
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    fmt = argv[argv.index("--format") + 1] if "--format" in argv[:-1] else "exit2"
+    try:
+        event = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    if not isinstance(event, dict):
+        return 0
+    why, _cmd = judge(event)
+    if why:
+        msg = f"Blocked by RainbowOMMA: {why}. {HELP}"
+        if fmt == "cline":
+            print(json.dumps({"cancel": True, "errorMessage": msg}))
+            return 0
+        print(msg, file=sys.stderr)
+        return 2
     return 0
 
 

@@ -1,0 +1,1566 @@
+#!/usr/bin/env python3
+"""browser-owner — the ONE owner of every agent's Chrome on a shared Mac.
+
+    browser-owner list | names | status AGENT | start AGENT [--by WHO] | stop AGENT --by human [--allow-reopen]
+    browser-owner idle-stop AGENT --by WHO | recover AGENT [--by WHO] | front AGENT | heal | human-theme
+    browser-owner mcp-config AGENT [--tool devtools|playwright] [--format json|claude]   point a browser MCP at ITS browser
+
+Agents are rows in browsers.json beside this file. See docs/DESIGN.md for every status word and rule.
+Exit codes: 0 ok · 2 refused · 1 failure. One JSON answer, always.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
+import rainbow_receipts  # noqa: E402
+import rainbow_presence  # noqa: E402
+import rainbow_tabs  # noqa: E402
+from rainbow_i18n import direction, t  # noqa: E402
+import rainbow_next  # noqa: E402
+
+HOME = Path.home()
+HERE = Path(__file__).resolve().parent
+REGISTRY = Path(os.environ.get("BROWSER_OWNER_REGISTRY") or HERE / "browsers.json")
+SHARED = Path(os.path.expanduser(os.environ.get("RAINBOW_HOME") or str(HOME / ".rainbowomma")))   # logs, state, themes
+CHROME_APP = "/Applications/Google Chrome.app"
+CHROME_ANY = re.compile(r"\.app/Contents/MacOS/(?:Google Chrome(?: Beta| Canary| Dev| for Testing)?|Chromium)(?=\s--|\s*$)")   # any flavor's main binary
+CHANNELS = {"stable": "/Applications/Google Chrome.app", "beta": "/Applications/Google Chrome Beta.app",
+            "dev": "/Applications/Google Chrome Dev.app", "canary": "/Applications/Google Chrome Canary.app",
+            "cft": "/Applications/Google Chrome for Testing.app"}
+STALE_FLAG_AFTER = 120
+LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # 127.0.0.1 is never asked through an http_proxy
+NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
+PORTS_BASE, PORTS_SIZE = 41000, 100    # an agent's default ports: 41000 + 100 × (CDP port − 9222) — below macOS's ephemeral 49152+
+HUMAN_PORTS = [3000, 3001, 4200, 5000, 5173, 5432, 6379, 8000, 8080, 8888, 9000, 27017]   # the well-known ones stay the human's
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def expand(p):
+    return str(Path(os.path.expanduser(str(p))))
+
+
+PERSONAL = [HOME / "Library" / "Application Support" / n for n in
+            ("Google/Chrome", "Google/Chrome Beta", "Google/Chrome Canary", "Chromium", "BraveSoftware")]
+
+
+def canon(p):
+    return os.path.realpath(expand(p))
+
+
+def port_range(spec, cdp_port):
+    """ "41000-41099" → (41000, 41099); none → the default range derived from the CDP port"""
+    if not spec:
+        lo = PORTS_BASE + PORTS_SIZE * (cdp_port - 9222)
+        return lo, lo + PORTS_SIZE - 1
+    m = re.fullmatch(r"\s*(\d{4,5})\s*-\s*(\d{4,5})\s*", str(spec))
+    if not m or not 1024 <= int(m.group(1)) <= int(m.group(2)) <= 65535:
+        raise ValueError(f"ports must look like 41000-41099 (1024–65535), not {spec!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def human_ports(path=None):
+    """the ports kept for the human: "humanPorts" at the top of browsers.json, else the usual dev-server ports"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("humanPorts")
+    except (OSError, ValueError):
+        got = None
+    return sorted({int(p) for p in got}) if isinstance(got, list) else list(HUMAN_PORTS)
+
+
+DENIED_APPS = ["Terminal", "iTerm", "iTerm2", "System Settings", "System Preferences", "Keychain Access", "Passwords", "Activity Monitor"]
+
+
+def denied_apps(agent=None, path=None):
+    """the apps an agent may not drive (AppleScript, open -a, computer use): "deniedApps" at the top of browsers.json
+    (default: terminals, System Settings, Keychain Access, Passwords, Activity Monitor), then the agent's own "apps":
+    {"Notes": "deny", "Terminal": "allow"} on top. → lowercased names"""
+    try:
+        raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    base = raw.get("deniedApps") if isinstance(raw.get("deniedApps"), list) else DENIED_APPS
+    out = {str(x).strip().lower() for x in base if str(x).strip()}
+    own = ((raw.get("agents") or {}).get(agent) or {}).get("apps") if agent else None
+    for app, rule in (own or {}).items() if isinstance(own, dict) else []:
+        (out.add if str(rule).lower() == "deny" else out.discard)(str(app).strip().lower())
+    return sorted(out)
+
+
+def sensitive_sites(path=None):
+    """domains an agent may open only while the human is at the Mac: "sensitiveSites" at the top of browsers.json"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("sensitiveSites")
+    except (OSError, ValueError):
+        got = None
+    return [str(x).strip().lower().lstrip("*.") for x in got if str(x).strip()] if isinstance(got, list) else []
+
+
+def open_mode(path=None):
+    """how the guardrail treats an agent's `open <url>` (it would land in the human's browser): refuse (default) · report"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("guardOpen")
+    except (OSError, ValueError):
+        got = None
+    return got if got in ("refuse", "report") else "refuse"
+
+
+def auth_sites(path=None):
+    """domains where one agent at a time signs in (auth-owner): "authSites" at the top of browsers.json — none, it's off"""
+    try:
+        got = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8")).get("authSites")
+    except (OSError, ValueError):
+        got = None
+    return [str(x).strip().lower().lstrip("*.") for x in got if str(x).strip()] if isinstance(got, list) else []
+
+
+def registry(path=None):
+    raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))["agents"]
+    out, ports, profiles, states, ranges = {}, {}, {}, {}, {}
+    for name, r in raw.items():
+        if not NAME_RE.match(name) or name == "human" or name.startswith("human-"):
+            raise ValueError(f"bad agent name: {name!r}")                  # human-* is the human's (their theme folder too)
+        miss = [k for k in ("label", "port", "profile", "color") if not r.get(k)]
+        if miss:
+            raise ValueError(f"{name}: missing {', '.join(miss)}")
+        if not isinstance(r["label"], str) or len(r["label"]) > 40 or re.search(r"[\x00-\x1f\x7f|\\\"]", r["label"]):
+            raise ValueError(f"{name}: a label is up to 40 characters, without control characters, |, \\ or \"")
+        port = int(r["port"])
+        if not 9222 <= port <= 9299:
+            raise ValueError(f"{name}: port {port} outside 9222–9299")
+        if port in ports:
+            raise ValueError(f"{name}: port {port} already belongs to {ports[port]}")
+        ports[port] = name
+        if not re.match(r"^#[0-9A-Fa-f]{6}$", r.get("color", "")):
+            raise ValueError(f"{name}: color must be #RRGGBB")
+        a = dict(r, name=name, port=port, profile=canon(r["profile"]))
+        if " " in a["profile"]:
+            raise ValueError(f"{name}: profile path must not contain spaces (process matching splits on them)")
+        if any(a["profile"] == os.path.realpath(str(pp)) or a["profile"].startswith(os.path.realpath(str(pp)) + os.sep) for pp in PERSONAL):
+            raise ValueError(f"{name}: {a['profile']} is a personal Chrome profile — never an agent's")
+        if a["profile"] in profiles:
+            raise ValueError(f"{name}: profile already belongs to {profiles[a['profile']]}")
+        profiles[a["profile"]] = name
+        a["state"] = canon(r.get("state") or SHARED / "browsers" / f"{name}.json")
+        if a["state"] in states:
+            raise ValueError(f"{name}: state file already belongs to {states[a['state']]}")
+        states[a["state"]] = name
+        a["log"] = expand(r.get("log") or SHARED / "logs" / "browser-owner.log")
+        a["lock"] = str(Path(a["state"]).with_suffix(".lock"))
+        ch = str(r.get("chrome") or "stable").strip()
+        app = CHANNELS.get(ch.lower()) or (expand(ch) if ch.endswith(".app") else None)
+        if not app:
+            raise ValueError(f"{name}: chrome must be stable, beta, dev, canary, cft or a path to a Chrome .app, not {ch!r}")
+        a["chrome_app"] = app.rstrip("/")
+        if r.get("launcher"):
+            a["launcher"] = expand(r["launcher"])
+        if r.get("managedBy"):
+            a["managedBy"] = expand(r["managedBy"])
+        if r.get("idleMinutes") is not None:
+            a["idleMinutes"] = int(r["idleMinutes"])
+        lo, hi = port_range(r.get("ports"), port)
+        for other, (olo, ohi) in ranges.items():
+            if lo <= ohi and olo <= hi:
+                raise ValueError(f"{name}: ports {lo}-{hi} overlap {other}'s {olo}-{ohi}")
+        ranges[name] = (lo, hi)
+        a["ports"] = (lo, hi)
+        a["cdp"] = str(r.get("cdp") or "port").strip().lower()
+        if a["cdp"] not in ("port", "pipe"):
+            raise ValueError(f"{name}: cdp must be port or pipe, not {a['cdp']!r}")
+        if a["cdp"] == "pipe" and a.get("launcher"):
+            raise ValueError(f"{name}: cdp pipe starts Chrome itself — it can't go with a launcher")
+        a["restoreTabs"] = str(r.get("restoreTabs") or "lastJob").strip()
+        if a["restoreTabs"] not in RESTORE:
+            raise ValueError(f"{name}: restoreTabs must be one of {', '.join(RESTORE)}, not {a['restoreTabs']!r}")
+        try:
+            a["maxTabs"] = int(rainbow_tabs.MAX_TABS if r.get("maxTabs") is None else r["maxTabs"])
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: maxTabs must be a number of tabs") from None
+        if not 1 <= a["maxTabs"] <= 100:
+            raise ValueError(f"{name}: maxTabs must be between 1 and 100")
+        a["tcp_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
+        a["port_re"] = re.compile(r"(?:^|\s)--remote-debugging-pipe(?:\s|$)") if a["cdp"] == "pipe" else a["tcp_re"]
+        a["dir_re"] = re.compile(r"(?:^|\s)--user-data-dir=" + re.escape(a["profile"]) + r"(?:\s|$)")
+        out[name] = a
+    return out
+
+
+def log(a, msg):
+    try:
+        p = Path(a["log"])
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(p), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)     # never through a planted link
+        with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {a['name']}: {' '.join(str(msg).split())}\n")
+    except OSError:
+        pass
+
+
+def open_lock(path):
+    """the agent's lock file, never opened through a symlink (that would truncate whatever it points to)"""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    return os.fdopen(os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "r+")
+
+
+PROFILE_TOP = ("Default", "Local State", "First Run")
+
+
+CHROME_MARKERS = ("RunningChromeVersion", "SingletonLock", "SingletonCookie")   # Chrome's own links, to a bare name (no "/")
+CHROME_SOCKET = re.compile(r"^(?:/private)?/var/folders/[^/]+/[^/]+/T/com\.google\.Chrome\.[^/]+/SingletonSocket$")
+
+
+def chrome_marker(e):
+    """one of the links Chrome itself keeps at the top of a profile — a version or lock marker to a bare name, or its
+    socket in Chrome's own temp folder (left behind when the browser was stopped). Anything else is not."""
+    try:
+        target = os.readlink(str(e))
+    except OSError:
+        return False
+    if e.name in CHROME_MARKERS:
+        return "/" not in target
+    return e.name == "SingletonSocket" and bool(CHROME_SOCKET.match(target))
+
+
+def profile_unsafe(a):
+    """a link inside the agent's profile could lead its Chrome — or paint() — into another profile (the human's) → the reason, or None"""
+    prof = Path(a["profile"])
+    if not prof.exists():
+        return None
+    if prof.is_symlink():
+        return f"{prof} is a symlink"
+    real = os.path.realpath(str(prof))
+    try:
+        entries = list(prof.iterdir())
+    except OSError as exc:
+        return f"{prof}: {exc}"
+    for e in [*entries, *[prof / "Default" / x for x in ("Preferences", "Secure Preferences", "Cookies")]]:
+        if e.parent == prof and e.is_symlink() and chrome_marker(e):
+            continue                                  # Chrome's own marker (#82) — refusing it would refuse every start
+        if e.is_symlink() or (e.exists() and not os.path.realpath(str(e)).startswith(real + os.sep)):
+            return f"{e} is a link out of the agent's profile"
+    return None
+
+
+LEGACY_OFF = re.compile(r"^offBy[A-Z]\w*$")
+
+
+def load(a):
+    try:
+        st = json.loads(Path(a["state"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(st, dict):
+        return {}
+    if "offByHuman" not in st and any(LEGACY_OFF.match(k) and k != "offByHuman" and v for k, v in st.items()):
+        st["offByHuman"] = True          # a pre-release install named its stop flag after the person: stopped stays stopped
+    return st
+
+
+def atomic_write(path, text):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def save(a, st):
+    atomic_write(a["state"], json.dumps(st, ensure_ascii=False, indent=1))
+
+
+def healthy(a, timeout=2.0):
+    if a.get("cdp") == "pipe":                    # no port: the broker's socket answers for it
+        try:
+            with cdp_for(a, timeout) as c:
+                c.call("Browser.getVersion")
+            return True
+        except Exception:
+            return False
+    try:
+        with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/version", timeout=timeout) as r:
+            json.loads(r.read())
+        return True
+    except Exception:
+        return False
+
+
+def processes():
+    out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, check=True).stdout
+    rows = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) == 3:
+            try:
+                rows.append((int(parts[0]), int(parts[1]), parts[2]))
+            except ValueError:
+                pass
+    return rows
+
+
+def is_root(a, cmd):
+    return bool(CHROME_ANY.search(cmd)) and " --type=" not in cmd and bool(a["port_re"].search(cmd)) and bool(a["dir_re"].search(cmd))
+
+
+def profile_users(a, rows):
+    return [pid for pid, _, cmd in rows if CHROME_ANY.search(cmd) and " --type=" not in cmd and a["dir_re"].search(cmd) and not a["port_re"].search(cmd)]
+
+
+def listener(a):
+    """who LISTENS on the agent's port (lsof) — named when the port answers and it is not the agent's browser"""
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{a['port']}", "-sTCP:LISTEN", "-Fpc"], capture_output=True, text=True, timeout=5).stdout
+        pid = next((l[1:] for l in out.splitlines() if l.startswith("p")), "")
+        cmd = next((l[1:] for l in out.splitlines() if l.startswith("c")), "")
+        return f"{cmd} (pid {pid})" if pid else ""
+    except Exception:
+        return ""
+
+
+def foreign_roots(a, rows):
+    """Chromes on this agent's port with ANOTHER profile — someone launched a browser outside the owner"""
+    return [pid for pid, _, cmd in rows if CHROME_ANY.search(cmd) and " --type=" not in cmd and a["tcp_re"].search(cmd) and not a["dir_re"].search(cmd)]
+
+
+def tree_of(a, rows):
+    roots = [pid for pid, _, cmd in rows if is_root(a, cmd)]
+    tree = set(roots)
+    changed = True
+    while changed:
+        changed = False
+        for pid, ppid, _ in rows:
+            if ppid in tree and pid not in tree:
+                tree.add(pid)
+                changed = True
+    return roots, tree
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def terminate_tree(tree, grace=8.0):
+    for pid in sorted(tree, reverse=True):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.time() + grace
+    while time.time() < deadline and any(alive(p) for p in tree):
+        time.sleep(0.25)
+    left = [p for p in tree if alive(p)]
+    for pid in left:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    return left
+
+
+def really_down(a, probes=3, timeout=10.0, spread=30.0):
+    for i in range(probes):
+        if healthy(a, timeout=timeout):
+            return False
+        if i < probes - 1:
+            time.sleep(spread / (probes - 1))
+    return True
+
+
+def last_exit_type(a):
+    try:
+        return (json.loads((Path(a["profile"]) / "Default" / "Preferences").read_text(encoding="utf-8")).get("profile") or {}).get("exit_type")
+    except (OSError, ValueError):
+        return None
+
+
+CLEAN_QUIT_HOLD = 2 * 3600
+
+
+def boot_time():
+    try:
+        out = subprocess.run(["sysctl", "-n", "kern.boottime"], capture_output=True, text=True, timeout=5).stdout
+        return float(re.search(r"sec = (\d+)", out).group(1))
+    except Exception:
+        return None
+
+
+def quit_by_person(a, now=None, st=None):
+    now = now or time.time()
+    if last_exit_type(a) != "Normal":
+        return False
+    try:
+        m = (Path(a["profile"]) / "Default" / "Preferences").stat().st_mtime
+    except OSError:
+        return False
+    b = boot_time()
+    if b is None or m < b or now - m > CLEAN_QUIT_HOLD:
+        return False
+    # a close the OWNER made (stop / idle-stop / a theme install) also leaves "Normal" — that is not a person's ⌘Q
+    st = st or load(a)
+    for rec in (st.get("lastStop"), st.get("lastThemeInstall")):
+        try:
+            stopped = time.mktime(time.strptime(str((rec or {}).get("at", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            continue
+        if -5 <= m - stopped <= 180:
+            return False
+    return True
+
+
+def chrome_color(hex_rgb):
+    """#RRGGBB → the signed 32-bit ARGB integer Chrome stores (opaque)"""
+    v = 0xFF000000 | int(hex_rgb[1:], 16)
+    return v - (1 << 32) if v >= (1 << 31) else v
+
+
+def display_name(a):
+    return t("bo.display_name", label=a["label"])
+
+
+def paint(a, themed=False):
+    """Write the profile's name and color into Chrome's own files — ONLY while the browser is down (Chrome rewrites them on exit).
+    Merges into what is there; a file Chrome left unreadable is left alone (never replaced with a blank one).
+    → list of the files changed"""
+    prof = Path(a["profile"])
+    color, name, changed = chrome_color(a["color"]), display_name(a), []
+
+    def merge(path, fn):
+        path = Path(path)
+        st0 = None
+        if path.exists():
+            try:
+                st0 = path.stat()
+                d = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return
+        else:
+            d = {}
+        before = json.dumps(d, sort_keys=True)
+        fn(d)
+        if json.dumps(d, sort_keys=True) != before:
+            atomic_write(path, json.dumps(d, ensure_ascii=False))
+            if st0:
+                os.utime(path, (st0.st_atime, st0.st_mtime))
+            changed.append(str(path))
+
+    def prefs(d):
+        d.setdefault("profile", {})["name"] = name
+        if themed:
+            return                 # the installed theme paints the frame — the profile color must not replace it
+        th = d.setdefault("browser", {}).setdefault("theme", {})
+        th.update({"user_color": color, "user_color2": color, "color_variant": 1, "color_variant2": 1, "is_grayscale": False})
+        d.setdefault("extensions", {}).setdefault("theme", {})["id"] = "user_color_theme_id"
+        av = d.get("account_values", {}).get("browser", {}).get("theme")
+        if isinstance(av, dict):
+            av.update({"user_color": color, "user_color2": color})
+
+    def local_state(d):
+        ic = d.setdefault("profile", {}).setdefault("info_cache", {}).setdefault("Default", {})
+        ic.update({"name": name, "is_using_default_name": False, "profile_highlight_color": color,
+                   "default_avatar_fill_color": color, "default_avatar_stroke_color": color})
+
+    merge(prof / "Default" / "Preferences", prefs)
+    merge(prof / "Local State", local_state)
+    return changed
+
+
+THEMES = SHARED / "themes"
+THEME_VERSION = "2"            # bump to rebuild every agent's theme (2: the name only on the free left part of the frame)
+FRAME_JS = HERE / "theme-frame.js"
+
+
+def rgb(hex_rgb):
+    v = int(hex_rgb[1:], 16)
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+
+
+def theme_key(a):
+    # an RTL theme keeps the key it always had; an LTR one (the name on the other side of the frame) gets its own
+    return f"{THEME_VERSION}:{a['color'].upper()}:{a['label']}" + ("" if direction() == "rtl" else ":ltr2")   # ltr2: the English frame text changed
+
+
+def build_theme(a, text=None, title=None):
+    base = rgb(a["color"])
+    light = (0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2]) / 255 > 0.65
+    frame = base if light else [int(c * 0.82) for c in base]
+    inactive = [int(c * 0.9) for c in base] if light else [int(c * 0.7) for c in base]
+    tint = [int(c + (255 - c) * 0.78) for c in base]
+    ink = [int(c * 0.35) for c in base]
+    d = THEMES / a["name"]
+    if d.is_symlink() or d.is_file():
+        d.unlink()
+    elif d.exists():
+        shutil.rmtree(d)                  # Chrome reads this folder at every start: nothing but what is built here may be in it
+    d.mkdir(parents=True, exist_ok=True)
+    manifest = {"manifest_version": 3, "name": title or t("bo.theme_title", label=a["label"]), "version": f"{THEME_VERSION}.{int(time.time()) % 100000}",
+                "description": "browser-owner — the agent's browser theme (RainbowOMMA)",
+                "theme": {"images": {}, "colors": {
+                    "frame": frame, "frame_inactive": inactive, "frame_incognito": frame, "toolbar": tint,
+                    "tab_text": ink, "tab_background_text": ink if light else [255, 255, 255],
+                    "tab_background_text_inactive": ink if light else [235, 235, 235],
+                    "bookmark_text": ink, "toolbar_button_icon": ink, "omnibox_background": [255, 255, 255], "omnibox_text": [20, 20, 20],
+                    "ntp_background": tint, "ntp_text": ink}}}
+    try:
+        r = subprocess.run(["osascript", "-l", "JavaScript", str(FRAME_JS), str(d / "frame.png"), text or t("bo.frame_text", label=a["label"]),
+                            *map(str, frame), "dark" if light else "light", direction()],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and (d / "frame.png").exists():
+            manifest["theme"]["images"] = {"theme_frame": "frame.png", "theme_frame_inactive": "frame.png"}
+    except Exception:
+        pass                       # a theme without the written name is still a solid color
+    atomic_write(d / "manifest.json", json.dumps(manifest, ensure_ascii=False, indent=1))
+    return d
+
+
+THEME_FILES = {"manifest.json", "frame.png"}
+THEME_KEYS = {"manifest_version", "name", "version", "description", "theme"}
+
+
+def theme_clean(name):
+    """the theme folder holds only what build_theme writes (no script, no extra key Chrome would run)"""
+    d = THEMES / name
+    try:
+        if d.is_symlink() or {x.name for x in d.iterdir()} - THEME_FILES or any(x.is_symlink() for x in d.iterdir()):
+            return False
+        return set(json.loads((d / "manifest.json").read_text(encoding="utf-8"))) <= THEME_KEYS
+    except (OSError, ValueError):
+        return not d.exists()
+
+
+def theme_saved(a):
+    """the theme extension Chrome has recorded as the profile's theme (a real extension id, not the built-in user color)"""
+    try:
+        d = json.loads((Path(a["profile"]) / "Default" / "Preferences").read_text(encoding="utf-8"))
+        tid = (d.get("extensions", {}).get("theme") or {}).get("id") or ""
+        return tid if re.fullmatch(r"[a-p]{32}", tid) else ""
+    except (OSError, ValueError):
+        return ""
+
+
+def install_theme(a, folder, timeout=25.0):
+    """Chrome with NO window on the agent's profile, a DevTools pipe, Extensions.loadUnpacked → the theme's id, then that instance
+    (our own child, nothing else) is closed. → (ok, id_or_reason)"""
+    raw = os.pipe() + os.pipe()
+    r1, w1, r2, w2 = [os.dup(x) for x in raw]    # above 3/4, so the dup2 below cannot clobber them
+    for x in raw:
+        os.close(x)                              # else our copy of Chrome's write end is never closed: no EOF if it dies
+
+    def child():
+        os.dup2(r1, 3); os.dup2(w2, 4); os.setsid()
+    app = Path(a.get("chrome_app") or CHROME_APP)
+    chrome = str(app / "Contents" / "MacOS" / app.name[:-4])
+    p = subprocess.Popen([chrome, f"--user-data-dir={a['profile']}", "--remote-debugging-pipe", "--enable-unsafe-extension-debugging",
+                          "--no-startup-window", "--no-first-run", "--no-default-browser-check"],
+                         preexec_fn=child, close_fds=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.close(r1); os.close(w2)
+    ans = b""
+    try:
+        os.write(w1, (json.dumps({"id": 1, "method": "Extensions.loadUnpacked", "params": {"path": str(folder)}}) + "\0").encode())
+        import select
+        t0 = time.time()
+        while time.time() - t0 < timeout and b"\0" not in ans:
+            rd, _, _ = select.select([r2], [], [], 1.0)
+            if rd:
+                chunk = os.read(r2, 65536)
+                if not chunk:
+                    break
+                ans += chunk
+        if b'"result"' in ans:
+            t1 = time.time()
+            while time.time() - t1 < 10 and not theme_saved(a):
+                time.sleep(0.5)
+            time.sleep(1.0)
+    except OSError as exc:
+        ans = json.dumps({"error": {"message": str(exc)}}).encode()
+    finally:
+        for fd in (w1, r2):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            p.terminate(); p.wait(timeout=15)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+    try:
+        msg = json.loads(ans.split(b"\0")[0].decode() or "{}")
+    except ValueError:
+        msg = {}
+    if msg.get("result", {}).get("id"):
+        if theme_saved(a) != msg["result"]["id"]:
+            return False, "Chrome loaded the theme but did not save it in the profile"
+        return True, msg["result"]["id"]
+    return False, (msg.get("error") or {}).get("message") or "no answer from Chrome"
+
+
+def ensure_theme(a, st):
+    """install (or rebuild) the agent's theme when it is missing or its color/name changed — only while its browser is down.
+    A failure is recorded and the start goes on with the profile color (never blocks the agent)."""
+    if st.get("theme") == theme_key(a) and theme_saved(a):
+        if not theme_clean(a["name"]):
+            build_theme(a)           # something was added to its folder: Chrome would load it at the next start
+            log(a, "theme folder had foreign files — rebuilt")
+        return "kept"                # only while the profile really carries it: signing in to Google lets Chrome Sync replace it
+    try:
+        ok, res = install_theme(a, build_theme(a))
+    except Exception as exc:
+        ok, res = False, f"{type(exc).__name__}: {exc}"[:160]
+    st["lastThemeInstall"] = {"at": now_iso()}      # its windowless Chrome quit cleanly too — never a person's ⌘Q (lastStop stays the real one)
+    if ok:
+        st.update({"theme": theme_key(a), "themeId": res, "themeAt": now_iso()})
+        st.pop("themeError", None)
+        log(a, f"theme installed ({a['color']})")
+        return "installed"
+    st["themeError"] = str(res)[:200]
+    log(a, f"theme NOT installed: {res}")
+    return "failed"
+
+
+RESTORE = ("lastJob", "all", "none")   # restoreTabs: the last session less a finished job's tabs (default) · all of it · none
+
+
+def restore_flags(a):
+    """--restore-last-session unless the agent's row says restoreTabs "none" (then it opens on a fresh window)"""
+    return [] if a.get("restoreTabs") == "none" else ["--restore-last-session"]
+
+
+def chrome_args(a):
+    port = a["port"]
+    return [f"--user-data-dir={a['profile']}", f"--remote-debugging-port={port}",
+            f"--remote-allow-origins=http://127.0.0.1:{port},http://localhost:{port}",
+            "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
+            "--disable-features=OptimizationGuideOnDeviceModel", "--no-first-run", "--no-default-browser-check",
+            *restore_flags(a), "--hide-crash-restore-bubble", f"--window-name={a['label']}-CDP"]
+
+
+def tidy_apply():
+    """the tidy pass acts only when tabSweep.mode is "apply" — a dry run (the default) only reports, like the sweep"""
+    try:
+        raw = json.loads(Path(REGISTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    return rainbow_tabs.config(raw)["mode"] == "apply"
+
+
+def tidy_tabs(a, when):
+    """the tidy pass on the agent's own browser (#76) → its answer, or None when it can't run (never blocks start or idle-stop)"""
+    if a.get("managedBy") or a.get("tabSweep") is False or a.get("restoreTabs") == "all":
+        return None
+    try:
+        with cdp_for(a, timeout=10) as c:
+            res = rainbow_tabs.tidy(c, SHARED, a["name"], a.get("maxTabs", rainbow_tabs.MAX_TABS), tidy_apply())
+    except Exception as exc:
+        log(a, f"tidy on {when} failed: {type(exc).__name__}: {exc}"[:200])
+        return None
+    if res["close"]:
+        log(a, f"tidy on {when}: {res['status']} " + ", ".join(f"{x['site']} ({x['reason']})" for x in res["close"])[:300])
+    if res["closed"]:
+        rainbow_receipts.write("browser-owner", "tidy", a["name"], when, "closed", tabs=len(res["closed"]))
+    return res
+
+
+def launch_pipe(a):
+    """pipe mode: the cdp-broker starts Chrome on a pipe and stays its only CDP client"""
+    Path(a["profile"]).mkdir(parents=True, exist_ok=True)
+    log_path = SHARED / "logs" / f"cdp-broker-{a['name']}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_path, "a") as out:
+        subprocess.Popen([sys.executable, "-I", str(HERE / "cdp-broker.py"), a["name"]], stdout=out, stderr=out,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(25):
+        if healthy(a):
+            return 0, "CDP up on its pipe (cdp-broker)"
+        time.sleep(1)
+    return 1, t("bo.port_silent", port=a["port"])
+
+
+def launch(a):
+    if a.get("cdp") == "pipe":
+        return launch_pipe(a)
+    if a.get("launcher"):
+        if not Path(a["launcher"]).exists():
+            return 1, t("bo.launcher_missing", path=a["launcher"])
+        env = dict(os.environ, **{a.get("launcherEnv") or "BROWSER_OWNER_LAUNCH": "1"})
+        r = subprocess.run(["bash", a["launcher"]], capture_output=True, text=True, timeout=60, env=env, start_new_session=True)
+        return r.returncode, (r.stdout or r.stderr or "").strip()
+    Path(a["profile"]).mkdir(parents=True, exist_ok=True)
+    app = a.get("chrome_app") or CHROME_APP
+    if not Path(app).exists() and app != CHROME_APP:
+        return 1, t("bo.no_chrome_app", path=app)
+    r = subprocess.run(["open", "-g", "-n", "-a", app, "--args", *chrome_args(a)], capture_output=True, text=True,
+                       timeout=30, start_new_session=True)
+    if r.returncode != 0:
+        return r.returncode, (r.stderr or "open failed").strip()
+    for _ in range(25):
+        if healthy(a):
+            return 0, f"CDP up on {a['port']}"
+        time.sleep(1)
+    return 1, t("bo.port_silent", port=a["port"])
+
+
+FOCUS_NO_PERMISSION = "no-permission"
+
+
+def front_pid():
+    try:
+        r = subprocess.run(["osascript", "-e", 'tell application "System Events" to get unix id of first process whose frontmost is true'],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0 and "-1743" in (r.stderr or ""):
+            return FOCUS_NO_PERMISSION
+        return int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else None
+    except Exception:
+        return None
+
+
+FRONT_JXA = ("ObjC.import('AppKit'); const a = $.NSRunningApplication.runningApplicationWithProcessIdentifier(%d); "
+             "a.isNil() ? 'none' : String(a.activateWithOptions($.NSApplicationActivateAllWindows | $.NSApplicationActivateIgnoringOtherApps))")
+
+
+def set_front(pid):
+    """bring that process's windows forward. AppKit's NSRunningApplication goes first: it sends no Apple Event, so it needs no
+    Automation grant — a panel, a Dock icon or a launchd job that was never allowed to drive System Events (-1743) still
+    works. System Events stays as the fallback."""
+    try:
+        r = subprocess.run(["osascript", "-l", "JavaScript", "-e", FRONT_JXA % int(pid)], capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and r.stdout.strip() == "true":
+            return True
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(["osascript", "-e", f'tell application "System Events" to set frontmost of (first process whose unix id is {int(pid)}) to true'],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+class Cdp:
+    """a tiny standard-library WebSocket client for the browser's own CDP endpoint (browser-owner runs on whatever python3 is
+    there, with -I — no websocket package). One connection: flattened sessions (Target.attachToTarget) live as long as it."""
+    def __init__(self, port, timeout=5.0, unix=None):
+        import base64
+        import socket
+        if unix:                                     # the cdp-broker's socket (pipe mode): no port, no /json
+            path, host = "/devtools/browser/rainbowomma", "localhost"
+            self.sk = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sk.settimeout(timeout)
+            try:
+                self.sk.connect(unix)
+            except OSError:
+                self.sk.close()
+                raise
+        else:
+            with LOCAL.open(f"http://127.0.0.1:{port}/json/version", timeout=timeout) as r:
+                url = json.loads(r.read())["webSocketDebuggerUrl"]
+            path, host = "/" + url.split("/", 3)[3], f"127.0.0.1:{port}"
+            self.sk = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        self.rest, self.ids = b"", 0
+        try:
+            key = base64.b64encode(os.urandom(16)).decode()
+            self.sk.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                             f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = self.sk.recv(4096)
+                if not chunk or len(buf) > 65536:
+                    raise OSError("cdp: handshake closed")
+                buf += chunk
+            if b" 101 " not in buf.split(b"\r\n", 1)[0]:
+                raise OSError("cdp: handshake refused")
+            self.rest = buf.split(b"\r\n\r\n", 1)[1]
+        except BaseException:
+            self.sk.close()
+            raise
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.sk.close()
+
+    def _recv_exact(self, n):
+        while len(self.rest) < n:
+            chunk = self.sk.recv(65536)
+            if not chunk:
+                raise OSError("cdp: closed")
+            self.rest += chunk
+        out, self.rest = self.rest[:n], self.rest[n:]
+        return out
+
+    def _send(self, obj):
+        import struct
+        data = json.dumps(obj).encode()
+        n = len(data)
+        hdr = bytes([0x81]) + (bytes([0x80 | n]) if n < 126 else
+                               bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 else bytes([0x80 | 127]) + struct.pack(">Q", n))
+        mask = os.urandom(4)
+        self.sk.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+
+    def _recv_msg(self):
+        import struct
+        while True:
+            b1, b2 = self._recv_exact(2)
+            n = b2 & 0x7F
+            if n == 126:
+                n = struct.unpack(">H", self._recv_exact(2))[0]
+            elif n == 127:
+                n = struct.unpack(">Q", self._recv_exact(8))[0]
+            if n > 32 * 1024 * 1024:
+                raise OSError("cdp: a message larger than 32 MB")          # a squatter on the port can't make us read forever
+            payload = self._recv_exact(n)
+            if b1 & 0x0F == 1:
+                return json.loads(payload.decode("utf-8"))
+
+    def call(self, method, params=None, session=None):
+        """one CDP command (in a flattened session when given) → its result; events in between are skipped. Raises on an error"""
+        self.ids += 1
+        msg = {"id": self.ids, "method": method, "params": params or {}}
+        if session:
+            msg["sessionId"] = session
+        self._send(msg)
+        while True:
+            m = self._recv_msg()
+            if m.get("id") == self.ids:
+                if "error" in m:
+                    raise OSError(f"cdp {method}: {m['error'].get('message')}")
+                return m.get("result") or {}
+
+
+def cdp_for(a, timeout=5.0):
+    """a CDP connection to the agent's own browser: its port, or in pipe mode the broker's socket"""
+    if a.get("cdp") == "pipe":
+        return Cdp(None, timeout, unix=str(SHARED / "cdp" / a["name"] / "cdp.sock"))
+    return Cdp(a["port"], timeout)
+
+
+def _cdp_browser_calls(port, calls, timeout=5.0):
+    """calls = [(method, params)] on one connection → their results, in order. Raises on any failure."""
+    with Cdp(port, timeout) as c:
+        return [c.call(method, params) for method, params in calls]
+
+
+def restore_windows(a):
+    """activating an app never un-minimizes its windows: through the agent's own CDP, every minimized window of its
+    browser goes back to normal, and the tab already shown is activated (never another tab). → windows restored (0 also when
+    CDP did not answer)"""
+    try:
+        with cdp_for(a) as c:
+            targets = c.call("Target.getTargets").get("targetInfos", [])
+            wins = {}
+            for tid in [x["targetId"] for x in targets if x.get("type") == "page"]:
+                try:
+                    r = c.call("Browser.getWindowForTarget", {"targetId": tid})
+                    wins[r["windowId"]] = (r.get("bounds") or {}).get("windowState")
+                except Exception:
+                    continue
+            todo = [w for w, state in wins.items() if state == "minimized"]
+            for w in todo:
+                c.call("Browser.setWindowBounds", {"windowId": w, "bounds": {"windowState": "normal"}})
+        shown = []
+        if a.get("cdp") != "pipe":
+            try:                                 # Chrome lists the most recently active page first: the one already shown
+                with LOCAL.open(f"http://127.0.0.1:{a['port']}/json/list", timeout=3) as r:
+                    shown = [x["id"] for x in json.loads(r.read()) if x.get("type") == "page"][:1]
+            except Exception:
+                shown = []
+        else:
+            shown = [x["targetId"] for x in targets if x.get("type") == "page"][:1]
+        if shown:                                # on macOS this also de-miniaturizes that window (Chrome's windowState can lag the Dock)
+            with cdp_for(a) as c:
+                c.call("Target.activateTarget", {"targetId": shown[0]})
+        return len(todo)
+    except Exception:
+        return 0
+
+
+def _auth_owner():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("rainbow_auth_owner", str(HERE / "auth-owner.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def do_open(a, url, by):
+    """open URL in the agent's OWN browser (a new tab, brought to the front of its window) — never in the human's.
+    Its browser is started first if it is down (the usual start rules: a browser the human closed stays closed); a site
+    listed in authSites is taken for this agent first (auth-owner)."""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(str(url or "").strip())
+    except ValueError:
+        u = None
+    if not u or u.scheme not in ("http", "https") or not u.hostname:
+        return 2, {"status": "refused", "why": "only an http(s) address opens in an agent's browser"}
+    sites = auth_sites()
+    if sites:
+        ao = _auth_owner()
+        site = ao.covered(u.hostname, sites)
+        if site:
+            code, res = ao.cmd_lease(a["name"], site, ao.DEFAULT_MINUTES, 0)
+            if code:
+                return code, res
+    if not healthy(a):
+        code, res = do_start(a, by)
+        if code or res.get("status") not in ("started", "already-up"):
+            return code or 1, res
+    with cdp_for(a, timeout=10) as c:
+        tid = c.call("Target.createTarget", {"url": u.geturl()}).get("targetId")
+        if tid:
+            c.call("Target.activateTarget", {"targetId": tid})
+    shown = by != "human" and not rainbow_presence.presence()["present"] and do_front(a)[0] == 0   # nobody here: to the front (#35)
+    log(a, f"open by {by}: {u.hostname}{' — brought to the front, nobody at the Mac' if shown else ''}")
+    return 0, {"status": "opened", "targetId": tid, "site": u.hostname, "front": shown}
+
+
+def do_front(a):
+    """the agent's browser to the front for the human — a minimized window comes back first"""
+    roots = tree_of(a, processes())[0]
+    if not roots:
+        return 1, {"status": "down", "why": t("bo.front_down", label=a["label"])}
+    restored = restore_windows(a)
+    ok = set_front(roots[0])
+    return (0 if ok else 1), {"status": "front" if ok else "no-front", "pid": roots[0], "restored": restored}
+
+
+def give_focus_back(a, before, wait=4.0):
+    if before is None:
+        return "unknown"
+    if before == FOCUS_NO_PERMISSION:
+        return FOCUS_NO_PERMISSION
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        now = front_pid()
+        if now in (None, FOCUS_NO_PERMISSION):
+            return "unknown" if now is None else FOCUS_NO_PERMISSION
+        _, tree = tree_of(a, processes())
+        if now in tree and before not in tree:
+            return "restored" if set_front(before) and front_pid() == before else "lost"
+        if now != before:
+            return "user-moved"
+        time.sleep(0.5)
+    return "kept"
+
+
+def view(a, st=None, rows=None):
+    """the read-only picture of one agent's browser"""
+    rows = processes() if rows is None else rows
+    st = load(a) if st is None else st
+    roots, tree = tree_of(a, rows)
+    up = healthy(a)
+    foreign = foreign_roots(a, rows)
+    busy = profile_users(a, rows)
+    if up and not roots:
+        status = "blocked"
+    elif up:
+        status = "up"
+    elif busy:
+        status = "profile-busy"
+    else:
+        status = "hung" if roots else "down"
+    return {"agent": a["name"], "label": a["label"], "color": a["color"], "port": a["port"], "status": status, "up": status == "up",
+            "roots": roots, "processes": len(tree), "foreignRoots": foreign, "cdp": a.get("cdp", "port"), "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")), "themePending": bool(st.get("themePending")),
+            "idleMinutes": a.get("idleMinutes"), "idleSince": st.get("idleSince"),
+            "offAt": st.get("offAt"), "lastExitType": last_exit_type(a), "lastStart": st.get("lastStart"),
+            "lastStop": st.get("lastStop"), "managedBy": a.get("managedBy")}
+
+
+def reconcile(a, st, v):
+    if not st.get("offByHuman") or v["status"] != "up":
+        return st
+    try:
+        off = time.mktime(time.strptime(st.get("offAt", "")[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        off = 0
+    if time.time() - off < STALE_FLAG_AFTER:
+        return st
+    st["offByHuman"] = False
+    st["reconciledAt"] = now_iso()
+    save(a, st)
+    log(a, "offByHuman cleared — its browser is up (opened outside the owner)")
+    return st
+
+
+def blocked(v, a=None):
+    who = (f"pid {v['foreignRoots']}" if v.get("foreignRoots") else "") or (listener(a) if a else "") or t("bo.unknown_process")
+    return 1, {"status": "blocked", "why": t("bo.blocked", port=v["port"], label=v["label"], who=who)}
+
+
+def profile_busy(v):
+    return 1, {"status": "profile-busy", "why": t("bo.profile_busy", label=v["label"], pids=v["profileBusy"])}
+
+
+def do_start(a, by):
+    st = load(a)
+    v = view(a, st)
+    if v["status"] == "blocked":
+        return blocked(v, a)
+    if v["status"] == "profile-busy":
+        return profile_busy(v)
+    st = reconcile(a, st, v)
+    bad = profile_unsafe(a)
+    if bad:
+        return 2, {"status": "refused", "why": f"{bad} — the profile must be the agent's own folder; ask the human to check it"}
+    if st.get("offByHuman") and by != "human":
+        return 2, {"status": "refused", "why": t("bo.refused_off", label=a["label"], at=st.get("offAt"))}
+    if by == "human" and st.get("offByHuman"):
+        st["offByHuman"] = False
+        save(a, st)
+    if v["status"] == "up":
+        return 0, {"status": "already-up"}
+    if v["status"] == "hung":
+        return 1, {"status": "hung", "why": t("bo.hung", label=a["label"], pids=v["roots"])}
+    if by != "human" and quit_by_person(a, st=st):
+        return 2, {"status": "closed-by-person", "why": t("bo.closed_by_person", label=a["label"])}
+    theme = ensure_theme(a, st) if not a.get("noTheme") else "off"
+    painted = paint(a, themed=theme in ("installed", "kept"))
+    away = by != "human" and not rainbow_presence.presence()["present"]     # nobody here: show the agent's window (#35)
+    before = front_pid() if by != "human" and not away else None
+    rc, text = launch(a)
+    ok = rc == 0 and healthy(a, timeout=5)
+    focus = ("front" if do_front(a)[0] == 0 else "unknown") if ok and away else give_focus_back(a, before) if ok and by != "human" else "human"
+    tidied = tidy_tabs(a, "start") if ok and by != "human" else None    # the human opened it to look: nothing closes under them
+    st["lastStart"] = {"at": now_iso(), "by": by, "ok": ok, "out": text[:200], "painted": len(painted), "focus": focus, "theme": theme}
+    save(a, st)
+    log(a, f"start by {by}: {'ok' if ok else 'FAILED'} {text[:200]}")
+    return (0 if ok else 1), {"status": "started" if ok else "failed", "detail": text[:200], **({"tidy": tidied} if tidied else {})}
+
+
+def do_stop(a, by, allow_reopen=False):
+    if by != "human":
+        return 2, {"status": "refused", "why": t("bo.only_human_stops", label=a["label"])}
+    rows = processes()
+    roots, tree = tree_of(a, rows)
+    st = load(a)
+    st.update({"offByHuman": not allow_reopen, "offAt": None if allow_reopen else now_iso(),
+               "lastStop": {"at": now_iso(), "by": by, "pids": len(tree), **({"allowReopen": True} if allow_reopen else {})}})
+    save(a, st)
+    left = terminate_tree(tree) if tree else []
+    log(a, f"stop by {by}: {len(tree)} processes, {len(left)} needed KILL")
+    return 0, {"status": "stopped", "processes": len(tree), "killed": len(left)}
+
+
+def started_ago(st):
+    try:
+        return time.time() - time.mktime(time.strptime(str((st.get("lastStart") or {}).get("at", ""))[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def do_idle_stop(a, by):
+    if not a.get("idleMinutes"):
+        return 2, {"status": "refused", "why": t("bo.no_idle", label=a["label"])}
+    if (by in a.get("peers", ()) and by != a["name"]) or by == "human":   # one agent never closes another agent's browser
+        return 2, {"status": "refused", "why": t("bo.idle_not_yours", by=by, label=a["label"])}
+    rows = processes()
+    roots, tree = tree_of(a, rows)
+    if not tree:
+        return 0, {"status": "not-running"}
+    st = load(a)
+    ago = started_ago(st)
+    if ago is None:                                            # opened outside the owner: how long it has been idle can't be told
+        return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=0, idle=a["idleMinutes"])}
+    if 0 <= ago < a["idleMinutes"] * 60:   # opened more recently than its idle time — cannot be idle yet
+        return 2, {"status": "refused", "why": t("bo.idle_too_soon", label=a["label"], mins=int(ago // 60), idle=a["idleMinutes"])}
+    jobs = None                          # first: what its job opened closes (no question — it is idle), then the tidy pass
+    try:
+        with cdp_for(a, timeout=10) as c:
+            jobs = rainbow_tabs.idle_close(c, SHARED, a["name"])
+    except Exception as exc:
+        log(a, f"idle-stop: closing the job's tabs failed: {type(exc).__name__}: {exc}"[:200])
+    tidied = tidy_tabs(a, "idle-stop") if jobs is not None else None    # its CDP answered: tidy too
+    st["lastStop"] = {"at": now_iso(), "by": by, "pids": len(tree), "idle": True}
+    save(a, st)
+    left = terminate_tree(tree)
+    log(a, f"idle-stop by {by}: {len(tree)} processes, {len(left)} needed KILL")
+    return 0, {"status": "stopped", "processes": len(tree), "killed": len(left), "idle": True,
+               **({"jobTabs": jobs} if jobs and jobs.get("closed") else {}), **({"tidy": tidied} if tidied else {})}
+
+
+def do_recover(a, by):
+    st = load(a)
+    rows = processes()
+    v = view(a, st, rows)
+    if v["status"] == "blocked":
+        return blocked(v, a)
+    if v["status"] == "profile-busy":
+        return profile_busy(v)
+    st = reconcile(a, st, v)
+    if st.get("offByHuman") and by != "human":
+        return 2, {"status": "refused", "why": t("bo.refused_off_short", label=a["label"], at=st.get("offAt"))}
+    if v["status"] == "up":
+        return 0, {"status": "healthy"}
+    roots, tree = tree_of(a, rows)
+    if len(roots) > 1:
+        return 1, {"status": "failed", "why": t("bo.many_roots", label=a["label"], roots=roots)}
+    if tree and by != "human":
+        if not really_down(a):
+            return 0, {"status": "healthy", "why": t("bo.healthy_recheck")}
+        if healthy(a, timeout=5):
+            return 0, {"status": "healthy", "why": t("bo.healthy_last")}
+    if tree:
+        roots2, tree2 = tree_of(a, processes())
+        if roots2 != roots:
+            return 1, {"status": "failed", "why": t("bo.tree_changed", before=roots, after=roots2)}
+        tree = tree2
+    left = terminate_tree(tree) if tree else []
+    if tree:
+        log(a, f"recover by {by}: closed a hung browser ({len(tree)} processes, {len(left)} KILL)")
+        time.sleep(1)
+    return do_start(a, by)
+
+
+CHROME_VER_FILE = SHARED / "chrome-version.json"
+DOCK_APPS = Path(os.path.expanduser(os.environ.get("RAINBOW_DOCK_APPS") or "~/Applications/RainbowOMMA"))   # make-dock-tray.sh's
+
+
+def chrome_version():
+    try:
+        out = subprocess.run(["/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", f"{CHROME_APP}/Contents/Info.plist"],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+        return out or None
+    except Exception:
+        return None
+
+
+def notify(title, text):
+    try:
+        subprocess.run(["osascript", "-e", f"display notification {json.dumps(text)} with title {json.dumps(title)}"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+THEME_ESCALATE_RUNS = 8            # heal runs every 30 min: ~4 h uncolored, then say it again (at most once a day)
+AUTH_LEASES = None                 # tests replace it: () -> {site: {"holder": …}}
+
+
+def _iso_ago(text):
+    try:
+        return time.time() - time.mktime(time.strptime(str(text or "")[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def _auth_holders():
+    if AUTH_LEASES:
+        return {v.get("holder") for v in AUTH_LEASES().values()}
+    try:
+        import importlib.machinery
+        import importlib.util
+        loader = importlib.machinery.SourceFileLoader("rainbow_auth_owner", str(HERE / "auth-owner.py"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        mod = importlib.util.module_from_spec(spec)
+        loader.exec_module(mod)
+        return {v.get("holder") for v in mod.leases().values()}
+    except Exception:
+        return None                                      # can't tell → treated as busy by the caller
+
+
+def idle_signals(a):
+    """→ (a client is attached to one of its tabs, a fingerprint of its tabs) through the agent's own CDP; raises if unreadable"""
+    with cdp_for(a, timeout=5) as c:
+        pages = [x for x in c.call("Target.getTargets").get("targetInfos", []) if x.get("type") == "page"]
+    attached = any(x.get("attached") for x in pages)
+    snap = "|".join(sorted(f"{x.get('targetId')}={x.get('url')}" for x in pages))
+    return attached, hashlib.sha256(snap.encode()).hexdigest()[:16]
+
+
+def auto_idle(reg, rows=None):
+    """the built-in reaper (#44): an agent with idleMinutes whose browser has had no client attached to any tab and no tab
+    change for idleMinutes, and holds no auth-owner lease, is stopped like `idle-stop --by auto-idle`. Anything it can't
+    read means busy — never a stop on a guess. Never the human's browser, never a managedBy one."""
+    rows = processes() if rows is None else rows
+    holders, out = _auth_holders(), []
+    for name, a in reg.items():
+        if not a.get("idleMinutes") or a.get("managedBy"):
+            continue
+        st = load(a)
+        if view(a, st=st, rows=rows)["status"] != "up":
+            continue
+        if holders is None or name in holders:
+            out.append({"agent": name, "idle": "busy", "why": "signing in (auth-owner)" if holders else "auth leases unreadable"})
+            continue
+        try:
+            attached, snap = idle_signals(a)
+        except Exception as exc:
+            out.append({"agent": name, "idle": "unknown", "why": f"{type(exc).__name__}"})
+            continue
+        if attached or st.get("idleSnap") != snap:
+            st.update({"idleSnap": snap, "idleSince": now_iso()})
+            save(a, st)
+            out.append({"agent": name, "idle": "active" if attached else "changed"})
+            continue
+        quiet = _iso_ago(st.get("idleSince"))
+        if quiet is None or quiet < a["idleMinutes"] * 60:
+            out.append({"agent": name, "idle": "quiet", "minutes": int((quiet or 0) // 60)})
+            continue
+        try:
+            lk = open_lock(a["lock"])
+        except OSError:
+            continue
+        with lk:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                continue
+            a["peers"] = list(reg)
+            code, res = do_idle_stop(a, "auto-idle")
+        rainbow_receipts.write("browser-owner", "idle-stop", name, "auto-idle", res.get("status"), minutes=int(quiet // 60))
+        log(a, f"auto-idle: no client and no tab change for {int(quiet // 60)} min → {res.get('status')}")
+        out.append({"agent": name, "idle": res.get("status"), "minutes": int(quiet // 60)})
+    return out
+
+
+def heal(reg):
+    """keep every agent's colors: a CLOSED browser whose theme is gone (Chrome Sync, a settings reset) gets it back now
+    (windowless install, under its lock); an OPEN one is never restarted from here — one notification, and its next start
+    puts it back. A Chrome update is recorded, with one notification on whether every theme and Dock applet is in place."""
+    idle = auto_idle(reg)                    # first: a browser it stops gets its colors back in this same run
+    rows = processes()
+    out = []
+    for name, a in reg.items():
+        if a.get("managedBy") or a.get("noTheme"):
+            continue
+        st = load(a)
+        if st.get("theme") == theme_key(a) and theme_saved(a):
+            if any(st.pop(k, None) is not None for k in ("themeMissingSince", "themeMissingRuns", "themePending", "themeEscalatedAt")):
+                save(a, st)
+            out.append({"agent": name, "theme": "ok"})
+            continue
+        if profile_unsafe(a):
+            out.append({"agent": name, "theme": "profile-unsafe"})
+            continue
+        v = view(a, st=st, rows=rows)
+        if v["roots"] or v.get("profileBusy"):
+            if not st.get("themeMissingSince"):
+                st["themeMissingSince"] = now_iso()
+                notify("RainbowOMMA", t("bo.heal_missing_open", label=a["label"]))
+                log(a, "heal: theme missing while the browser is open — put back on the next start")
+            st["themeMissingRuns"] = int(st.get("themeMissingRuns") or 0) + 1
+            st["themePending"] = True            # re-applied at the next stop — the idle one included
+            gone = _iso_ago(st["themeMissingSince"]) or 0
+            again = _iso_ago(st.get("themeEscalatedAt"))
+            if st["themeMissingRuns"] >= THEME_ESCALATE_RUNS and (again is None or again >= 86400):
+                st["themeEscalatedAt"] = now_iso()
+                notify("RainbowOMMA", t("bo.heal_missing_still", label=a["label"], hours=int(gone // 3600)))
+                log(a, f"heal: theme still missing after {int(gone // 3600)} h of open browser — told the human again")
+            save(a, st)
+            out.append({"agent": name, "theme": "missing-open", "since": st.get("themeMissingSince"), "runs": st["themeMissingRuns"]})
+            continue
+        try:
+            lk = open_lock(a["lock"])
+        except OSError:
+            out.append({"agent": name, "theme": "busy"})
+            continue
+        with lk:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                out.append({"agent": name, "theme": "busy"})
+                continue
+            res = ensure_theme(a, st)
+            for k in ("themeMissingSince", "themeMissingRuns", "themePending", "themeEscalatedAt"):
+                st.pop(k, None)
+            save(a, st)
+            log(a, f"heal: theme {res} while the browser was closed")
+            out.append({"agent": name, "theme": res})
+    if (THEMES / "human-human").exists() and not theme_clean("human-human"):     # the human loaded it into their own Chrome
+        build_theme({"name": "human-human", "label": t("bo.human_label"), "color": "#B0BEC5"}, text=t("bo.human_text"),
+                    title=t("bo.human_title"))
+        out.append({"agent": "human", "theme": "rebuilt"})
+    ver, prev = chrome_version(), None
+    try:
+        prev = json.loads(CHROME_VER_FILE.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        pass
+    apps = sorted(p.name for p in DOCK_APPS.glob("*.app")) if DOCK_APPS.exists() else []
+    missing_apps = [x["label"] for x in reg.values() if apps and not any(f"· {x['label']} —" in n for n in apps)]
+    if ver and ver != prev:
+        atomic_write(CHROME_VER_FILE, json.dumps({"version": ver, "at": now_iso(), "previous": prev}, ensure_ascii=False))
+        if prev:
+            bad = [x["agent"] for x in out if x["theme"] not in ("ok", "kept", "installed")] + missing_apps
+            notify("RainbowOMMA", t("bo.heal_chrome_ok", ver=ver) if not bad else t("bo.heal_chrome_check", ver=ver, names=", ".join(bad)))
+    return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps,
+            "idle": idle}
+
+
+def _broker():
+    import importlib.machinery
+    import importlib.util
+    loader = importlib.machinery.SourceFileLoader("rainbow_cdp_broker", str(HERE / "cdp-broker.py"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+MCP_TOOLS = {   # the browser MCP servers an agent can point at ITS OWN browser — never the human's (no --autoConnect, no extension)
+    "devtools": lambda port: ["-y", "chrome-devtools-mcp@1.11.0", "--browserUrl", f"http://127.0.0.1:{port}"],     # pinned: it drives
+    "playwright": lambda port: ["-y", "@playwright/mcp@0.0.83", "--cdp-endpoint", f"http://127.0.0.1:{port}"],      # a browser's CDP
+}
+
+
+def mcp_config(a, tool="devtools", fmt="json"):
+    """a ready-made MCP server entry that drives the agent's own browser through its CDP port (in pipe mode: the
+    broker's WebSocket, with the agent's token in its path)"""
+    server = {"command": "npx", "args": MCP_TOOLS[tool](a["port"])}
+    if a.get("cdp") == "pipe":
+        tok = _broker().ensure_token(SHARED, a["name"])
+        ws = f"ws://127.0.0.1:{a['port']}/devtools/browser/{tok}"
+        server["args"] = [x if not x.startswith("http://127.0.0.1:") else ws for x in server["args"]]
+        server["args"] = ["--wsEndpoint" if x == "--browserUrl" else x for x in server["args"]]
+    name = f"{a['name']}-browser"
+    if fmt == "claude":
+        return {"status": "ok", "name": name, "command": f"claude mcp add-json --scope user {name} '{json.dumps(server)}'"}
+    return {"status": "ok", "name": name, "mcpServers": {name: server}}
+
+
+def tabs(reg, only=None, apply=None, scheduled=False):
+    """tab housekeeping across the agents' own browsers (rainbow_tabs): a tab hot for long and stale is reloaded, then closed.
+    apply=None → the registry's tabSweep.mode (dry-run unless it says apply)"""
+    try:
+        raw = json.loads(Path(REGISTRY).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    cfg = rainbow_tabs.config(raw)
+    apply = cfg["mode"] == "apply" if apply is None else apply
+    results = []
+    for name, a in reg.items():
+        if only and name != only:
+            continue
+        if a.get("managedBy") or a.get("tabSweep") is False or name in cfg["exclude"]:
+            results.append({"agent": name, "status": "excluded", "tabs": []})
+            continue
+        try:
+            lk = open_lock(a["lock"])
+        except OSError:
+            results.append({"agent": name, "status": "busy", "tabs": []})
+            continue
+        with lk:
+            try:
+                fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                results.append({"agent": name, "status": "busy", "tabs": []})     # starting or stopping right now
+                continue
+            try:
+                r = rainbow_tabs.sweep_agent(a, cfg, apply, view, SHARED, cdp_for)
+                if r["status"] == "swept" and rainbow_tabs.load_state(rainbow_tabs.jobs_path(SHARED, name)).get("pending"):
+                    with cdp_for(a, timeout=10) as c:      # a job's tabs nobody kept, once their grace ran out (#43)
+                        r["jobTabs"] = rainbow_tabs.job_close(c, SHARED, name, only_expired=True)
+            except Exception as exc:
+                r = {"agent": name, "status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200], "tabs": []}
+        for tab in r["tabs"]:
+            if not tab.get("action"):
+                continue
+            what = f"tab {tab['action']}{'' if tab.get('done') else ' (dry run)' if tab['action'] in ('reload', 'close') else ''}: " \
+                   f"{rainbow_tabs.host(tab['url'])} at {tab['cpu']}% for {tab['hotForMinutes']} min, seen {tab['seenForHours']} h"
+            log(a, what)
+            if tab.get("done"):
+                rainbow_receipts.write("browser-owner", f"tab-{tab['action']}", name, "tab-sweep", "done",
+                                       site=rainbow_tabs.host(tab["url"]), cpu=tab["cpu"], minutes=tab["hotForMinutes"])
+                if tab["action"] == "close":
+                    notify("RainbowOMMA", f"{a['label']}: closed a tab that kept a CPU core busy — {rainbow_tabs.host(tab['url'])} "
+                                          f"({tab['cpu']}% for {tab['hotForMinutes']} min, after a reload)")
+        if r.get("gpuAlert"):
+            log(a, f"GPU process at {r['gpu']}% of a core for {r['gpuHotMinutes']} min")
+            notify("RainbowOMMA", f"{a['label']}: its browser's GPU process has used {r['gpu']}% of a core for "
+                                  f"{r['gpuHotMinutes']} min — a tab with animation or video? `browser-owner tabs {name}`")
+        results.append(r)
+    counts = rainbow_tabs.summarize(results, cfg["cpuPercent"])
+    out = {"status": "swept", "mode": "apply" if apply else "dry-run", "counts": counts, "agents": results}
+    if scheduled:
+        prev = rainbow_tabs.daily(SHARED, counts)
+        if prev and any(prev[k] for k in ("reloaded", "closed", "wouldReload", "wouldClose")):
+            line = (f"tabs on {prev['day']}: {prev['reloaded']} reloaded, {prev['closed']} closed"
+                    + (f" · dry run: would reload {prev['wouldReload']}, close {prev['wouldClose']}" if prev["wouldReload"] or prev["wouldClose"] else ""))
+            notify("RainbowOMMA", line)
+            out["daily"] = prev
+    return out
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="browser-owner")
+    ap.add_argument("cmd", choices=["list", "names", "windows", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
+                                    "tabs", "open", "job-start", "job-end", "job-keep", "job-close", "presence"])
+    ap.add_argument("agent", nargs="?")
+    ap.add_argument("url", nargs="*", help="open: the address to open in the agent's own browser · job-keep: the tab ids to keep")
+    ap.add_argument("--grace", type=float, default=rainbow_tabs.JOB_GRACE_S, help="job-end: seconds before unkept tabs close by themselves")
+    ap.add_argument("--by", default="agent", help="human | keepalive | host | <agent name>")
+    ap.add_argument("--allow-reopen", action="store_true", help="stop: the human closes it now, the agents may open it again")
+    ap.add_argument("--tool", choices=sorted(MCP_TOOLS), default="devtools", help="mcp-config: which browser MCP server")
+    ap.add_argument("--format", choices=["json", "claude"], default="json", help="mcp-config: an mcpServers entry, or a claude mcp add-json line")
+    ap.add_argument("--apply", action="store_true", help="tabs: act now (reload / close), whatever tabSweep.mode says")
+    ap.add_argument("--scheduled", action="store_true", help="tabs / heal: the launchd run — tabs: tabSweep.mode decides, one summary a "
+                    "day; heal: prints only what changed (stamped), and rotates the logs")
+    a = ap.parse_args(argv)
+    me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
+    if me and a.by.strip().lower() not in (me, "agent", "keepalive"):        # an agent acts as itself — never as the human or a peer
+        print(rainbow_next.dumps({"status": "refused", "why": t("bo.idle_not_yours", by=a.by, label=me)}, ensure_ascii=False))
+        return 2
+    if me and a.by.strip().lower() == "agent":
+        a.by = me
+    try:
+        reg = registry()
+    except FileNotFoundError:
+        print(rainbow_next.dumps({"status": "failed", "why": t("bo.no_registry", path=REGISTRY)}, ensure_ascii=False))
+        return 1
+    except Exception as exc:
+        print(rainbow_next.dumps({"status": "failed", "why": f"registry: {type(exc).__name__}: {exc}"[:300]}, ensure_ascii=False))
+        return 1
+    if a.cmd == "human-theme":
+        d = build_theme({"name": "human-human", "label": t("bo.human_label"), "color": "#B0BEC5"}, text=t("bo.human_text"),
+                        title=t("bo.human_title"))
+        print(rainbow_next.dumps({"status": "built", "folder": str(d)}, ensure_ascii=False))
+        return 0
+    if a.cmd == "tabs":
+        only = (a.agent or "").strip().lower() or None
+        if me and only != me:                                     # an agent sweeps its own browser only
+            print(rainbow_next.dumps({"status": "refused", "why": f"you are {me}: `browser-owner tabs {me}` sweeps your own tabs only"}))
+            return 2
+        if only and only not in reg:
+            print(rainbow_next.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(only), names=", ".join(reg))}, ensure_ascii=False))
+            return 1
+        try:
+            print(rainbow_next.dumps(tabs(reg, only, True if a.apply else None, a.scheduled), ensure_ascii=False))
+            return 0
+        except Exception as exc:   # one JSON answer, always
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
+    if a.cmd == "heal":
+        try:
+            res = heal(reg)
+            for x in res["agents"]:
+                if x["theme"] not in ("ok", "kept"):
+                    rainbow_receipts.write("browser-owner", "heal", x["agent"], "heal", x["theme"])
+            if a.scheduled:                  # the launchd job: changes only (and a daily heartbeat), stamped, logs rotated
+                rainbow_receipts.quiet_print("heal", res)
+            else:
+                print(rainbow_next.dumps(res, ensure_ascii=False))
+            return 0
+        except Exception as exc:   # one JSON answer, always
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
+    if a.cmd == "presence":                  # is the human at the Mac? (the same answer every tool uses)
+        print(rainbow_next.dumps(rainbow_presence.presence(), ensure_ascii=False))
+        return 0
+    if a.cmd == "names":
+        # plain words for shell callers (kill-chrome --all): the agents this owner may stop — no JSON parsing in bash
+        print(" ".join(n for n, x in reg.items() if not x.get("managedBy")))
+        return 0
+    if a.cmd == "windows":
+        # the agent browsers running now, by the name their window carries (--window-name) — what the Dock's "Agents"
+        # applet lists, so a minimized agent window can be found by name (#77)
+        try:
+            rows = processes()
+            up = [x for x in reg.values() if view(x, rows=rows).get("status") == "up"]
+            print(rainbow_next.dumps({"windows": [{"agent": x["name"], "label": x["label"], "color": x["color"],
+                                                   "window": f"{x['label']}-CDP"} for x in up]}, ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
+    if a.cmd == "list" or (a.cmd == "status" and not a.agent):
+        try:
+            rows = processes()
+            print(rainbow_next.dumps({"agents": [view(x, rows=rows) for x in reg.values()]}, ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
+    ag = reg.get((a.agent or "").strip().lower())
+    if not ag:
+        print(rainbow_next.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(a.agent), names=", ".join(reg))}, ensure_ascii=False))
+        return 1
+    if a.cmd == "status":
+        print(rainbow_next.dumps(view(ag), ensure_ascii=False))
+        return 0
+    if a.cmd == "mcp-config":
+        print(rainbow_next.dumps(mcp_config(ag, a.tool, a.format), ensure_ascii=False))
+        return 0
+    if a.cmd in ("job-start", "job-end", "job-keep", "job-close"):   # a job's tabs (#43): the agent's own, through its own CDP
+        try:
+            if a.cmd == "job-keep":
+                code, out = 0, rainbow_tabs.job_keep(SHARED, ag["name"], a.url or [])
+            elif not healthy(ag):
+                code, out = 1, {"status": "down", "why": t("bo.front_down", label=ag["label"])}
+            else:
+                with cdp_for(ag, timeout=10) as c:
+                    if a.cmd == "job-start":
+                        code, out = 0, rainbow_tabs.job_start(c, SHARED, ag["name"])
+                    elif a.cmd == "job-end":
+                        code, out = rainbow_tabs.job_end(c, SHARED, ag["name"], max(0.0, min(a.grace, 3600.0)))
+                    else:
+                        code, out = 0, rainbow_tabs.job_close(c, SHARED, ag["name"])
+        except Exception as exc:   # one JSON answer, always
+            code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+        if out.get("closed"):
+            rainbow_receipts.write("browser-owner", "job-close", ag["name"], ag["name"], "closed", tabs=len(out["closed"]))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
+        return code
+    if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
+        code, out = do_front(ag)
+        rainbow_receipts.write("browser-owner", "front", ag["name"], "human", out.get("status"), restored=out.get("restored"))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
+        return code
+    if ag.get("managedBy"):
+        print(rainbow_next.dumps({"status": "refused", "why": t("bo.managed", label=ag["label"], by=ag["managedBy"])}, ensure_ascii=False))
+        return 2
+    ag["peers"] = list(reg)
+    try:
+        lk = open_lock(ag["lock"])
+    except OSError as exc:
+        print(rainbow_next.dumps({"status": "failed", "why": f"lock: {type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+        return 1
+    with lk:
+        try:
+            fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            print(rainbow_next.dumps({"status": "busy", "why": t("bo.busy")}, ensure_ascii=False))
+            return 1
+        fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover, "open": do_open}[a.cmd]
+        try:
+            code, out = fn(ag, a.by.strip().lower(), a.allow_reopen) if a.cmd == "stop" else \
+                fn(ag, (a.url or [""])[0], a.by.strip().lower()) if a.cmd == "open" else fn(ag, a.by.strip().lower())
+        except Exception as exc:   # one JSON answer, always
+            code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+    rainbow_receipts.write("browser-owner", a.cmd, ag["name"], a.by.strip().lower(), out.get("status"), why=out.get("why"))
+    print(rainbow_next.dumps(out, ensure_ascii=False))
+    return code
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__))); __import__("rainbow_help").handle(__file__)   # --help: one shape, never acts
+    sys.exit(main())

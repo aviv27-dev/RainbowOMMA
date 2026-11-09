@@ -1,0 +1,57 @@
+name: rainbowomma
+version: "0.1.0"
+manifest_version: 2
+description: "One Mac, one human, many agents. Each Hermes profile gets its own colour-framed Chrome, its own ports, processes, clipboard and document leases in Word/Excel/PDF, and a guard that refuses the commands that would hit the human or another agent (pkill Chrome, quitting Word, taking a port that isn't yours). Idle tabs, documents and apps the agent opened are cleaned up after it. macOS only."
+author: "aviv27-dev"
+license: Apache-2.0
+homepage: https://github.com/aviv27-dev/RainbowOMMA
+tags: [macos, multi-agent, browser, guardrail, office]
+requires_hermes: ">=0.22.5"
+provides_tools:
+  - rainbow_start_browser
+  - rainbow_browser_status
+  - rainbow_recover_browser
+  - rainbow_open_url
+  - rainbow_job_start
+  - rainbow_job_end
+  - rainbow_keep_tabs
+  - rainbow_close_job_tabs
+  - rainbow_tidy_tabs
+  - rainbow_lease_port
+  - rainbow_release_port
+  - rainbow_who_port
+  - rainbow_whose_process
+  - rainbow_stop_process
+  - rainbow_my_processes
+  - rainbow_take_screen
+  - rainbow_release_screen
+  - rainbow_take_login
+  - rainbow_release_login
+  - rainbow_open_document
+  - rainbow_close_document
+  - rainbow_renew_document
+  - rainbow_convert_to_pdf
+  - rainbow_recalc_workbook
+  - rainbow_documents
+  - rainbow_clip_copy
+  - rainbow_clip_paste
+  - rainbow_sim_lease
+  - rainbow_sim_release
+  - rainbow_status
+provides_hooks:
+  - pre_tool_call
+  - on_session_start
+  - on_session_finalize
+config_schema:
+  agent_name: {type: str, default: "", description: "This agent's name on the shared Mac. Empty: the Hermes profile's name."}
+  color: {type: str, default: "", description: "Frame colour of this agent's browser, #RRGGBB. Empty: the next free colour. Used when the agent is first registered."}
+  idle_minutes: {type: int, default: 30, description: "Stop this agent's browser after this many minutes with nobody driving it (0: never). Used when the agent is first registered."}
+  tab_cleanup: {type: str, default: "apply", description: "Tab housekeeping in the agent's own browser: apply (reload hot tabs, close old idle ones), dry-run (report only) or off."}
+  housekeeping_minutes: {type: int, default: 5, description: "How often the idle cleanup runs inside Hermes (tabs, expired document leases, apps an agent launched). 0 turns the timer off."}
+  guard: {type: bool, default: true, description: "Refuse commands that would hit the human or another agent. Off: the tools still work, nothing is refused."}
+  mark_commands: {type: str, default: "auto", description: "Prefix the agent's shell commands with its identity (export RAINBOW_AGENT=…) so the processes they start are known as its own: auto (only when one Hermes process serves several profiles), always, never."}
+  extra_apps: {type: dict, default: {}, description: "More document apps for the leases, beside Word, Excel, Acrobat and Preview. Example: {textedit: {app: TextEdit, extensions: [.txt]}}. For a Microsoft app add suite: office and collection: presentations."}
+  language: {type: str, default: "en", description: "Language of the owners' answers and of the text on the browser frame: en, he, or auto (the Mac's language)."}
+  word_folder: {type: str, default: "", description: "Folder where Word converts temp copies to PDF. Empty: word-convert inside the state folder. Word's sandbox asks for access to it once."}
+  home: {type: str, default: "~/.rainbowomma", description: "Shared state folder. Every profile on this Mac must use the same one."}
+  registry: {type: str, default: "", description: "Path of the shared agent registry (browsers.json). Empty: browsers.json inside the state folder."}
