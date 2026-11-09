@@ -45,6 +45,8 @@ upgrade prints those in full.
   for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
   yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
   touch; a failure names the step it stopped at. (#61)
+- A release refuses to go out while `Formula/rainbowomma.rb` still points at an older tag than the release before it,
+  so a Homebrew install can't be left a release behind. (#84)
 
 ### Fixed
 - `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
@@ -67,6 +69,8 @@ upgrade prints those in full.
   to the front, un-minimized — every running icon still says "Google Chrome". `docs/DOCK.md` records the decision and the
   options looked at (a per-agent Chrome copy is ruled out: Keychain prompts, broken updates). `rainbowomma-doctor` shows
   whether the group is built and in the Dock. (#77)
+- tests: the `doctor status` checks run on CDP ports nothing listens on, so they pass on a Mac where real agent browsers
+  hold the fixture ports. (#83)
 
 ## [0.3.1] — 2026-11-07
 
