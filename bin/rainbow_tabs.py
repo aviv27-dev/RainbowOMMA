@@ -327,3 +327,92 @@ def job_close(cdp, shared, agent, now=None, only_expired=False):
     d["pending"] = pending
     save_state(jobs_path(shared, agent), d)
     return {"status": "closed", "closed": closed, "stillPending": list(pending)}
+
+
+# ── a tidy agent browser (#76): on start and before idle-stop, duplicates, blank pages and too many tabs go ──
+MAX_TABS = 8
+BLANK = ("about:blank", "chrome://newtab/", "chrome://new-tab-page/", "chrome-search://local-ntp/local-ntp.html")
+
+
+def is_blank(url):
+    return url.strip() in BLANK or url.startswith("chrome://newtab") or url.startswith("chrome://new-tab-page")
+
+
+def tidy_plan(pages, max_tabs=MAX_TABS, drop_urls=()):
+    """the tabs to close (no I/O), each with its reason — "job" (a finished job left it), "duplicate" (the same address in a
+    more recently used tab), "blank", "over-cap" (the least recently used past max_tabs). Chrome lists tabs most recently
+    used first. Never closed: a tab another client is attached to, the most recently used tab, and the browser's last tab."""
+    if not pages:
+        return []
+    protected = {p["id"] for p in pages if p.get("attached")} | {pages[0]["id"]}
+    drop = set(drop_urls)
+    close, seen = [], {p["url"] for p in pages if p["id"] in protected and not is_blank(p["url"])}
+    for p in pages:
+        if p["id"] in protected:
+            continue
+        if p["url"] in drop:
+            close.append(dict(p, reason="job"))
+        elif is_blank(p["url"]):
+            close.append(dict(p, reason="blank"))
+        elif p["url"] in seen:
+            close.append(dict(p, reason="duplicate"))
+        else:
+            seen.add(p["url"])
+    gone = {c["id"] for c in close}
+    left = [p for p in pages if p["id"] not in gone]
+    extra = len(left) - max(1, int(max_tabs))
+    for p in reversed(left):                                  # least recently used first
+        if extra <= 0:
+            break
+        if p["id"] not in protected:
+            close.append(dict(p, reason="over-cap"))
+            extra -= 1
+    while close and len(pages) - len(close) < 1:              # one tab always stays
+        close.pop()
+    return close
+
+
+def close_tabs(cdp, ids):
+    """close these tabs through CDP — re-checked right before: a tab that got a client, or would be the last one, stays"""
+    live = {p["id"]: p for p in pages_of(cdp)}
+    closed = []
+    for i in ids:
+        if i not in live or live[i]["attached"] or len(live) - len(closed) <= 1:
+            continue
+        try:
+            cdp.call("Target.closeTarget", {"targetId": i})
+            closed.append(i)
+        except OSError:
+            pass
+    return closed
+
+
+def tidy(cdp, shared, agent, max_tabs=MAX_TABS, apply=False):
+    """the tidy pass on one agent's browser; apply=False (tabSweep's dry run) only reports. The addresses a finished job
+    left (`lastJobUrls`, kept by idle-stop) are closed too — so a relaunch brings back the session without them."""
+    d = load_state(jobs_path(shared, agent))
+    plan_ = tidy_plan(pages_of(cdp), max_tabs, d.get("lastJobUrls") or ())
+    closed = close_tabs(cdp, [c["id"] for c in plan_]) if apply and plan_ else []
+    if apply and d.get("lastJobUrls"):
+        d.pop("lastJobUrls")
+        save_state(jobs_path(shared, agent), d)
+    return {"status": ("tidied" if apply else "would-tidy") if plan_ else "nothing", "maxTabs": int(max_tabs),
+            "close": [{"id": c["id"], "site": host(c["url"]), "reason": c["reason"]} for c in plan_], "closed": closed}
+
+
+def idle_close(cdp, shared, agent):
+    """before idle-stop: the tabs the agent's job opened close now — no question, the agent is idle by definition — and
+    their addresses are kept, so a relaunch that restores the last session can drop them (restoreTabs "lastJob")"""
+    d = load_state(jobs_path(shared, agent))
+    pages = pages_of(cdp)
+    ids = list((d.get("pending") or {}).keys())
+    if d.get("start"):
+        ids += [p["id"] for p in job_candidates(d.get("before") or [], pages, d.get("kept") or []) if p["id"] not in ids]
+    if not ids:
+        return {"status": "nothing", "closed": []}
+    urls = {p["id"]: p["url"] for p in pages}
+    closed = close_tabs(cdp, ids)
+    d.update({"pending": {}, "start": None, "before": [], "kept": [], "lastJobUrls": sorted({urls[i] for i in closed if i in urls})})
+    save_state(jobs_path(shared, agent), d)
+    return {"status": "closed", "closed": closed}
+
