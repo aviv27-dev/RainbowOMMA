@@ -290,8 +290,8 @@ M = {
                       "he": "כשל (מילת הסטטוס והסיבה בתשובה)"},
     "help.browser-owner": {"en": "the one owner of every agent's Chrome on a shared Mac",
                            "he": "הבעלים היחיד של ה-Chrome של כל סוכן ב-Mac משותף"},
-    "help.browser-owner.1": {"en": "who's up, blocked or hung; the agents' names; one agent",
-                             "he": "מי פתוח, חסום או תקוע; שמות הסוכנים; סוכן אחד"},
+    "help.browser-owner.1": {"en": "who's up, blocked or hung; the agents' names; the running ones' windows; one agent",
+                             "he": "מי פתוח, חסום או תקוע; שמות הסוכנים; החלונות של הפתוחים; סוכן אחד"},
     "help.browser-owner.2": {"en": "open the agent's own browser, painted in its color",
                              "he": "פותח את הדפדפן של הסוכן, צבוע בצבע שלו"},
     "help.browser-owner.3": {"en": "only the human closes an agent's browser", "he": "רק האדם סוגר דפדפן של סוכן"},
@@ -530,6 +530,17 @@ M = {
                     "he": "לא ב-Dock"},
     "dr.dock_fix": {"en": "install/make-dock-tray.sh — every running agent Chrome is named \"Google Chrome\" in the Dock; these name them (docs/DOCK.md)",
                     "he": "install/make-dock-tray.sh — כל Chrome של סוכן נקרא \"Google Chrome\" ב-Dock; אלה נותנים להם שם (docs/DOCK.md)"},
+    # ── the Dock's "Agents" applet: running agent windows by name (#77) ──
+    "desk.none_running": {"en": "No agent browser is running.",
+                          "he": "אין דפדפן סוכן פתוח."},
+    "desk.pick_prompt": {"en": "Which agent's browser to bring to the front?",
+                         "he": "את הדפדפן של איזה סוכן להביא לחזית?"},
+    "dock.pick_name": {"en": "0 · Agents — running agent browsers",
+                       "he": "0 · סוכנים — דפדפני סוכנים פתוחים"},
+    "dock.pick_label": {"en": "Agents",
+                        "he": "סוכנים"},
+    "help.desk-browser.sh.3": {"en": "choose a running agent browser by name; it comes to the front, un-minimized",
+                               "he": "בחירת דפדפן סוכן פתוח לפי שם; הוא מגיע לחזית, גם כשהוא ממוזער"},
 }
 
 _detected = None

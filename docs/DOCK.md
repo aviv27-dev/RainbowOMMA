@@ -6,6 +6,14 @@ tell from the Dock which icon is whose. The frame color and name help only while
 
 ## What RainbowOMMA does today
 
+**Decision (#77):** no second app bundle. A per-agent copy of Chrome is ruled out, because Keychain prompts and broken
+updates are not acceptable. The running icon stays "Google Chrome", and the agents are told apart by name through the
+tray, the window names, the panel and the menu bar, below.
+
+- **"Agents" — the running agent windows by name** (the first applet in the Dock group): a click lists every agent
+  browser running now by its name (`browser-owner windows`; each window also carries `--window-name=<Label>-CDP`). The
+  one chosen comes to the front, un-minimized (`desk-browser.sh pick`). This is the way to find a minimized agent window
+  when every running icon says "Google Chrome".
 - **One applet per agent, in its color and with its name** (`install/make-dock-tray.sh`): a group in the Dock right
   after the last Chrome. A click opens that agent's browser, or brings it to the front un-minimized if it is already
   running (`desk-browser.sh open <agent>` → `browser-owner front`). This is the way to find a minimized agent window by
@@ -17,10 +25,9 @@ tell from the Dock which icon is whose. The frame color and name help only while
 
 ## The options for naming the running icon itself
 
-None of these has been measured yet. Each needs a Mac, and the measurement is listed under the option. Until one
-of them is measured and chosen, the applets above are the answer.
+These were looked at before the decision; none has been measured. They stay here so the reasons are on record.
 
-1. **A per-agent copy of Chrome**: an APFS clone (`cp -c`) of `Google Chrome.app` with its own `CFBundleName`,
+1. **A per-agent copy of Chrome** — *ruled out by the decision above*: an APFS clone (`cp -c`) of `Google Chrome.app` with its own `CFBundleName`,
    `CFBundleIdentifier` and a tinted icon, signed ad hoc. The Dock would show the agent's name and color.
    - *Keychain.* Chrome keeps its cookie encryption key in the login keychain as "Chrome Safe Storage". Access to that
      item is tied to Google's code signature, so a re-signed copy is expected to prompt for it, or to be unable to read
@@ -39,7 +46,6 @@ of them is measured and chosen, the applets above are the answer.
 3. **Setting another app's Dock tile at runtime** (`NSDockTile` label or badge): a Dock tile belongs to the app that
    owns it, and only that app can change its icon or badge. A helper process can't change Chrome's. Expected not to
    work. *Measure:* a 20-line Swift helper that tries, to confirm.
-4. **The fallback**: the applets, the window names, the panel and the menu bar, as above. In use now.
-
-If option 1 is chosen after measuring, `install` would build the copies, `doctor` would report them, and the human's
-own Chrome would never be touched, as with the applets.
+4. **No second bundle: the agents by name in the tray** — the "Agents" applet, the per-agent applets, the window names,
+   the panel and the menu bar, as above. **Chosen.** `install/make-dock-tray.sh` builds it, `rainbowomma-doctor` shows
+   whether it is built and in the Dock, and the human's own Chrome is never touched.

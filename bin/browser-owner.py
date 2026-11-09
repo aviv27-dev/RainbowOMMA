@@ -1413,7 +1413,7 @@ def tabs(reg, only=None, apply=None, scheduled=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
+    ap.add_argument("cmd", choices=["list", "names", "windows", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
                                     "tabs", "open", "job-start", "job-end", "job-keep", "job-close", "presence"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("url", nargs="*", help="open: the address to open in the agent's own browser · job-keep: the tab ids to keep")
@@ -1480,6 +1480,18 @@ def main(argv=None):
         # plain words for shell callers (kill-chrome --all): the agents this owner may stop — no JSON parsing in bash
         print(" ".join(n for n, x in reg.items() if not x.get("managedBy")))
         return 0
+    if a.cmd == "windows":
+        # the agent browsers running now, by the name their window carries (--window-name) — what the Dock's "Agents"
+        # applet lists, so a minimized agent window can be found by name (#77)
+        try:
+            rows = processes()
+            up = [x for x in reg.values() if view(x, rows=rows).get("status") == "up"]
+            print(rainbow_next.dumps({"windows": [{"agent": x["name"], "label": x["label"], "color": x["color"],
+                                                   "window": f"{x['label']}-CDP"} for x in up]}, ensure_ascii=False))
+            return 0
+        except Exception as exc:
+            print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
+            return 1
     if a.cmd == "list" or (a.cmd == "status" and not a.agent):
         try:
             rows = processes()

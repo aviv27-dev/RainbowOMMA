@@ -58,11 +58,15 @@ upgrade prints those in full.
 - `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
   opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
   every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
-
 - `docs/DOCK.md`: why every running agent browser is "Google Chrome" in the Dock, what tells them apart today (the
   named applets, `--window-name`, the panel, the menu bar), and the options for naming the running icon, each with what
   must be measured on a Mac (the Keychain and `--password-store`, updates, disk, Gatekeeper). `rainbowomma-doctor` shows
   whether the agents' named Dock group is built and in the Dock. (#77)
+- The agents by name in the Dock, with no second copy of Chrome: the Dock group starts with an "Agents" applet that lists
+  every agent browser running now by its name (`browser-owner windows`, `desk-browser.sh pick`) and brings the chosen one
+  to the front, un-minimized — every running icon still says "Google Chrome". `docs/DOCK.md` records the decision and the
+  options looked at (a per-agent Chrome copy is ruled out: Keychain prompts, broken updates). `rainbowomma-doctor` shows
+  whether the group is built and in the Dock. (#77)
 
 ## [0.3.1] — 2026-11-07
 
