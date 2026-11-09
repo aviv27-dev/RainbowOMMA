@@ -37,15 +37,13 @@ whose browser had run under a current Chrome (its own marker links).
   a tidy pass closes exact-duplicate URLs, blank and new-tab pages and the least recently used tabs past `maxTabs` —
   never an attached tab, the most recently used one or the last one; it follows `tabSweep.mode` (a dry run only reports).
   Idle-stop closes the job's own tabs first, without asking. (#76)
+- The agents by name in the Dock, with no second copy of Chrome: the Dock group starts with an "Agents" applet that lists
+  every agent browser running now by its name (`browser-owner windows`, `desk-browser.sh pick`) and brings the chosen one
+  to the front, un-minimized — every running icon still says "Google Chrome". `docs/DOCK.md` records the decision and the
+  options looked at (a per-agent Chrome copy is ruled out: Keychain prompts, broken updates). `rainbowomma-doctor` shows
+  whether the group is built and in the Dock. (#77)
 
 ### Changed
-- `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
-  codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
-  stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
-- The installer prints numbered steps, each with one result word (`[3/5] state in ~/.rainbowomma — done`; `kept`
-  for your registry; `would` in a dry run), and counts the files instead of a line per file (new · updated · replaced,
-  yours saved first · unchanged). `--dry-run` ends with a summary of the files, jobs, settings and adapters it would
-  touch; a failure names the step it stopped at. (#61)
 - `--help` (and `-h`) has one shape for every tool in `bin/`: what it is for, the commands with an example each, the exit
   codes, where to read more — in English and Hebrew, from the catalog (`bin/rainbow_help.py`). A command's own options
   stay with argparse (`port-owner lease --help`). A test runs `--help` on every tool. (#58)
@@ -65,18 +63,6 @@ whose browser had run under a current Chrome (its own marker links).
   Chrome's temp folder, left behind after an idle-stop) were taken for a link out of the profile, so an idle-stopped agent
   could never start again. Exactly those are allowed now; any other link, or the same names pointing elsewhere, is
   still refused. (#82)
-- `--help` never acts: `kill-chrome.sh --help` went on to look for Chrome processes to quit, `human-chrome.sh --help`
-  opened Chrome, `rainbow-panel.sh --help` opened the panel, and the guard and the session-end hook read stdin. A test runs
-  every tool's `--help` against stand-ins for `open`, `osascript`, `pkill`, `pgrep`, `ps` and checks none was called.
-- `docs/DOCK.md`: why every running agent browser is "Google Chrome" in the Dock, what tells them apart today (the
-  named applets, `--window-name`, the panel, the menu bar), and the options for naming the running icon, each with what
-  must be measured on a Mac (the Keychain and `--password-store`, updates, disk, Gatekeeper). `rainbowomma-doctor` shows
-  whether the agents' named Dock group is built and in the Dock. (#77)
-- The agents by name in the Dock, with no second copy of Chrome: the Dock group starts with an "Agents" applet that lists
-  every agent browser running now by its name (`browser-owner windows`, `desk-browser.sh pick`) and brings the chosen one
-  to the front, un-minimized — every running icon still says "Google Chrome". `docs/DOCK.md` records the decision and the
-  options looked at (a per-agent Chrome copy is ruled out: Keychain prompts, broken updates). `rainbowomma-doctor` shows
-  whether the group is built and in the Dock. (#77)
 - tests: the `doctor status` checks run on CDP ports nothing listens on, so they pass on a Mac where real agent browsers
   hold the fixture ports. (#83)
 
