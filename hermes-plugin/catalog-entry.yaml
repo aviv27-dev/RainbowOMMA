@@ -53,5 +53,6 @@ capabilities:
 known_issues:
   - "macOS only. On another system the plugin registers nothing but /rainbow, which says so."
   - "The guard reads the command text: it closes the cheap ways to hurt a neighbour, it is not a sandbox."
+  - "The document tools need the one-time macOS Automation consent (osascript → System Events and each Office/PDF app); a background gateway is asked separately from a terminal session. Browser, port, process, screen and clipboard tools need none."
   - "Word's sandbox asks for access once per folder; until the human answers, rainbow_convert_to_pdf reports blocked-by-dialog."
   - "Extra document apps (setting extra_apps) are driven with AppleScript's standard document suite and need the one-time macOS Automation consent; only Word, Excel, Acrobat and Preview are exercised by the maintainer."

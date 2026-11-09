@@ -102,8 +102,12 @@ anything on your behalf.
   turns it off, `always` does it in every process.
 - **Asks you.** A Messages/Mail send becomes a Hermes approval prompt (`approve` directive). Under cron or a gateway
   with nobody to answer, Hermes's own approval timeout applies; the plugin never waits on a dialog of its own.
-- **macOS prompts you may see once.** Automation permission the first time an app is driven; Word's "Grant access"
-  for the folder it converts in. Until you answer, the tool reports `blocked-by-dialog` and stops.
+- **macOS prompts you will see once.** The document tools drive Word, Excel, Acrobat, Preview and System Events through
+  AppleScript, and macOS asks the human to allow that the first time ("osascript wants to control System Events",
+  then one prompt per app). A Hermes gateway running in the background is asked separately from a terminal session.
+  Word's sandbox also asks to "Grant access" to the folder it converts in. Until you answer, the tool waits, then
+  reports `failed` or `blocked-by-dialog` with the reason; nothing is retried behind your back. The browser, port,
+  process, screen and clipboard tools need no such permission.
 - The vendored receipts module can export the log to an OpenTelemetry collector (`receipts --export-otlp URL`). The
   plugin never calls it.
 

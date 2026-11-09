@@ -39,6 +39,7 @@ HINTS = [
     (re.compile(r"`office-owner close[^`]*`"), "the rainbow_close_document tool"),
     (re.compile(r"`browser-owner`"), "the rainbow_*_browser tools"),
     (re.compile(r"its name comes from as-agent or its settings"), "its name is its Hermes profile"),
+    (re.compile(r"\(the menu-bar stop\)"), "(/rainbow pause)"),
 ]
 HELP = ("The rainbow_* tools do this safely (your own browser, your own ports and processes, leased documents); "
         "/rainbow shows who holds what.")
