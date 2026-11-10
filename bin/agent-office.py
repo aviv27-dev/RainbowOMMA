@@ -53,6 +53,10 @@ TIMEOUT_S = 20
 APPS_STATE = LEASES.parent / "office_apps.json"     # app → {launchedBy, pid, launchedAt, lastActivity}
 INFLIGHT = LEASES.parent / "office_inflight"         # one file per running conversion: {app, pid}
 TEMPS = LEASES.parent / "office_temps.json"           # [{app, name, pid, at}] — every temp copy office-owner opened, until it is closed
+OUTPUTS = LEASES.parent / "office_outputs.json"       # path → [size, mtime_ns] of each file office-owner wrote, as it left it
+# OFFICE_CONFINE=1 (the human's setting; the Hermes plugin always sets it): --out / --pdf stay in the source document's
+# folder, and --force replaces only a file office-owner wrote itself and nobody changed since.
+CONFINE = os.environ.get("OFFICE_CONFINE") == "1"
 RECOVER = LEASES.parent / "office_recover.json"       # app → when office-owner last quit a stuck copy of it (once per 10 min)
 RECOVER_EVERY_S = 600
 RETRY_ERRNO = {-1712, -1708, -609, -600}               # timed out · "missing value" · connection invalid · not running
@@ -604,6 +608,46 @@ def temps_of(app, pid):
             and (x.get("pid") in (None, pid))]
 
 
+def note_output(dest):
+    """remember a file office-owner just wrote (size and time), so a later --force can tell it from anyone else's"""
+    try:
+        st = Path(dest).stat()
+        OUTPUTS.parent.mkdir(parents=True, exist_ok=True)
+        with open(OUTPUTS.with_suffix(".lock"), "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            try:
+                cur = json.loads(OUTPUTS.read_text(encoding="utf-8")) if OUTPUTS.exists() else {}
+            except (OSError, ValueError):
+                cur = {}
+            cur = {k: v for k, v in (cur.items() if isinstance(cur, dict) else []) if k != norm(dest)}
+            cur[norm(dest)] = [st.st_size, st.st_mtime_ns]
+            tmp = OUTPUTS.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(dict(list(cur.items())[-500:]), ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, OUTPUTS)
+    except OSError:
+        pass
+
+
+def wrote_it(dest):
+    """is this file exactly what office-owner last wrote there?"""
+    try:
+        st = Path(dest).stat()
+        return json.loads(OUTPUTS.read_text(encoding="utf-8")).get(norm(dest)) == [st.st_size, st.st_mtime_ns]
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def out_refusal(dest, src, force):
+    """under OFFICE_CONFINE: why this output path is not allowed, or None"""
+    if not CONFINE or norm(dest) == norm(src):
+        return None
+    if Path(norm(dest)).parent != Path(norm(src)).parent:
+        return t("ao.out_folder", folder=Path(norm(src)).parent)
+    if force and Path(dest).exists() and not wrote_it(dest):
+        return t("ao.force_foreign", path=dest)
+    return None
+
+
 def cmd_pdf(agent, src, out=None, force=False):
     p = Path(norm(src))
     if not p.exists():
@@ -616,6 +660,9 @@ def cmd_pdf(agent, src, out=None, force=False):
         return 1, {"status": "failed", "why": t("ao.pdf_out")}
     if dest.exists() and not force:          # never silently replace a PDF someone already has
         return 1, {"status": "failed", "why": t("ao.pdf_exists", path=dest)}
+    why = out_refusal(dest, p, force)
+    if why:
+        return 2, {"status": "refused", "why": why}
     bad = preflight(p)
     if bad:                                  # a damaged file opens a dialog in Word that blocks every conversion after it
         log(f"pdf REFUSED {agent} {p} ({bad})")
@@ -677,6 +724,7 @@ def cmd_pdf(agent, src, out=None, force=False):
         return 1, out_
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(tmp_pdf), str(dest))
+    note_output(dest)
     log(f"pdf {agent} {p} -> {dest}")
     return 0, {"status": "converted", "pdf": str(dest), "renderer": "Microsoft Word"}
 
@@ -701,6 +749,9 @@ def cmd_xlsx(agent, src, out=None, pdf=None, force=False):
         return 1, {"status": "failed", "why": t("ao.pdf_exists", path=pdf_dest)}
     if dest != p and dest.exists() and not force:
         return 1, {"status": "failed", "why": t("ao.pdf_exists", path=dest)}
+    why = out_refusal(dest, p, force) or (pdf_dest and out_refusal(pdf_dest, p, force))
+    if why:
+        return 2, {"status": "refused", "why": why}
     now_open = open_paths("excel")
     if now_open is None or set(forms(dest)) & set(now_open or []):
         return 1, {"status": "failed", "why": t("ao.xlsx_open", path=dest)}       # never write under a workbook someone has open
@@ -739,10 +790,13 @@ def cmd_xlsx(agent, src, out=None, pdf=None, force=False):
             return 1, out_
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(tmp), str(dest))                     # replaces the source (or --out) only now, recalculated
+        if dest != p:
+            note_output(dest)
         res = {"status": "recalculated", "xlsx": str(dest), "renderer": "Microsoft Excel"}
         if pdf_dest:
             pdf_dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(tmp_pdf), str(pdf_dest))
+            note_output(pdf_dest)
             res["pdf"] = str(pdf_dest)
         log(f"xlsx {agent} {p} -> {dest}{' + ' + str(pdf_dest) if pdf_dest else ''}")
         return 0, res

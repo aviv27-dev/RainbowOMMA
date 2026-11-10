@@ -21,7 +21,7 @@ import subprocess
 import sys
 import threading
 
-from .core import HERE
+from .core import HERE, child_env
 
 logger = logging.getLogger(__name__)
 OWN_PREFIX = "rainbow_"
@@ -63,7 +63,7 @@ class GuardWorker:
     def _default_spawn(env):
         return subprocess.Popen([sys.executable, "-I", str(HERE / "guard_worker.py")], stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
-                                env={**os.environ, **env})
+                                env=child_env(env))
 
     def _readline(self, proc, seconds):
         ready, _, _ = select.select([proc.stdout], [], [], seconds)

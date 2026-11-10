@@ -104,11 +104,16 @@ anything on your behalf.
 - **Stops programs.** Only what is this agent's: a process the agent started (`rainbow_stop_process`, the orphan reap
   at session end), its own Chrome when it is idle, and an Office/PDF app that an agent launched and left empty. Never a
   process that is not provably the agent's; never an app that was already running.
+- **Gives the programs it starts a minimal environment.** `PATH`, `HOME`, `USER`, `LANG`/`LC_*`, `TMPDIR`,
+  `__CF_USER_TEXT_ENCODING` and the plugin's own `RAINBOW_*` / `BROWSER_OWNER_*` / `OFFICE_*` values. Hermes's
+  environment (provider keys, tokens) is never passed on to the owners, the guard helper, Chrome or a launcher script.
 - **Keeps a helper process.** One `guard_worker.py` per profile while Hermes runs (the guard), and a timer thread
   inside Hermes for the idle cleanup. Both stop when the plugin unloads.
 - **Writes files** under `~/.rainbowomma/` only: the registry, leases and state, a receipts log of what was done and
   refused (`logs/receipts.jsonl`), the theme folders, the agent's Chrome profile, the agent's clipboard slots, temp
-  copies for Word conversions.
+  copies for Word conversions. The one exception is a conversion's result (`rainbow_convert_to_pdf`,
+  `rainbow_recalc_workbook`): it is written in the source document's own folder and nowhere else, and `force`
+  replaces only a file an earlier conversion wrote and nobody changed since.
 - **Changes shell commands in one case.** When one Hermes process serves several profiles (a multiplexed gateway), a
   process started by a shell command can't be told apart by its ancestry, so the plugin prefixes the command with
   `export RAINBOW_AGENT=<agent> RAINBOW_HOME=… BROWSER_OWNER_REGISTRY=…;` (a `modify` directive). `mark_commands: never`

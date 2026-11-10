@@ -355,7 +355,7 @@ bo.launch = None
 # ── agent-office ──
 ao = load("agent-office.py")
 ao.LEASES = tmp / "leases"; ao.LOG = tmp / "office.log"
-ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"
+ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"; ao.OUTPUTS = tmp / "office_outputs.json"
 ao.PGREP = lambda app: None              # never the real process table or the real state file in a test
 SEP = ao.SEP
 d1 = tmp / "agent"; d1.mkdir(); d2 = tmp / "human"; d2.mkdir()
@@ -459,7 +459,7 @@ docs.clear()
 check("an app that is not running is never started to look", ao.open_paths("word") == [])
 
 # ── office-owner : who launched the app, Word→PDF, quit only what the owner launched ──
-ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"
+ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"; ao.OUTPUTS = tmp / "office_outputs.json"
 pids = {"word": None}
 ao.PGREP = lambda app: pids.get(app)
 calls = []
@@ -1418,6 +1418,26 @@ check("xlsx --out --pdf: the recalculated copy elsewhere, plus the active sheet 
       code == 0 and (tmp / "agent" / "report-calc.xlsx").read_text() == "recalculated" and (tmp / "agent" / "report-sheet.pdf").read_bytes() == b"%PDF- sheet", out)
 code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "agent" / "report-sheet.pdf"))
 check("xlsx --pdf: never over an existing PDF without --force", code == 1 and "--force" in out["why"], out)
+# OFFICE_CONFINE (the Hermes plugin sets it): outputs stay in the source's folder, --force replaces only office-owner's own files
+ao.CONFINE = True; n_x = len(xcalls)
+code, out = ao.cmd_xlsx("bravo", str(book), out=str(tmp / "not-beside" / "report.xlsx"))
+check("confined: --out in another folder is refused before Excel is touched, nothing written there",
+      code == 2 and out["status"] == "refused" and len(xcalls) == n_x and not (tmp / "not-beside").exists(), out)
+code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "not-beside" / "sheet.pdf"))
+check("confined: --pdf in another folder is refused the same way", code == 2 and len(xcalls) == n_x and not (tmp / "not-beside").exists(), out)
+code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "agent" / "report-sheet.pdf"), force=True)
+check("confined: --force replaces a PDF office-owner wrote itself", code == 0 and out.get("pdf", "").endswith("report-sheet.pdf"), out)
+(tmp / "agent" / "humans.pdf").write_bytes(b"%PDF- the human's own"); n_x = len(xcalls)
+code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "agent" / "humans.pdf"), force=True)
+check("confined: --force never replaces a file office-owner did not write",
+      code == 2 and len(xcalls) == n_x and (tmp / "agent" / "humans.pdf").read_bytes() == b"%PDF- the human's own", out)
+(tmp / "agent" / "report-sheet.pdf").write_bytes(b"%PDF- edited by the human since")
+code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "agent" / "report-sheet.pdf"), force=True)
+check("confined: …nor one of its own that someone changed since",
+      code == 2 and (tmp / "agent" / "report-sheet.pdf").read_bytes() == b"%PDF- edited by the human since", out)
+code, out = ao.cmd_pdf("bravo", str(tmp / "agent" / "report.docx"), out=str(tmp / "not-beside" / "r.pdf"))
+check("confined: pdf --out in another folder is refused", code == 2 and not (tmp / "not-beside").exists(), out)
+ao.CONFINE = False
 docs["Microsoft Excel"] = {str(book): True}
 book.write_text("the human's edits")
 code, out = ao.cmd_xlsx("bravo", str(book))

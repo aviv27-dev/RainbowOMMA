@@ -31,7 +31,22 @@ CDP_PORTS = [*range(9240, 9300), *range(9222, 9240)]
 DEFAULTS = {"home": "~/.rainbowomma", "registry": "", "agent_name": "", "color": "", "idle_minutes": 30,
             "tab_cleanup": "apply", "housekeeping_minutes": 5, "guard": True, "mark_commands": "auto", "word_folder": "", "language": "en", "extra_apps": {}}
 TAB_MODES = {"apply", "dry-run", "off"}
+# what a child process inherits from Hermes's environment: enough to run, and nothing else. Hermes's environment holds
+# provider keys and tokens, and the owners start programs the plugin does not own (Chrome, a launcher script, Office
+# through osascript) — none of them may see those.
+ENV_PASS = ("PATH", "HOME", "USER", "LANG", "TMPDIR", "__CF_USER_TEXT_ENCODING")
+ENV_OWN = ("RAINBOW_", "BROWSER_OWNER_", "OFFICE_")
 _lock = threading.Lock()
+
+
+def child_env(own: dict, environ=None) -> dict:
+    """the whole environment of a process the plugin starts: the few inherited names in ENV_PASS and LC_*, plus the
+    plugin's own RAINBOW_* / BROWSER_OWNER_* / OFFICE_* values. Never the inherited environment."""
+    src = os.environ if environ is None else environ
+    out = {k: v for k, v in src.items() if k in ENV_PASS or k.startswith("LC_")}
+    out.setdefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    out.update({k: str(v) for k, v in own.items() if k.startswith(ENV_OWN)})
+    return out
 
 
 def agent_name(profile: str, override: str = "") -> str:
@@ -80,7 +95,8 @@ class Rainbow:
 
     def env(self) -> dict:
         """what an owner needs to know whose call this is and where the shared state lives"""
-        out = {"RAINBOW_AGENT": self.me, "RAINBOW_HOME": str(self.home), "BROWSER_OWNER_REGISTRY": str(self.registry)}
+        out = {"RAINBOW_AGENT": self.me, "RAINBOW_HOME": str(self.home), "BROWSER_OWNER_REGISTRY": str(self.registry),
+               "OFFICE_CONFINE": "1"}                 # conversions write beside the source, and replace only their own files
         lang = str(self.setting("language") or "en").strip().lower()
         if lang in ("en", "he"):                      # the owners' answers and the browser frame's text; auto: macOS's language
             out["RAINBOW_LANG"] = lang
@@ -163,7 +179,7 @@ class Rainbow:
         cmd = [sys.executable, "-I", str(VENDOR / script), *[str(a) for a in args]]
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=stdin,
-                               env={**os.environ, **self.env()})
+                               env=child_env(self.env()))
         except subprocess.TimeoutExpired:
             return False, {"status": "failed", "why": f"{script.rsplit('.', 1)[0]} did not answer within {int(timeout)} s"}
         except OSError as exc:

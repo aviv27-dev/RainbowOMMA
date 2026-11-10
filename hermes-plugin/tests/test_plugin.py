@@ -252,6 +252,12 @@ d = guard_hook.decide(worker, "terminal", {"command": "ls"}, genv)
 check("guard (real helper): a helper that died is replaced on the next call", d is None and worker._proc.poll() is None, d)
 worker.stop()
 check("guard (real helper): stop() ends the helper", worker._proc is None)
+os.environ["FAKE_PROVIDER_API_KEY"] = "sk-not-for-children"; os.environ["LC_CTYPE"] = "en_US.UTF-8"
+ce = core.child_env({"RAINBOW_AGENT": "alpha", "OFFICE_CONFINE": "1", "SOMETHING_ELSE": "x"})
+check("child env: only PATH/HOME/USER/LANG/LC_*/TMPDIR/__CF_USER_TEXT_ENCODING and the plugin's own names — never Hermes's keys",
+      "FAKE_PROVIDER_API_KEY" not in ce and "SOMETHING_ELSE" not in ce and "HERMES_HOME" not in ce and ce.get("LC_CTYPE") == "en_US.UTF-8"
+      and ce.get("PATH") and all(k in core.ENV_PASS or k.startswith(("LC_",) + core.ENV_OWN) for k in ce), sorted(ce))
+os.environ.pop("FAKE_PROVIDER_API_KEY"); os.environ.pop("LC_CTYPE")
 before = dict(os.environ)
 guard_hook.decide(guard_hook.GuardWorker(), "terminal", {"command": "ls"}, genv)
 check("guard: Hermes's own environment is never given an agent's identity (one gateway may serve several profiles)",

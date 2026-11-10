@@ -89,7 +89,7 @@ AGENT_ARG = {"proc-owner": {"list", "reap", "register"}, "port-owner": {"lease",
 HUMAN_ONLY = {("screen-owner", "takeover"), ("screen-owner", "handback"), ("rainbowomma-pause", "off")}
 INLINE = {"python": "-c", "perl": "-e", "ruby": "-e", "node": "-e", "osascript": None, "php": "-r", "bun": "-e", "deno": "eval"}
 INLINE_KILL = re.compile(r"\b(os\.kill|killpg|os\.system|subprocess|pkill|killall|process\.kill|\bkill\s*\(|signal\.sig(kill|term))")
-RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|office_extra_apps|office_word_dir|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
+RAINBOW_ENV = re.compile(r"^(rainbow_home|browser_owner_registry|office_extra_apps|office_word_dir|office_confine|rainbow_test_\w*|rainbow_env_markers|rainbow_track_root|"
                          r"rainbow_human_idle_s|rainbow_human_present_s|rainbow_agent|rainbow_session)=")
 STATE_WORDS = re.compile(r"(\.rainbowomma|\$\{?rainbow_home\}?)/(state|logs|cdp)\b|proc-roots\.json|approvals\.json|approval-pending\.json|"
                          r"paused\.json|screen\.json|ports\.json|auth\.json|browsers\.json|receipts\.jsonl")
