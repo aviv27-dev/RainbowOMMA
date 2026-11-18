@@ -7,6 +7,15 @@ upgrade prints those in full.
 
 ## [Unreleased]
 
+### Added
+- Agent browsers on the latest Chrome. `browser-owner status` shows the running and the installed version
+  (`updatePending`); `browser-owner update <agent>` restarts one that is behind, with its tabs (`restoreTabs`). One button,
+  "Update all browsers", in `rainbow-panel` (and in the menu bar while one is behind) restarts every agent browser that is
+  behind: `browser-owner update all --by human`, the human's only. At a set time, off by default:
+  `"browserUpdate": {"day": "sun", "time": "04:00"}` in `browsers.json` — the heal job then restarts each one at its first
+  quiet moment that day (no client attached, no tab change for 10 minutes, nobody signing in). `rainbowomma-doctor status`
+  names a browser that is behind.
+
 ## [0.4.0] — 2026-11-09
 
 Every tool answers `--help` the same way and never acts on it; every refusal and failure says what to do next (`next`);

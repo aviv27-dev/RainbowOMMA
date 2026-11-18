@@ -77,6 +77,8 @@ def menu(agents, paused, receipts, screen=None):
         if screen and screen.get("holder"):
             lines.append(f"{clean(t('mb.screen_held', who=screen['holder']))} | color=#757575")
         lines.append(f"🖐 {t('mb.takeover')} | " + action("screen-owner", "takeover"))
+    if any(a.get("updatePending") for a in agents):
+        lines.append(f"⬆ {t('mb.update_all')} | " + action("browser-owner", "update", "all", "--by", "human"))
     lines.append("---")
     lines.append(t("mb.recent"))
     for r in reversed(receipts):

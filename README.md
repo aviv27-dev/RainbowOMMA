@@ -249,6 +249,20 @@ Give an agent `"chrome": "canary"` (or `beta`, `dev`, `cft` for Chrome for Testi
 `browsers.json`, and its browser runs as a separate app, with its own Dock icon and its own menu. Your ⌘Q in your Chrome
 can't reach it, and an update to your Chrome never changes the agent's browser under it.
 
+### ⬆ Agent browsers on the latest Chrome
+Chrome updates its app on disk by itself, once for every browser that runs from it (agents on the same channel share
+it; Chrome for Testing has no updater: reinstall it). A browser that's already open keeps the old version until it
+restarts, and agent browsers stay open for a long time. `browser-owner status` shows the running and the installed
+version (`updatePending`), and `rainbowomma-doctor status` names a browser that is behind.
+
+- **One button:** "Update all browsers" in `rainbow-panel` (and in the menu bar while one is behind) restarts every agent
+  browser that is behind, now: `browser-owner update all --by human`. An agent restarts its own with
+  `browser-owner update <agent> --by <agent>`. Each one comes back with its tabs, as `restoreTabs` says.
+- **At a set time, off by default:** `"browserUpdate": {"day": "sun", "time": "04:00"}` (`"day": "daily"` or a weekday)
+  at the top of `browsers.json`. From that time until midnight, the heal job (`install.sh --with-heal`) restarts each
+  browser that is behind, at its first quiet moment: no client attached to any tab, no tab change for 10 minutes, nobody
+  signing in. It never restarts one the human closed, or a `managedBy` one.
+
 ### 🛑 If in doubt, do nothing
 A port that answers but isn't the agent's own browser is reported as `blocked`, not "up". A profile open somewhere
 else is `profile-busy`. If the process table changes during a check, nothing is killed. Before recovering a hung

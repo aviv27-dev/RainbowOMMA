@@ -3135,5 +3135,85 @@ r_pc = subprocess.run(["bash", str(pk / "desk-browser.sh"), "pick"], capture_out
 check("desk-browser pick (#77): cancelling the list does nothing", r_pc.returncode == 0 and not any(c.startswith(("start", "front")) for c in pk_log.read_text().split("\n")),
       r_pc.stdout)
 
+# ── agent browsers on the latest Chrome: versions, a set time (off by default), one button for all ──
+ub = load("browser-owner.py"); ub.SHARED = tmp / "update-home"; ub.UPDATE_STATE = ub.SHARED / "state" / "browser-update.json"
+check("update: versions compare as numbers, and only an older running browser is behind",
+      ub.update_pending("141.0.7390.122", "142.0.7444.60") and not ub.update_pending("142.0.7444.60", "142.0.7444.60")
+      and not ub.update_pending("142.0.7444.60", "141.9.1.1") and not ub.update_pending(None, "142.0.1.1") and ub.version_key("x.1") == ())
+check("update: no set time unless browsers.json says so — off by default; daily or a weekday at HH:MM; a bad value is off",
+      ub.update_schedule({"agents": {}}) is None and ub.update_schedule({"browserUpdate": {"day": "Sunday", "time": "04:30"}}) == ("sun", (4, 30))
+      and ub.update_schedule({"browserUpdate": {"day": "daily", "time": "4:05"}}) == ("daily", (4, 5))
+      and ub.update_schedule({"browserUpdate": {"day": "someday", "time": "04:00"}}) is None
+      and ub.update_schedule({"browserUpdate": {"day": "mon", "time": "25:00"}}) is None)
+sun_0500 = time.strptime("2026-11-22 05:00", "%Y-%m-%d %H:%M"); sun_0300 = time.strptime("2026-11-22 03:00", "%Y-%m-%d %H:%M")
+mon_0500 = time.strptime("2026-11-23 05:00", "%Y-%m-%d %H:%M")
+check("update: the window is open from the set time to midnight on the set day only",
+      ub.update_due(("sun", (4, 0)), sun_0500) == "2026-11-22" and ub.update_due(("sun", (4, 0)), sun_0300) is None
+      and ub.update_due(("sun", (4, 0)), mon_0500) is None and ub.update_due(("daily", (4, 0)), mon_0500) == "2026-11-23" and ub.update_due(None, sun_0500) is None)
+ureg = {n: dict(a, peers=["alpha", "bravo", "charlie"]) for n, a in bo.registry(REG).items() if not a.get("managedBy")}
+ver_run, ver_disk = {"alpha": "141.0.1.1", "charlie": "142.0.2.2"}, "142.0.2.2"
+calls_u = []
+ub.processes = lambda: []; ub.tree_of = lambda a, rows: ([1], {1, 2}); ub.terminate_tree = lambda tree, grace=8.0: calls_u.append(("stop", sorted(tree))) or []
+ub.healthy = lambda a, timeout=2.0: True; ub.tree_of = lambda a, rows: ([1], {1, 2})
+ub.running_version = lambda a, timeout=2.0: ver_run.get(a["name"])
+ub.installed_version = lambda a: ver_disk
+def _ustart(a, by):
+    calls_u.append(("start", a["name"], by)); ver_run[a["name"]] = ver_disk; return 0, {"status": "started"}
+ub.do_start = _ustart; ub.reconcile = lambda a, st, v: st; ub.foreign_roots = lambda a, rows: []; ub.profile_users = lambda a, rows: []
+v_a = ub.view(ureg["alpha"]); v_c = ub.view(ureg["charlie"])
+check("update: status shows the running and the installed Chrome, and whether a restart is waiting",
+      v_a["version"] == "141.0.1.1" and v_a["installedVersion"] == "142.0.2.2" and v_a["updatePending"] and not v_c["updatePending"], (v_a, v_c))
+c_peer = ub.do_update(ureg["alpha"], "charlie")
+c_ok = ub.do_update(ureg["charlie"], "charlie")
+c_up = ub.do_update(ureg["alpha"], "alpha")
+check("update: restarts a browser that is behind — stop, then start on the installed Chrome; never another agent's; up to date → nothing",
+      c_peer[0] == 2 and c_ok[1]["status"] == "up-to-date" and c_up[1] == {"status": "updated", "from": "141.0.1.1", "to": "142.0.2.2"}
+      and calls_u == [("stop", [1, 2]), ("start", "alpha", "alpha")] and ub.load(ureg["alpha"])["lastStop"]["update"] is True, (c_peer, c_up, calls_u))
+ver_run.update({"alpha": "141.0.1.1", "charlie": "141.0.1.1"}); calls_u.clear()
+ub._auth_holders = lambda: set()
+sig = {"alpha": (False, "snapA"), "charlie": (True, "snapC")}
+ub.idle_signals = lambda a: sig[a["name"]]
+off_run = ub.auto_update(ureg, now=sun_0500, schedule=None)       # browsers.json has no browserUpdate: off
+first = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
+for n_ in ("alpha",):
+    st_ = ub.load(ureg[n_]); st_["updateQuietSince"] = "2026-01-01T00:00:00"; ub.save(ureg[n_], st_)
+second = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
+check("update at the set time: off by default; at the time, a browser in use (a client attached) waits, a quiet one restarts — "
+      "each only after 10 quiet minutes", off_run == [] and {x["agent"]: x["update"] for x in first} == {"alpha": "waiting", "charlie": "waiting"}
+      and {x["agent"]: x["update"] for x in second} == {"alpha": "updated", "charlie": "waiting"}
+      and ("start", "alpha", "alpha") in calls_u and ("start", "charlie", "charlie") not in calls_u, (first, second))
+sig["charlie"] = (False, "snapC2"); st_ = ub.load(ureg["charlie"]); st_.update({"updateSnap": "snapC2", "updateQuietSince": "2026-01-01T00:00:00"}); ub.save(ureg["charlie"], st_)
+third = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
+fourth = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
+check("update at the set time: tried again at every heal run until all are done — then nothing more that day",
+      {x["agent"]: x["update"] for x in third} == {"charlie": "updated"} and fourth == []
+      and json.loads(ub.UPDATE_STATE.read_text())["complete"] is True, (third, fourth))
+ver_run.update({"alpha": "141.0.1.1", "charlie": "142.0.2.2"}); calls_u.clear()
+sig["alpha"] = (True, "busy")                                     # the button doesn't wait for a quiet moment
+code_all, res_all = ub.update_all(ureg, "human")
+check("update all (the one button): every agent browser that is behind restarts now; up-to-date ones are left alone",
+      code_all == 0 and {x["agent"]: x["update"] for x in res_all["agents"] if x["agent"] in ("alpha", "charlie")} == {"alpha": "updated", "charlie": "up-to-date"}
+      and calls_u == [("stop", [1, 2]), ("start", "alpha", "alpha")], (calls_u, res_all))
+r_ua = subprocess.run(["bash", str(HERE / "browser-owner"), "update", "all", "--by", "alpha"], capture_output=True, text=True,
+                      env=dict(genv, RAINBOW_AGENT="alpha"))
+check("update all is the human's only — an agent updates its own browser", r_ua.returncode == 2 and json.loads(r_ua.stdout)["status"] == "refused", r_ua.stdout)
+upanel = load("rainbow-panel.py")
+class _UR:
+    def __init__(self, out): self.stdout, self.returncode, self.stderr = out, 0, ""
+upanel.subprocess = type("S", (), {"run": staticmethod(lambda argv, **k: _UR(json.dumps({"status": "updated", "agents": [
+    {"agent": "alpha", "update": "updated"}, {"agent": "charlie", "update": "up-to-date"}]})) if argv[1:4] == ["update", "all", "--by"] else _UR("{}"))})
+os.environ["RAINBOW_LANG"] = "en"
+pa_ = upanel.act("update-all", "all"); pb_ = upanel.act("update-all", "alpha")
+os.environ["RAINBOW_LANG"] = "he"
+phtml = (HERE / "rainbow-panel.html").read_text()
+check("panel: one button updates every agent browser (after a confirmation), and a browser behind says so",
+      pa_["ok"] and "1 browsers updated" in pa_["line"] and not pb_["ok"] and 'id="upd-all"' in phtml and "confirm(tr('update_confirm'))" in phtml
+      and "updatePending" in upanel.VIEW_KEYS and "tr('st_update')" in phtml, (pa_, pb_))
+umb = load("rainbowomma-menubar.py")
+mtxt = umb.menu([{"agent": "alpha", "label": "Alpha", "color": "#7E57C2", "status": "up", "up": True, "updatePending": True}], False, [])
+mtxt2 = umb.menu([{"agent": "alpha", "label": "Alpha", "color": "#7E57C2", "status": "up", "up": True}], False, [])
+check("menu bar: \"update all agent browsers\" appears while one is behind, and runs browser-owner update all --by human",
+      "param1=update param2=all param3=--by param4=human" in mtxt and "param1=update" not in mtxt2, mtxt)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

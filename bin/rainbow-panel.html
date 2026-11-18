@@ -42,7 +42,7 @@
 </style>
 </head>
 <body>
-<header><h1>RainbowOMMA</h1><span class="sub" data-t="sub"></span></header>
+<header><h1>RainbowOMMA</h1><span class="sub" data-t="sub"></span><button class="b" id="upd-all" data-t="update_all"></button></header>
 <main id="list"><div class="hint" data-t="loading"></div></main>
 <main>
   <details id="addbox">
@@ -85,11 +85,13 @@ function rows(s) {
     if (!a.up && a.offByHuman) detail += tr('off_by_human', { at: String(a.offAt || '').slice(11, 16) });
     else if (!a.up && a.lastStop && a.lastStop.by) detail += tr('stopped_by', { by: a.lastStop.by, at: String(a.lastStop.at || '').slice(11, 16) });
     if (a.managedBy) detail += tr('managed');
-    out.push({ who: a.agent, label: a.label, color: a.color, up: a.up, status: a.status, detail, managed: !!a.managedBy });
+    if (a.updatePending) detail += tr('update_pending', { from: a.version || '', to: a.installedVersion || '' });
+    out.push({ who: a.agent, label: a.label, color: a.color, up: a.up, status: a.status, detail, managed: !!a.managedBy, update: !!a.updatePending });
   }
   return out;
 }
 function pill(r) {
+  if (r.up && r.update) return `<span class="pill warn">${he(tr('st_update'))}</span>`;
   if (r.up) return `<span class="pill open">${he(tr('st_open'))}</span>`;
   if (r.status === 'down') return `<span class="pill closed">${he(tr('st_closed'))}</span>`;
   const m = { hung: tr('st_hung'), blocked: tr('st_blocked'), 'profile-busy': tr('st_busy') };
@@ -131,6 +133,13 @@ document.getElementById('list').addEventListener('click', async e => {
   catch (err) { toast('✗ ' + err.message); }
   busy.delete(who); refresh();
 });
+document.getElementById('upd-all').onclick = async () => {
+  if (!confirm(tr('update_confirm'))) return;
+  const b = document.getElementById('upd-all'); b.disabled = true; toast(tr('updating'));
+  try { const r = await api('/api/act', { action: 'update-all', who: 'all' }); toast(r.line); }
+  catch (err) { toast('✗ ' + err.message); }
+  b.disabled = false; refresh();
+};
 document.getElementById('n-go').onclick = async () => {
   const r = await api('/api/agent', { name: document.getElementById('n-name').value, label: document.getElementById('n-label').value, color: document.getElementById('n-color').value }).catch(err => ({ line: '✗ ' + err.message }));
   toast(r.line); if (r.ok) { document.getElementById('addbox').open = false; refresh(); }

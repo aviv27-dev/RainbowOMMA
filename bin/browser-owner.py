@@ -308,6 +308,53 @@ def healthy(a, timeout=2.0):
         return False
 
 
+def version_key(v):
+    """'142.0.7444.60' → (142, 0, 7444, 60); anything unreadable → ()"""
+    try:
+        return tuple(int(x) for x in str(v).strip().split("."))
+    except (TypeError, ValueError):
+        return ()
+
+
+def running_version(a, timeout=2.0):
+    """the Chrome version the agent's browser runs now (its own CDP: Browser.getVersion), or None"""
+    try:
+        with cdp_for(a, timeout) as c:
+            product = str(c.call("Browser.getVersion").get("product") or "")
+    except Exception:
+        return None
+    return product.split("/", 1)[1] if "/" in product else None
+
+
+_INSTALLED = {}
+
+
+def installed_version(a):
+    """the version of the Chrome app the agent's browser runs from, as it is on disk now (Chrome's own updater replaces
+    the app while it runs; the running browser keeps the old version until it restarts) — cached by the plist's mtime"""
+    plist = Path(a.get("chrome_app") or CHROME_APP) / "Contents" / "Info.plist"
+    try:
+        stamp = plist.stat().st_mtime
+    except OSError:
+        return None
+    hit = _INSTALLED.get(str(plist))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    try:
+        out = subprocess.run(["/usr/libexec/PlistBuddy", "-c", "Print :CFBundleShortVersionString", str(plist)],
+                             capture_output=True, text=True, timeout=5).stdout.strip() or None
+    except Exception:
+        out = None
+    _INSTALLED[str(plist)] = (stamp, out)
+    return out
+
+
+def update_pending(running, installed):
+    """the running browser is older than the app on disk: a restart brings it up to date"""
+    r, i = version_key(running), version_key(installed)
+    return bool(r and i and r < i)
+
+
 def processes():
     out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, check=True).stdout
     rows = []
@@ -993,11 +1040,14 @@ def view(a, st=None, rows=None):
         status = "profile-busy"
     else:
         status = "hung" if roots else "down"
+    running = running_version(a) if status == "up" else None
+    installed = installed_version(a) if status == "up" else None
     return {"agent": a["name"], "label": a["label"], "color": a["color"], "port": a["port"], "status": status, "up": status == "up",
             "roots": roots, "processes": len(tree), "foreignRoots": foreign, "cdp": a.get("cdp", "port"), "profileBusy": busy, "offByHuman": bool(st.get("offByHuman")), "themePending": bool(st.get("themePending")),
             "idleMinutes": a.get("idleMinutes"), "idleSince": st.get("idleSince"),
             "offAt": st.get("offAt"), "lastExitType": last_exit_type(a), "lastStart": st.get("lastStart"),
-            "lastStop": st.get("lastStop"), "managedBy": a.get("managedBy")}
+            "lastStop": st.get("lastStop"), "managedBy": a.get("managedBy"),
+            "version": running, "installedVersion": installed, "updatePending": update_pending(running, installed)}
 
 
 def reconcile(a, st, v):
@@ -1110,6 +1160,161 @@ def do_idle_stop(a, by):
     log(a, f"idle-stop by {by}: {len(tree)} processes, {len(left)} needed KILL")
     return 0, {"status": "stopped", "processes": len(tree), "killed": len(left), "idle": True,
                **({"jobTabs": jobs} if jobs and jobs.get("closed") else {}), **({"tidy": tidied} if tidied else {})}
+
+
+UPDATE_QUIET_S = 10 * 60                     # an update restart waits for this long with no client and no tab change
+
+
+def do_update(a, by):
+    """restart the agent's browser so it runs the Chrome now on disk — only when it is behind. Its session comes back as
+    restoreTabs says. An agent restarts its own browser only; never one the human closed or a managedBy one."""
+    if a.get("managedBy"):
+        return 2, {"status": "refused", "why": t("bo.managed", label=a["label"], by=a["managedBy"])}
+    if by in a.get("peers", ()) and by != a["name"]:
+        return 2, {"status": "refused", "why": t("bo.idle_not_yours", by=by, label=a["label"])}
+    st = load(a)
+    v = view(a, st=st)
+    if v["status"] != "up":
+        return 0, {"status": v["status"], "why": "not running — it starts on the version on disk"}
+    if not v["updatePending"]:
+        return 0, {"status": "up-to-date", "version": v["version"], "installedVersion": v["installedVersion"]}
+    rows = processes()
+    _, tree = tree_of(a, rows)
+    st["lastStop"] = {"at": now_iso(), "by": by, "pids": len(tree), "update": True}
+    save(a, st)
+    left = terminate_tree(tree)
+    log(a, f"update by {by}: {v['version']} → {v['installedVersion']} ({len(tree)} processes, {len(left)} needed KILL)")
+    code, res = do_start(a, a["name"])          # back as the agent itself: in the background, focus given back, nothing of the human's changed
+    after = running_version(a, timeout=5) if code == 0 else None
+    return code, {"status": "updated" if code == 0 else res.get("status", "failed"), "from": v["version"],
+                  "to": after or v["installedVersion"], **({"why": res.get("why")} if code else {})}
+
+
+DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def update_schedule(raw=None):
+    """browsers.json "browserUpdate": {"day": "daily" | "mon" … "sun", "time": "HH:MM"} → (day, (h, m)), or None: off
+    (the default — the human decides when browsers restart). A bad value is off too, never a guess."""
+    if raw is None:
+        try:
+            raw = json.loads(Path(REGISTRY).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    cfg = (raw or {}).get("browserUpdate") if isinstance(raw, dict) else None
+    if not isinstance(cfg, dict):
+        return None
+    day = str(cfg.get("day") or "").strip().lower()[:3] if str(cfg.get("day") or "").strip().lower() != "daily" else "daily"
+    m = re.fullmatch(r"([01]?\d|2[0-3]):([0-5]\d)", str(cfg.get("time") or "").strip())
+    if day not in (*DAYS, "daily") or not m:
+        return None
+    return day, (int(m.group(1)), int(m.group(2)))
+
+
+def update_due(schedule, now=None):
+    """→ today's date (the window's key) while today's update window is open: from the set time to midnight on the set day"""
+    if not schedule:
+        return None
+    now = time.localtime() if now is None else now
+    day, (h, m) = schedule
+    if day != "daily" and DAYS[now.tm_wday] != day:
+        return None
+    return time.strftime("%Y-%m-%d", now) if (now.tm_hour, now.tm_min) >= (h, m) else None
+
+
+UPDATE_STATE = SHARED / "state" / "browser-update.json"
+
+
+def auto_update(reg, rows=None, now=None, schedule=None):
+    """heal's part, only at the time the human set ("browserUpdate"; off by default): every agent browser that runs an older
+    Chrome than the one on disk restarts on it — each one only when it is safe: up, no client attached to any tab and no tab
+    change for UPDATE_QUIET_S, nobody signing in, not closed by the human, not managedBy. One that is busy is tried again
+    at the next heal run, until the day's window closes. Anything it can't read means busy."""
+    window = update_due(update_schedule() if schedule is None else schedule, now)
+    if not window:
+        return []
+    try:
+        done = json.loads(UPDATE_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        done = {}
+    if done.get("window") == window and done.get("complete"):
+        return []
+    rows = processes() if rows is None else rows
+    holders, out = _auth_holders(), []
+    for name, a in reg.items():
+        if a.get("managedBy"):
+            continue
+        st = load(a)
+        v = view(a, st=st, rows=rows)
+        if v["status"] != "up" or not v["updatePending"]:
+            continue
+        why = None
+        if holders is None or name in holders:
+            why = "signing in (auth-owner)" if holders else "auth leases unreadable"
+        else:
+            try:
+                attached, snap = idle_signals(a)
+            except Exception as exc:
+                attached, snap, why = True, None, type(exc).__name__
+            if not why and (attached or st.get("updateSnap") != snap):
+                st.update({"updateSnap": snap, "updateQuietSince": now_iso()})
+                save(a, st)
+                why = "in use"
+            elif not why and (_iso_ago(st.get("updateQuietSince")) or 0) < UPDATE_QUIET_S:
+                why = "quiet for less than 10 min"
+        if why:
+            out.append({"agent": name, "update": "waiting", "why": why, "from": v["version"], "to": v["installedVersion"]})
+            continue
+        res = locked_update(a, reg, "auto-update")
+        out.append({"agent": name, "update": res.get("status"), "from": res.get("from"), "to": res.get("to")})
+    complete = not any(x["update"] in ("waiting", "busy") for x in out)
+    atomic_write(UPDATE_STATE, json.dumps({"window": window, "complete": complete, "at": now_iso(), "results": out}, ensure_ascii=False))
+    if out and complete:
+        notify("RainbowOMMA", t("bo.update_done", n=sum(1 for x in out if x["update"] == "updated")))
+    return out
+
+
+def locked_update(a, reg, by):
+    """do_update under the agent's lock (busy when another owner command holds it)"""
+    try:
+        lk = open_lock(a["lock"])
+    except OSError as exc:
+        return {"status": "failed", "why": f"lock: {type(exc).__name__}"}
+    with lk:
+        try:
+            fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return {"status": "busy", "why": t("bo.busy")}
+        a["peers"] = list(reg)
+        try:
+            code, res = do_update(a, by)
+        except Exception as exc:
+            res = {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+    st = load(a)
+    if any(st.pop(k, None) is not None for k in ("updateSnap", "updateQuietSince")):
+        save(a, st)
+    rainbow_receipts.write("browser-owner", "update", a["name"], by, res.get("status"), version=res.get("to"))
+    return res
+
+
+def update_all(reg, by):
+    """the one button: every agent browser that is behind restarts on the Chrome on disk now (the human pressed it — no
+    waiting for a quiet moment); up-to-date, closed and managedBy ones are left as they are"""
+    out = []
+    for name, a in reg.items():
+        if a.get("managedBy"):
+            out.append({"agent": name, "update": "excluded"})
+            continue
+        v = view(a)
+        if v["status"] != "up" or not v["updatePending"]:
+            out.append({"agent": name, "update": "up-to-date" if v["status"] == "up" else v["status"], "version": v.get("version")})
+            continue
+        res = locked_update(a, reg, by)
+        out.append({"agent": name, "update": res.get("status"), "from": res.get("from"), "to": res.get("to"),
+                    **({"why": res["why"]} if res.get("why") else {})})
+    bad = [x for x in out if x["update"] not in ("updated", "up-to-date", "down", "excluded")]
+    return (1 if bad else 0), {"status": "updated" if any(x["update"] == "updated" for x in out) else "nothing" if not bad else "failed",
+                               "agents": out}
 
 
 def do_recover(a, by):
@@ -1252,6 +1457,7 @@ def heal(reg):
     (windowless install, under its lock); an OPEN one is never restarted from here — one notification, and its next start
     puts it back. A Chrome update is recorded, with one notification on whether every theme and Dock applet is in place."""
     idle = auto_idle(reg)                    # first: a browser it stops gets its colors back in this same run
+    updates = auto_update(reg)               # then: a browser behind the Chrome on disk restarts on it, when it is safe
     rows = processes()
     out = []
     for name, a in reg.items():
@@ -1317,7 +1523,7 @@ def heal(reg):
             bad = [x["agent"] for x in out if x["theme"] not in ("ok", "kept", "installed")] + missing_apps
             notify("RainbowOMMA", t("bo.heal_chrome_ok", ver=ver) if not bad else t("bo.heal_chrome_check", ver=ver, names=", ".join(bad)))
     return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps,
-            "idle": idle}
+            "idle": idle, "updates": updates}
 
 
 def _broker():
@@ -1416,7 +1622,7 @@ def tabs(reg, only=None, apply=None, scheduled=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "windows", "status", "start", "stop", "idle-stop", "recover", "front", "heal", "mcp-config", "human-theme",
+    ap.add_argument("cmd", choices=["list", "names", "windows", "status", "start", "stop", "idle-stop", "recover", "update", "front", "heal", "mcp-config", "human-theme",
                                     "tabs", "open", "job-start", "job-end", "job-keep", "job-close", "presence"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("url", nargs="*", help="open: the address to open in the agent's own browser · job-keep: the tab ids to keep")
@@ -1503,6 +1709,16 @@ def main(argv=None):
         except Exception as exc:
             print(rainbow_next.dumps({"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}, ensure_ascii=False))
             return 1
+    if a.cmd == "update" and (a.agent or "").strip().lower() == "all":    # the one button — the human's only
+        if a.by.strip().lower() != "human":
+            print(rainbow_next.dumps({"status": "refused", "why": t("bo.update_all_human")}, ensure_ascii=False))
+            return 2
+        try:
+            code, out = update_all(reg, "human")
+        except Exception as exc:   # one JSON answer, always
+            code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+        print(rainbow_next.dumps(out, ensure_ascii=False))
+        return code
     ag = reg.get((a.agent or "").strip().lower())
     if not ag:
         print(rainbow_next.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(a.agent), names=", ".join(reg))}, ensure_ascii=False))
@@ -1553,7 +1769,8 @@ def main(argv=None):
         except OSError:
             print(rainbow_next.dumps({"status": "busy", "why": t("bo.busy")}, ensure_ascii=False))
             return 1
-        fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover, "open": do_open}[a.cmd]
+        fn = {"start": do_start, "stop": do_stop, "idle-stop": do_idle_stop, "recover": do_recover, "open": do_open,
+              "update": do_update}[a.cmd]
         try:
             code, out = fn(ag, a.by.strip().lower(), a.allow_reopen) if a.cmd == "stop" else \
                 fn(ag, (a.url or [""])[0], a.by.strip().lower()) if a.cmd == "open" else fn(ag, a.by.strip().lower())
