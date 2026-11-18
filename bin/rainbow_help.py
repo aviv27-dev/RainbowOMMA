@@ -31,7 +31,7 @@ H = {
             ("list | names | windows | status AGENT", "help.browser-owner.1", "browser-owner list"),
             ("start AGENT --by WHO", "help.browser-owner.2", "browser-owner start alpha --by alpha"),
             ("stop AGENT --by human [--allow-reopen]", "help.browser-owner.3", "browser-owner stop alpha --by human"),
-            ("idle-stop | recover | front AGENT", "help.browser-owner.4", "browser-owner front alpha"),
+            ("idle-stop | recover | update | front AGENT", "help.browser-owner.4", "browser-owner update all --by human"),
             ("open AGENT URL", "help.browser-owner.5", "browser-owner open alpha https://example.com"),
             ("tabs [AGENT] [--apply] · job-start | job-end | job-keep | job-close AGENT", "help.browser-owner.6", "browser-owner job-start alpha"),
             ("mcp-config AGENT [--tool devtools|playwright] [--format json|claude]", "help.browser-owner.7", "browser-owner mcp-config alpha --format claude"),

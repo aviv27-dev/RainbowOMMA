@@ -297,6 +297,10 @@ def status():
         agents.append(row)
         if st in fixes:
             problems.append({"what": f"{a}: browser {st}", "fix": fixes[st].format(a=a, port=v.get("port"))})
+        if v.get("updatePending"):
+            problems.append({"what": f"{a}: its browser runs Chrome {v.get('version')} — {v.get('installedVersion')} is installed",
+                             "fix": f"browser-owner update {a} --by human  (every agent at once: browser-owner update all --by human; "
+                                    "at a set time: \"browserUpdate\" in browsers.json)"})
         if row["themePending"]:
             problems.append({"what": f"{a}: its colors are missing while its browser is open",
                              "fix": f"stop and start it when it suits you (browser-owner stop {a} --by human; desk icon to open)"})

@@ -44,7 +44,8 @@ KEY = secrets.token_urlsafe(24)
 LAST = [time.time()]
 LOCK = threading.Lock()
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
-VIEW_KEYS = ("agent", "label", "color", "port", "status", "up", "offByHuman", "offAt", "lastStop", "lastStart", "managedBy")
+VIEW_KEYS = ("agent", "label", "color", "port", "status", "up", "offByHuman", "offAt", "lastStop", "lastStart", "managedBy",
+             "updatePending", "version", "installedVersion")
 
 
 def human_running(rows):
@@ -87,6 +88,16 @@ def state():
 
 
 def act(action, who):
+    if action == "update-all" and who == "all":       # the one button: every agent browser behind the Chrome on disk restarts on it
+        r = subprocess.run([str(HERE / "browser-owner"), "update", "all", "--by", "human"], capture_output=True, text=True, timeout=900)
+        try:
+            res = json.loads((r.stdout or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return {"ok": False, "line": t("panel.failed")}
+        n = sum(1 for x in res.get("agents", []) if x.get("update") == "updated")
+        bad = [x["agent"] for x in res.get("agents", []) if x.get("update") not in ("updated", "up-to-date", "down", "excluded")]
+        return {"ok": not bad, "line": t("panel.update_failed", names=", ".join(bad)) if bad else
+                t("panel.update_done", n=n) if n else t("panel.update_none")}
     if action not in ("open", "close", "front") or not (who == "human" or bo.NAME_RE.match(who or "")):
         return {"ok": False, "line": t("panel.unknown_action")}
     if action == "front":
