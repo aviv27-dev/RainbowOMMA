@@ -282,7 +282,7 @@ codes, and where to read more — and never acts.
 | `browser-owner start <agent> --by <who>` | paints and opens the agent's browser in the background; `already-up` if it runs |
 | `browser-owner stop <agent> --by human [--allow-reopen]` | only the human closes it; it stays closed unless `--allow-reopen` |
 | `browser-owner recover <agent> --by <who>` | restarts a hung browser after three probes; never one the human closed |
-| `browser-owner idle-stop <agent> --by <who>` | closes an idle browser, only for agents with `idleMinutes` in `browsers.json`; never by another agent, never sooner than `idleMinutes` after it opened |
+| `browser-owner idle-stop <agent> --by <who>` | closes an idle browser — every agent has `idleMinutes` (default 60; `0` keeps it up); never by another agent, never sooner than `idleMinutes` after it opened. The heal job does it by itself after `idleMinutes` with no command from the agent and no change in its tabs, and says once when swap is nearly full, with each browser's memory |
 | `browser-owner front <agent>` | brings the agent's browser to the front for you, un-minimizing it through its own CDP port (`restored` says how many windows) |
 | `browser-owner tabs [<agent>] [--apply]` | the agents' tabs and how much CPU each burns; a stale tab hot for long is reloaded, then closed — a dry run unless `--apply` or `tabSweep.mode` is `apply`. `install.sh --with-tab-sweep` runs it every 15 minutes |
 | `browser-owner heal` | puts back the colors Chrome Sync took: now for a closed browser, on its next start for an open one (with one notification); notes a Chrome update. `install.sh --with-heal` runs it every 30 minutes |

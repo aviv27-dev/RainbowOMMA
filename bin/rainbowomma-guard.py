@@ -917,7 +917,38 @@ def judge(event):
             except Exception:
                 pass
             return why, cmd
+    if me:
+        _browser_activity(event, cmds, me)
     return None, None
+
+
+BROWSER_TOOL = re.compile(r"browser|playwright|devtools|chrome|puppeteer|cdp", re.I)
+
+
+def _own_cdp_port(me):
+    try:
+        return int(_port_owner().BO.registry()[me]["port"])
+    except Exception:
+        return None
+
+
+def _browser_activity(event, cmds, me):
+    """an allowed tool call that works the agent's own browser — a browser MCP or browser tool, or a shell command aimed at
+    its own CDP port — is the agent being active there: idle-stop waits for it (#91). Never raises."""
+    try:
+        name = str(event.get("tool_name") or event.get("toolName") or "")
+        via = f"tool: {name}" if BROWSER_TOOL.search(name) else None
+        if not via and cmds and any(x in c for c in cmds for x in ("127.0.0.1:", "localhost:", "[::1]:")):
+            port = _own_cdp_port(me)
+            if port and any(re.search(rf"(?:127\.0\.0\.1|localhost|\[::1\]):{port}\b", c) for c in cmds):
+                via = "shell: its CDP port"
+        if not via and any(re.search(r"\bbrowser-owner\s+(?:open|job-)", c) for c in cmds):
+            via = "shell: browser-owner"
+        if via:
+            import rainbow_presence
+            rainbow_presence.stamp_activity(me, via)
+    except Exception:
+        pass
 
 
 def main(argv=None):

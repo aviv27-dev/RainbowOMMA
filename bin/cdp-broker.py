@@ -31,6 +31,11 @@ import threading
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))   # -I drops the script's folder; rainbow_presence lives beside it
+try:
+    import rainbow_presence  # noqa: E402
+except Exception:                # an activity stamp is never a reason for the broker not to run
+    rainbow_presence = None
 MAX_MSG = 32 * 1024 * 1024
 WS_GUID = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 LOCAL_PATH = "/devtools/browser/rainbowomma"
@@ -163,6 +168,8 @@ class Broker:
             self.pending[gid] = (c, msg["id"])
         if msg.get("sessionId"):
             self.owner.setdefault(msg["sessionId"], c)
+        if rainbow_presence and rainbow_presence.counts_as_activity(msg["method"]):   # the agent working, for idle-stop (#91)
+            rainbow_presence.stamp_activity(self.a["name"], f"cdp: {msg['method']}")
         out = {"id": gid, "method": msg["method"], "params": msg.get("params") or {}}
         if msg.get("sessionId"):
             out["sessionId"] = msg["sessionId"]

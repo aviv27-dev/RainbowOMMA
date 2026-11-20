@@ -112,6 +112,9 @@ def run_checks(launch_agents=None):
     out.append(check(t("dr.dock"), bool(apps) and docked is not False,
                      t("dr.dock_detail", n=len(apps), agents=len(reg)) + ("" if docked is None else " · " + t("dr.dock_in" if docked else "dr.dock_out")),
                      t("dr.dock_fix"), needed=False))
+    stays = sorted(n for n, a in reg.items() if not a.get("idleMinutes") and not a.get("managedBy"))
+    out.append(check(t("dr.idle_policy"), not stays, t("dr.idle_stays", names=", ".join(stays)) if stays else t("dr.idle_all"),
+                     t("dr.idle_fix"), needed=False))
     for h in hermes_findings(reg):                       # only agents whose row names their Hermes config
         out.append(check(t("dr.hermes", agent=h["agent"]), h["ok"], h["what"], h["fix"]))
     return out
@@ -304,6 +307,17 @@ def status():
         if row["themePending"]:
             problems.append({"what": f"{a}: its colors are missing while its browser is open",
                              "fix": f"stop and start it when it suits you (browser-owner stop {a} --by human; desk icon to open)"})
+    try:
+        bo_ = _load("rainbow_browser_owner_swap", "browser-owner.py")
+        use = bo_.swap_usage()
+        if use and use[1] > 0 and use[0] / use[1] >= bo_.SWAP_HIGH:
+            mem = bo_.browser_memory(bo_.registry())
+            problems.append({"what": f"swap {use[0] / 1024:.1f} of {use[1] / 1024:.1f} GB in use — agent browsers: "
+                                     + (", ".join(f"{x['agent']} {x['mb'] / 1024:.1f} GB" for x in mem) or "none running"),
+                             "fix": "stop the agent browsers you don't need now (browser-owner stop <agent> --by human); "
+                                    "give each an idleMinutes so it stops by itself"})
+    except Exception:
+        pass
     ports = _json("port-owner", "list")
     presence = _json("browser-owner", "presence")
     office = _json("office-owner", "apps").get("apps", {})
