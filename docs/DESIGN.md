@@ -83,10 +83,18 @@
   sooner for a closed browser, under its lock. An open browser is never restarted for its colors: `themeMissingSince`
   and one notification. A Chrome update (`CFBundleShortVersionString`, kept in `chrome-version.json`) gets one
   notification saying whether every agent still has its theme and, if the Dock tray was built, its applet.
-- **Idle browsers stop by themselves (`idleMinutes`).** Every heal run (30 min) checks each agent with `idleMinutes`:
-  no client attached to any of its tabs, no tab added, closed or navigated since `idleMinutes` ago, and no auth-owner
-  lease → `idle-stop --by auto-idle`, with a receipt. Anything it can't read counts as busy. No `idleMinutes`, no stop;
-  never a `managedBy` browser or the human's.
+- **Idle browsers stop by themselves (`idleMinutes`, default 60; #44, #91).** Every heal run (30 min) checks each agent
+  browser: no command from its agent and no tab added, closed or navigated for `idleMinutes`, and no auth-owner lease (a
+  sign-in lock on a site) → `idle-stop --by auto-idle`, logged first (which browser, for how long nobody worked in it,
+  and why) and with a receipt. A command is what the agent sends to its own browser — a navigation, code it runs, a
+  download: cdp-broker records each one in pipe mode, and the guard records an allowed browser-tool call or a command at
+  the agent's own CDP port (`rainbow_presence.stamp_activity`, `$RAINBOW_HOME/state/browser-activity.json`). RainbowOMMA's
+  own reads and a client setting up its connection don't count, and a client that only stays connected doesn't keep the
+  browser up. Anything it can't read counts as busy. `"idleMinutes": 0` (or `managedBy`) keeps a browser up;
+  `rainbowomma-doctor` names those.
+- **Swap nearly full (#91).** Above 85 % of swap in use, heal says so once for the event — a notification, a log line and
+  a receipt with how much memory each agent browser holds — and again only after it has gone back below 70 %.
+  `rainbowomma-doctor status` lists the same while it lasts.
 - **Colors missing for long.** A theme missing on an open browser is said once, then again after 8 runs (~4 h) with how
   long, at most once a day; `themePending` shows in `status`. The idle-stop runs before the theme check, so a browser it
   stops gets its colors back in the same run.

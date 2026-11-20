@@ -172,8 +172,15 @@ def registry(path=None):
             a["launcher"] = expand(r["launcher"])
         if r.get("managedBy"):
             a["managedBy"] = expand(r["managedBy"])
-        if r.get("idleMinutes") is not None:
-            a["idleMinutes"] = int(r["idleMinutes"])
+        idle = r.get("idleMinutes", DEFAULT_IDLE_MINUTES)          # #91: on by default; 0 = this browser stays up
+        try:
+            idle = int(idle) if idle is not None else 0
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: idleMinutes must be a number of minutes (0 keeps it up)") from None
+        if idle < 0:
+            raise ValueError(f"{name}: idleMinutes can't be negative (0 keeps it up)")
+        if idle:
+            a["idleMinutes"] = idle
         lo, hi = port_range(r.get("ports"), port)
         for other, (olo, ohi) in ranges.items():
             if lo <= ohi and olo <= hi:
@@ -696,7 +703,8 @@ def ensure_theme(a, st):
     return "failed"
 
 
-RESTORE = ("lastJob", "all", "none")   # restoreTabs: the last session less a finished job's tabs (default) · all of it · none
+RESTORE = ("lastJob", "all", "none")
+DEFAULT_IDLE_MINUTES = 60   # an agent browser nobody works in for this long is stopped (#91); "idleMinutes": 0 keeps it up   # restoreTabs: the last session less a finished job's tabs (default) · all of it · none
 
 
 def restore_flags(a):
@@ -1227,7 +1235,7 @@ UPDATE_STATE = SHARED / "state" / "browser-update.json"
 
 def auto_update(reg, rows=None, now=None, schedule=None):
     """heal's part, only at the time the human set ("browserUpdate"; off by default): every agent browser that runs an older
-    Chrome than the one on disk restarts on it — each one only when it is safe: up, no client attached to any tab and no tab
+    Chrome than the one on disk restarts on it — each one only when it is safe: up, no command from its agent and no tab
     change for UPDATE_QUIET_S, nobody signing in, not closed by the human, not managedBy. One that is busy is tried again
     at the next heal run, until the day's window closes. Anything it can't read means busy."""
     window = update_due(update_schedule() if schedule is None else schedule, now)
@@ -1253,15 +1261,11 @@ def auto_update(reg, rows=None, now=None, schedule=None):
             why = "signing in (auth-owner)" if holders else "auth leases unreadable"
         else:
             try:
-                attached, snap = idle_signals(a)
+                last_at, _what = activity(a, st)
+                if time.time() - last_at < UPDATE_QUIET_S:
+                    why = "in use (a command or a tab change in the last 10 min)"
             except Exception as exc:
-                attached, snap, why = True, None, type(exc).__name__
-            if not why and (attached or st.get("updateSnap") != snap):
-                st.update({"updateSnap": snap, "updateQuietSince": now_iso()})
-                save(a, st)
-                why = "in use"
-            elif not why and (_iso_ago(st.get("updateQuietSince")) or 0) < UPDATE_QUIET_S:
-                why = "quiet for less than 10 min"
+                why = type(exc).__name__
         if why:
             out.append({"agent": name, "update": "waiting", "why": why, "from": v["version"], "to": v["installedVersion"]})
             continue
@@ -1406,10 +1410,28 @@ def idle_signals(a):
     return attached, hashlib.sha256(snap.encode()).hexdigest()[:16]
 
 
+def activity(a, st):
+    """when the agent last worked in its browser → (epoch seconds, what it was), from the newer of: its last command there
+    (rainbow_presence.last_activity — cdp-broker in pipe mode, the guard for a browser tool call) and the last real change
+    in its tabs (one opened, closed or navigated — idle_signals' fingerprint). A client that only stays connected is not
+    activity. Raises when the tabs can't be read (then it is busy: never a stop on a guess)."""
+    _attached, snap = idle_signals(a)
+    if st.get("idleSnap") != snap:
+        st.update({"idleSnap": snap, "idleSince": now_iso()})
+        save(a, st)
+    tabs_at = time.time() - (_iso_ago(st.get("idleSince")) or 0)
+    cmd = rainbow_presence.last_activity(a["name"]) or {}
+    if (cmd.get("at") or 0) > tabs_at:
+        return cmd["at"], str(cmd.get("via") or "a command")
+    return tabs_at, "a change in its tabs"
+
+
 def auto_idle(reg, rows=None):
-    """the built-in reaper (#44): an agent with idleMinutes whose browser has had no client attached to any tab and no tab
-    change for idleMinutes, and holds no auth-owner lease, is stopped like `idle-stop --by auto-idle`. Anything it can't
-    read means busy — never a stop on a guess. Never the human's browser, never a managedBy one."""
+    """the built-in reaper (#44, #91): an agent browser with no command from its agent and no change in its tabs for
+    idleMinutes (default 60) is stopped like `idle-stop --by auto-idle` — a client that stays connected without sending
+    anything doesn't keep it up. Never while the agent holds a sign-in lock on a site (auth-owner); never a managedBy one or
+    one with "idleMinutes": 0. Anything it can't read means busy. Each stop is logged first: which browser, for how long
+    nobody worked in it, and why it may stop."""
     rows = processes() if rows is None else rows
     holders, out = _auth_holders(), []
     for name, a in reg.items():
@@ -1419,21 +1441,16 @@ def auto_idle(reg, rows=None):
         if view(a, st=st, rows=rows)["status"] != "up":
             continue
         if holders is None or name in holders:
-            out.append({"agent": name, "idle": "busy", "why": "signing in (auth-owner)" if holders else "auth leases unreadable"})
+            out.append({"agent": name, "idle": "busy", "why": "holds a sign-in lock (auth-owner)" if holders else "auth leases unreadable"})
             continue
         try:
-            attached, snap = idle_signals(a)
+            last_at, last_what = activity(a, st)
         except Exception as exc:
             out.append({"agent": name, "idle": "unknown", "why": f"{type(exc).__name__}"})
             continue
-        if attached or st.get("idleSnap") != snap:
-            st.update({"idleSnap": snap, "idleSince": now_iso()})
-            save(a, st)
-            out.append({"agent": name, "idle": "active" if attached else "changed"})
-            continue
-        quiet = _iso_ago(st.get("idleSince"))
-        if quiet is None or quiet < a["idleMinutes"] * 60:
-            out.append({"agent": name, "idle": "quiet", "minutes": int((quiet or 0) // 60)})
+        quiet = max(0.0, time.time() - last_at)
+        if quiet < a["idleMinutes"] * 60:
+            out.append({"agent": name, "idle": "active" if quiet < 60 else "quiet", "minutes": int(quiet // 60), "last": last_what})
             continue
         try:
             lk = open_lock(a["lock"])
@@ -1444,12 +1461,90 @@ def auto_idle(reg, rows=None):
                 fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
                 continue
+            why = (f"no command from {name} and no change in its tabs for {int(quiet // 60)} min (idleMinutes {a['idleMinutes']}; "
+                   f"last: {last_what}); no sign-in lock")
+            log(a, f"auto-idle: stopping — {why}")
             a["peers"] = list(reg)
             code, res = do_idle_stop(a, "auto-idle")
-        rainbow_receipts.write("browser-owner", "idle-stop", name, "auto-idle", res.get("status"), minutes=int(quiet // 60))
-        log(a, f"auto-idle: no client and no tab change for {int(quiet // 60)} min → {res.get('status')}")
-        out.append({"agent": name, "idle": res.get("status"), "minutes": int(quiet // 60)})
+        rainbow_receipts.write("browser-owner", "idle-stop", name, "auto-idle", res.get("status"), minutes=int(quiet // 60), why=why)
+        log(a, f"auto-idle: → {res.get('status')}")
+        out.append({"agent": name, "idle": res.get("status"), "minutes": int(quiet // 60), "why": why})
     return out
+
+
+SWAP = None                                   # tests replace it: () -> (used MB, total MB) or None
+RSS = None                                    # tests replace it: () -> {pid: resident KB}
+SWAP_HIGH, SWAP_LOW = 0.85, 0.70              # an event starts above 85 % of swap in use, and ends below 70 %
+SWAP_STATE = SHARED / "state" / "swap-alert.json"
+
+
+def swap_usage():
+    """(used MB, total MB) of macOS swap (sysctl vm.swapusage), or None when it can't be read"""
+    if SWAP:
+        return SWAP()
+    try:
+        out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5).stdout
+        total = float(re.search(r"total\s*=\s*([\d.]+)M", out).group(1))
+        used = float(re.search(r"used\s*=\s*([\d.]+)M", out).group(1))
+        return used, total
+    except Exception:
+        return None
+
+
+def resident_kb():
+    if RSS:
+        return RSS()
+    out = subprocess.run(["ps", "-axo", "pid=,rss="], capture_output=True, text=True, timeout=10).stdout
+    got = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            got[int(parts[0])] = int(parts[1])
+    return got
+
+
+def browser_memory(reg, rows=None):
+    """[{agent, label, mb, processes}] — what each agent browser holds in memory now (all its Chrome processes), largest first"""
+    rows = processes() if rows is None else rows
+    rss = resident_kb()
+    out = []
+    for name, a in reg.items():
+        _, tree = tree_of(a, rows)
+        if tree:
+            out.append({"agent": name, "label": a["label"], "mb": round(sum(rss.get(p, 0) for p in tree) / 1024),
+                        "processes": len(tree), "idleMinutes": a.get("idleMinutes") or 0})
+    return sorted(out, key=lambda x: -x["mb"])
+
+
+def swap_alert(reg, rows=None):
+    """heal's part (#91): when swap is nearly full, say so ONCE for the whole event — one notification, a log line and a
+    receipt, with how much memory each agent browser holds — and again only after swap has gone back below SWAP_LOW"""
+    use = swap_usage()
+    if not use or use[1] <= 0:
+        return None
+    used, total = use
+    share = used / total
+    try:
+        st = json.loads(SWAP_STATE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        st = {}
+    if share < SWAP_LOW and st.get("active"):
+        atomic_write(SWAP_STATE, json.dumps({"active": False, "endedAt": now_iso()}))
+        return {"swap": "back", "usedMB": round(used), "totalMB": round(total)}
+    if share < SWAP_HIGH or st.get("active"):
+        return {"swap": "high" if st.get("active") else "ok", "usedMB": round(used), "totalMB": round(total)}
+    mem = browser_memory(reg, rows)
+    listing = ", ".join(f"{x['label']} {x['mb'] / 1024:.1f} GB" + ("" if x["idleMinutes"] else " (stays up)") for x in mem) or "—"
+    notify("RainbowOMMA", t("bo.swap_high", used=f"{used / 1024:.1f}", total=f"{total / 1024:.1f}", browsers=listing))
+    for name, a in reg.items():
+        if any(x["agent"] == name for x in mem):
+            log(a, f"swap {used / 1024:.1f} of {total / 1024:.1f} GB in use — agent browsers: {listing}")
+            break
+    rainbow_receipts.write("browser-owner", "swap-high", None, "heal", "warned", usedMB=round(used), totalMB=round(total),
+                           browsers={x["agent"]: x["mb"] for x in mem})
+    atomic_write(SWAP_STATE, json.dumps({"active": True, "since": now_iso(), "usedMB": round(used), "totalMB": round(total),
+                                         "browsers": mem}, ensure_ascii=False))
+    return {"swap": "warned", "usedMB": round(used), "totalMB": round(total), "browsers": mem}
 
 
 def heal(reg):
@@ -1458,6 +1553,10 @@ def heal(reg):
     puts it back. A Chrome update is recorded, with one notification on whether every theme and Dock applet is in place."""
     idle = auto_idle(reg)                    # first: a browser it stops gets its colors back in this same run
     updates = auto_update(reg)               # then: a browser behind the Chrome on disk restarts on it, when it is safe
+    try:
+        swap = swap_alert(reg)               # and: swap nearly full → said once per event, with each browser's memory
+    except Exception as exc:
+        swap = {"swap": "unknown", "why": type(exc).__name__}
     rows = processes()
     out = []
     for name, a in reg.items():
@@ -1523,7 +1622,7 @@ def heal(reg):
             bad = [x["agent"] for x in out if x["theme"] not in ("ok", "kept", "installed")] + missing_apps
             notify("RainbowOMMA", t("bo.heal_chrome_ok", ver=ver) if not bad else t("bo.heal_chrome_check", ver=ver, names=", ".join(bad)))
     return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps,
-            "idle": idle, "updates": updates}
+            "idle": idle, "updates": updates, "swap": swap}
 
 
 def _broker():

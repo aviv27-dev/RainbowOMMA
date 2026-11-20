@@ -8,6 +8,9 @@ upgrade prints those in full.
 ## [Unreleased]
 
 ### Added
+- Swap nearly full: the heal job says so once per event (above 85 %, again after it has gone back below 70 %) — a
+  notification, a log line and a receipt with how much memory each agent browser holds; `rainbowomma-doctor status` lists
+  the same while it lasts. (#91)
 - Agent browsers on the latest Chrome. `browser-owner status` shows the running and the installed version
   (`updatePending`); `browser-owner update <agent>` restarts one that is behind, with its tabs (`restoreTabs`). One button,
   "Update all browsers", in `rainbow-panel` (and in the menu bar while one is behind) restarts every agent browser that is
@@ -15,6 +18,14 @@ upgrade prints those in full.
   `"browserUpdate": {"day": "sun", "time": "04:00"}` in `browsers.json` — the heal job then restarts each one at its first
   quiet moment that day (no client attached, no tab change for 10 minutes, nobody signing in). `rainbowomma-doctor status`
   names a browser that is behind.
+
+### Changed
+- Agent browsers stop by themselves when nobody works in them: `idleMinutes` defaults to 60 (`0` keeps a browser up). The
+  clock is the agent's own last command in its browser — a navigation, code it runs, a download (recorded by cdp-broker
+  in pipe mode, and by the guard for a browser-tool call or a command at the agent's own CDP port) — or a real change in
+  its tabs; a client that only stays connected no longer keeps it up. Never while it holds a sign-in lock (auth-owner).
+  Each stop is logged first: which browser, how long it was unused, and why. `rainbowomma-doctor` names a browser that
+  never stops by itself. (#91)
 
 ## [0.4.0] — 2026-11-09
 

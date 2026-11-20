@@ -26,7 +26,8 @@ REG.write_text(json.dumps({"agents": {
     "alpha": {"label": "אלפא", "port": 9222, "profile": str(tmp / "alpha-profile"), "color": "#7E57C2", "state": str(tmp / "alpha.json"),
              "log": str(tmp / "owner.log"), "launcher": str(tmp / "launcher.sh"), "launcherEnv": "ALPHA_BROWSER_OWNER"},
     "bravo": {"label": "בראבו", "port": 9223, "profile": str(tmp / "bravo"), "color": "#26A69A", "managedBy": "x.py"},
-    "charlie": {"label": "צ׳רלי", "port": 9224, "profile": str(tmp / "charlie"), "color": "#F4511E", "state": str(tmp / "charlie.json"), "log": str(tmp / "owner.log")}}}))
+    "charlie": {"label": "צ׳רלי", "port": 9224, "profile": str(tmp / "charlie"), "color": "#F4511E", "state": str(tmp / "charlie.json"), "log": str(tmp / "owner.log"),
+                "idleMinutes": 0}}}))   # opted out of idle-stop (#91: on by default)
 (tmp / "launcher.sh").write_text("true")
 reg = bo.registry(REG)
 ALPHA_A, CHARLIE_A = reg["alpha"], reg["charlie"]
@@ -303,7 +304,7 @@ code, out = bo.do_idle_stop(BRAVO_A, "bravo-reaper")
 check("idle-stop: an agent with idleMinutes closes its own tree, and it is NOT recorded as 'the human closed it'",
       code == 0 and killed == [{600}] and not json.loads(Path(BRAVO_A["state"]).read_text()).get("offByHuman"), out)
 code, out = bo.do_idle_stop(CHARLIE_A, "charlie")
-check("idle-stop is refused for an agent without idleMinutes", code == 2 and not any(600 not in k for k in killed[1:]), out)
+check("idle-stop is refused for an agent with idleMinutes 0 (it stays up)", code == 2 and not any(600 not in k for k in killed[1:]), out)
 # --allow-reopen and the owner's own close vs ⌘Q
 bo.processes = lambda: [(200, 1, HUMAN), (600, 1, BRAVO_CMD)]
 code, out = bo.do_stop(BRAVO_A, "human", allow_reopen=True)
@@ -2497,21 +2498,31 @@ def _sig(a):
     return sig["v"]
 ib.idle_signals = _sig
 ib.AUTH_LEASES = lambda: {}
-r1 = ib.auto_idle(ireg)
+last_cmd = {}
+_real_last_activity = ib.rainbow_presence.last_activity
+ib.rainbow_presence.last_activity = lambda agent: last_cmd.get(agent)     # the agent's last command, as the guard/broker record it
+def _idle40():
+    s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; s_["idleSnap"] = "S1"
+    Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
 ago40 = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 40 * 60))
-s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
-sig["v"] = (True, "S1"); r_att = ib.auto_idle(ireg)
-s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
-sig["v"] = (False, "S1"); ib.AUTH_LEASES = lambda: {"accounts.example.com": {"holder": "alpha"}}; r_auth = ib.auto_idle(ireg)
+r1 = ib.auto_idle(ireg)                                                            # its tabs just changed (first look)
+_idle40(); last_cmd["alpha"] = {"at": time.time() - 5 * 60, "via": "tool: mcp__alpha-browser__navigate_page"}; r_cmd = ib.auto_idle(ireg)
+last_cmd.clear(); _idle40(); ib.AUTH_LEASES = lambda: {"accounts.example.com": {"holder": "alpha"}}; r_auth = ib.auto_idle(ireg)
 ib.AUTH_LEASES = lambda: {}; sig["v"] = OSError("no answer"); r_unk = ib.auto_idle(ireg)
-check("auto idle-stop (#44): a tab change, an attached client, a sign-in in progress, or no answer — never a stop",
-      r1[0]["idle"] == "changed" and r_att[0]["idle"] == "active" and r_auth[0]["idle"] == "busy" and r_unk[0]["idle"] == "unknown"
-      and not stops and [x["agent"] for x in r1] == ["alpha"], (r1, r_att, r_auth, r_unk))
-s_ = json.loads(Path(ireg["alpha"]["state"]).read_text()); s_["idleSince"] = ago40; s_["idleSnap"] = "S1"; Path(ireg["alpha"]["state"]).write_text(json.dumps(s_))
-sig["v"] = (False, "S1"); r_stop = ib.auto_idle(ireg)
-check("auto idle-stop (#44): no client and no tab change for idleMinutes → stopped through idle-stop, with a receipt; an agent without idleMinutes never",
-      stops == [("alpha", "auto-idle")] and r_stop[0]["idle"] == "stopped"
-      and '"auto-idle"' in (SAFE_HOME / "logs" / "receipts.jsonl").read_text(), (stops, r_stop))
+check("auto idle-stop (#44, #91): a tab change, a recent command from the agent, a sign-in lock on a site, or no answer — never a stop",
+      r1[0]["idle"] == "active" and r1[0]["last"] == "a change in its tabs" and r_cmd[0]["idle"] == "quiet"
+      and r_cmd[0]["last"] == "tool: mcp__alpha-browser__navigate_page" and r_auth[0]["idle"] == "busy" and "sign-in lock" in r_auth[0]["why"]
+      and r_unk[0]["idle"] == "unknown" and not stops and [x["agent"] for x in r1] == ["alpha"], (r1, r_cmd, r_auth, r_unk))
+_idle40(); sig["v"] = (True, "S1"); last_cmd["alpha"] = {"at": time.time() - 50 * 60, "via": "cdp: Runtime.evaluate"}
+r_stop = ib.auto_idle(ireg)
+idle_log = Path(ireg["alpha"]["log"]).read_text()
+check("auto idle-stop (#91): a client that stays connected without sending anything doesn't keep it up — stopped through idle-stop",
+      stops == [("alpha", "auto-idle")] and r_stop[0]["idle"] == "stopped", (stops, r_stop))
+check("auto idle-stop (#91): before the stop, the log says which browser, for how long nobody worked in it and why; the receipt too",
+      re.search(r"auto-idle: stopping — no command from alpha and no change in its tabs for 4\d min \(idleMinutes 30; last: a change in its tabs\); "
+                r"no sign-in lock", idle_log) and idle_log.index("auto-idle: stopping") < idle_log.index("auto-idle: → stopped")
+      and '"auto-idle"' in (SAFE_HOME / "logs" / "receipts.jsonl").read_text() and "no command from alpha" in r_stop[0]["why"], idle_log[-500:])
+ib.rainbow_presence.last_activity = _real_last_activity
 hb = load("browser-owner.py"); notes = []
 hb.auto_idle = lambda reg, rows=None: []; hb.theme_saved = lambda a: ""; hb.profile_unsafe = lambda a: None
 hb.view = lambda a, st=None, rows=None: {"roots": [1]}; hb.notify = lambda title, text: notes.append(text)
@@ -3171,25 +3182,29 @@ check("update: restarts a browser that is behind — stop, then start on the ins
       and calls_u == [("stop", [1, 2]), ("start", "alpha", "alpha")] and ub.load(ureg["alpha"])["lastStop"]["update"] is True, (c_peer, c_up, calls_u))
 ver_run.update({"alpha": "141.0.1.1", "charlie": "141.0.1.1"}); calls_u.clear()
 ub._auth_holders = lambda: set()
-sig = {"alpha": (False, "snapA"), "charlie": (True, "snapC")}
-ub.idle_signals = lambda a: sig[a["name"]]
+ub.idle_signals = lambda a: (True, "snap-" + a["name"])        # a client stays connected to both — that alone is not use
+ucmd = {}
+_real_la = ub.rainbow_presence.last_activity
+ub.rainbow_presence.last_activity = lambda agent: ucmd.get(agent)
 off_run = ub.auto_update(ureg, now=sun_0500, schedule=None)       # browsers.json has no browserUpdate: off
-first = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
-for n_ in ("alpha",):
-    st_ = ub.load(ureg[n_]); st_["updateQuietSince"] = "2026-01-01T00:00:00"; ub.save(ureg[n_], st_)
+first = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))   # first look: their tabs just "changed"
+quiet_ago = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 30 * 60))
+for n_ in ("alpha", "charlie"):
+    st_ = ub.load(ureg[n_]); st_["idleSince"] = quiet_ago; ub.save(ureg[n_], st_)
+ucmd["charlie"] = {"at": time.time() - 120, "via": "cdp: Page.navigate"}                 # charlie's agent is working
 second = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
-check("update at the set time: off by default; at the time, a browser in use (a client attached) waits, a quiet one restarts — "
-      "each only after 10 quiet minutes", off_run == [] and {x["agent"]: x["update"] for x in first} == {"alpha": "waiting", "charlie": "waiting"}
+check("update at the set time: off by default; at the time, a browser its agent is working in waits, a quiet one restarts — "
+      "a connection held open without commands is not work", off_run == [] and {x["agent"]: x["update"] for x in first} == {"alpha": "waiting", "charlie": "waiting"}
       and {x["agent"]: x["update"] for x in second} == {"alpha": "updated", "charlie": "waiting"}
       and ("start", "alpha", "alpha") in calls_u and ("start", "charlie", "charlie") not in calls_u, (first, second))
-sig["charlie"] = (False, "snapC2"); st_ = ub.load(ureg["charlie"]); st_.update({"updateSnap": "snapC2", "updateQuietSince": "2026-01-01T00:00:00"}); ub.save(ureg["charlie"], st_)
+ucmd.clear()
 third = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
 fourth = ub.auto_update(ureg, now=sun_0500, schedule=("sun", (4, 0)))
 check("update at the set time: tried again at every heal run until all are done — then nothing more that day",
       {x["agent"]: x["update"] for x in third} == {"charlie": "updated"} and fourth == []
       and json.loads(ub.UPDATE_STATE.read_text())["complete"] is True, (third, fourth))
+ub.rainbow_presence.last_activity = _real_la
 ver_run.update({"alpha": "141.0.1.1", "charlie": "142.0.2.2"}); calls_u.clear()
-sig["alpha"] = (True, "busy")                                     # the button doesn't wait for a quiet moment
 code_all, res_all = ub.update_all(ureg, "human")
 check("update all (the one button): every agent browser that is behind restarts now; up-to-date ones are left alone",
       code_all == 0 and {x["agent"]: x["update"] for x in res_all["agents"] if x["agent"] in ("alpha", "charlie")} == {"alpha": "updated", "charlie": "up-to-date"}
@@ -3214,6 +3229,74 @@ mtxt = umb.menu([{"agent": "alpha", "label": "Alpha", "color": "#7E57C2", "statu
 mtxt2 = umb.menu([{"agent": "alpha", "label": "Alpha", "color": "#7E57C2", "status": "up", "up": True}], False, [])
 check("menu bar: \"update all agent browsers\" appears while one is behind, and runs browser-owner update all --by human",
       "param1=update param2=all param3=--by param4=human" in mtxt and "param1=update" not in mtxt2, mtxt)
+
+# ── #91: idle-stop on by default, activity = the agent's commands, swap nearly full said once ──
+dreg_ = tmp / "idle-default-reg.json"
+def reg_idle(**row):
+    raw_ = json.loads(REG.read_text()); raw_["agents"]["alpha"].pop("idleMinutes", None); raw_["agents"]["alpha"].update(row)
+    dreg_.write_text(json.dumps(raw_)); return bo.registry(dreg_)["alpha"]
+bad_idle = []
+for v_ in (-5, "soon"):
+    try:
+        reg_idle(idleMinutes=v_); bad_idle.append(v_)
+    except ValueError:
+        pass
+check("idle-stop (#91): on by default — an agent row without idleMinutes stops after 60 idle minutes; 0 keeps it up; a bad value is refused",
+      reg_idle().get("idleMinutes") == 60 and not reg_idle(idleMinutes=0).get("idleMinutes") and reg_idle(idleMinutes=15)["idleMinutes"] == 15
+      and not bad_idle, bad_idle)
+import rainbow_presence as rpz
+check("activity (#91): what the agent sends counts — a navigation, code it runs, a download — not RainbowOMMA's reads or a client "
+      "setting up its connection",
+      all(rpz.counts_as_activity(m) for m in ("Page.navigate", "Runtime.evaluate", "Input.dispatchMouseEvent", "Browser.setDownloadBehavior", "Target.createTarget"))
+      and not any(rpz.counts_as_activity(m) for m in ("Target.getTargets", "Browser.getVersion", "Page.enable", "Target.attachToTarget",
+                                                       "SystemInfo.getProcessInfo", "Target.closeTarget", "Browser.close", "")))
+act_home = tmp / "activity-home"; os.environ["RAINBOW_HOME"] = str(act_home); rpz._last_write.clear()
+st1 = rpz.stamp_activity("Alpha", "cdp: Page.navigate", now=1000.0); st2 = rpz.stamp_activity("alpha", "cdp: Runtime.evaluate", now=1010.0)
+st3 = rpz.stamp_activity("alpha", "cdp: Runtime.evaluate", now=1040.0)
+check("activity (#91): stamped per agent, at most once every 30 s (a busy agent doesn't write on every command)",
+      st1 and not st2 and st3 and rpz.last_activity("alpha") == {"at": 1040.0, "via": "cdp: Runtime.evaluate"} and rpz.last_activity("bravo") is None)
+brk = load("cdp-broker.py"); rpz._last_write.clear()
+class _BC:
+    open = True
+    def send(self, m): pass
+bk = brk.Broker({"name": "charlie"}, act_home); bk.to_browser = lambda out: None
+bk.from_client(_BC(), {"id": 1, "method": "Target.getTargets"}); before_ = rpz.last_activity("charlie")
+bk.from_client(_BC(), {"id": 2, "method": "Page.navigate", "params": {"url": "https://example.com"}})
+check("activity (#91): in pipe mode the broker records the agent's commands as they pass — a read doesn't count",
+      before_ is None and (rpz.last_activity("charlie") or {}).get("via") == "cdp: Page.navigate", rpz.last_activity("charlie"))
+os.environ["RAINBOW_HOME"] = str(SAFE_HOME)
+def guard_as(agent, ev, home):
+    return subprocess.run([sys.executable, "-I", guard], input=json.dumps(ev), capture_output=True, text=True,
+                          env=dict(genv, RAINBOW_AGENT=agent, RAINBOW_HOME=str(home)))
+gh1, gh2, gh3, gh4 = (tmp / f"guard-act-{i}" for i in range(4))
+guard_as("alpha", {"tool_name": "mcp__alpha-browser__navigate_page", "tool_input": {"url": "https://example.com"}}, gh1)
+guard_as("alpha", {"tool_name": "Bash", "tool_input": {"command": "curl -s http://127.0.0.1:9222/json/list"}}, gh2)
+guard_as("alpha", {"tool_name": "Bash", "tool_input": {"command": "ls -la"}}, gh3)
+guard_as("alpha", {"tool_name": "Bash", "tool_input": {"command": "curl -s http://127.0.0.1:9223/json/list"}}, gh4)
+acts_ = [json.loads((h / "state" / "browser-activity.json").read_text()).get("alpha", {}).get("via") if (h / "state" / "browser-activity.json").exists() else None
+         for h in (gh1, gh2, gh3, gh4)]
+check("activity (#91): the guard records an allowed browser-tool call and a command at the agent's own CDP port — not other "
+      "commands, not another agent's port", acts_ == ["tool: mcp__alpha-browser__navigate_page", "shell: its CDP port", None, None], acts_)
+sw = load("browser-owner.py"); sw.SWAP_STATE = tmp / "swap-state.json"; swap_now = {"v": (16425.5, 17408.0)}
+sw.SWAP = lambda: swap_now["v"]; sw.RSS = lambda: {601: 400 * 1024, 602: 200 * 1024, 701: 300 * 1024}
+sw.processes = lambda: []; sw.tree_of = lambda a, rows: ([1], {601, 602}) if a["name"] == "alpha" else ([2], {701}) if a["name"] == "bravo" else ([], set())
+swnotes = []; sw.notify = lambda title, text: swnotes.append(text)
+swreg = {"alpha": dict(ALPHA_A, idleMinutes=60), "bravo": dict(ALPHA_A, name="bravo", label="Bravo", idleMinutes=0), "charlie": CHARLIE_A}
+os.environ["RAINBOW_LANG"] = "en"
+w1 = sw.swap_alert(swreg); w2 = sw.swap_alert(swreg)
+swap_now["v"] = (8000.0, 17408.0); w3 = sw.swap_alert(swreg)
+swap_now["v"] = (16000.0, 17408.0); w4 = sw.swap_alert(swreg)
+os.environ["RAINBOW_LANG"] = "he"
+check("swap (#91): nearly full → said once for the event, with how much memory each agent browser holds (largest first)",
+      w1["swap"] == "warned" and [(x["agent"], x["mb"]) for x in w1["browsers"]] == [("alpha", 600), ("bravo", 300)]
+      and len(swnotes) == 2 and "16.0 of 17.0 GB" in swnotes[0] and "0.6 GB" in swnotes[0] and "Bravo 0.3 GB (stays up)" in swnotes[0]
+      and w2["swap"] == "high", (w1, swnotes))
+check("swap (#91): …said again only after it went back below 70 % (a new event)", w3["swap"] == "back" and w4["swap"] == "warned" and len(swnotes) == 2,
+      (w3, w4, len(swnotes)))
+rd_ = subprocess.run(["bash", str(HERE / "rainbowomma-doctor"), "--json"], capture_output=True, text=True, env=dict(genv, RAINBOW_LANG="en"))
+idc = next((c for c in json.loads(rd_.stdout)["checks"] if c["check"].startswith("every agent browser stops by itself")), None)
+check("doctor (#91): names an agent browser that never stops by itself (idleMinutes 0), with the fix — optional",
+      idc and not idc["ok"] and not idc["needed"] and "charlie" in idc["detail"] and "idleMinutes" in idc["fix"], idc)
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

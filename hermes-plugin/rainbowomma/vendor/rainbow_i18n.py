@@ -569,6 +569,17 @@ M = {
                         "he": "פתוח · ממתין לעדכון"},
     "mb.update_all": {"en": "Update all agent browsers",
                       "he": "עדכון כל דפדפני הסוכנים"},
+    # ── idle-stop on by default, swap nearly full (#91) ──
+    "bo.swap_high": {"en": "Swap nearly full: {used} of {total} GB in use. Agent browsers: {browsers}",
+                     "he": "ה-swap כמעט מלא: {used} מתוך {total} GB בשימוש. דפדפני הסוכנים: {browsers}"},
+    "dr.idle_policy": {"en": "every agent browser stops by itself when nobody works in it (idleMinutes)",
+                       "he": "כל דפדפן סוכן נסגר מעצמו כשאף אחד לא עובד בו (idleMinutes)"},
+    "dr.idle_stays": {"en": "stays up until someone stops it: {names}",
+                      "he": "נשאר פתוח עד שמישהו יסגור אותו: {names}"},
+    "dr.idle_all": {"en": "all of them, after their idleMinutes (default 60)",
+                    "he": "כולם, אחרי ה-idleMinutes שלהם (ברירת מחדל 60)"},
+    "dr.idle_fix": {"en": "give it \"idleMinutes\" in browsers.json (60 is the default) — 0 is only for a browser that must stay up",
+                    "he": "לתת לו \"idleMinutes\" ב-browsers.json (ברירת המחדל 60) — 0 רק לדפדפן שחייב להישאר פתוח"},
 }
 
 _detected = None
