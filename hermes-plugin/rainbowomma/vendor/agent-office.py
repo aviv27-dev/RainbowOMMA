@@ -54,9 +54,9 @@ APPS_STATE = LEASES.parent / "office_apps.json"     # app → {launchedBy, pid, 
 INFLIGHT = LEASES.parent / "office_inflight"         # one file per running conversion: {app, pid}
 TEMPS = LEASES.parent / "office_temps.json"           # [{app, name, pid, at}] — every temp copy office-owner opened, until it is closed
 OUTPUTS = LEASES.parent / "office_outputs.json"       # path → [size, mtime_ns] of each file office-owner wrote, as it left it
-# OFFICE_CONFINE=1 (the human's setting; the Hermes plugin always sets it): --out / --pdf stay in the source document's
-# folder, and --force replaces only a file office-owner wrote itself and nobody changed since.
-CONFINE = os.environ.get("OFFICE_CONFINE") == "1"
+# On by default: --out / --pdf stay in the source document's folder, and --force replaces only a file office-owner wrote
+# itself and nobody changed since. OFFICE_CONFINE=0 turns it off — the human's setting; the guard refuses an agent setting it.
+CONFINE = os.environ.get("OFFICE_CONFINE", "1") != "0"
 RECOVER = LEASES.parent / "office_recover.json"       # app → when office-owner last quit a stuck copy of it (once per 10 min)
 RECOVER_EVERY_S = 600
 RETRY_ERRNO = {-1712, -1708, -609, -600}               # timed out · "missing value" · connection invalid · not running
@@ -198,7 +198,8 @@ def forms(path):
 
 def close_if_saved(app, paths):
     """ONE AppleScript: find the document at one of these spellings of ONE path; if exactly one and it is saved → close it.
-    → closed|unsaved|ambiguous|gone|unknown"""
+    → closed|unsaved|ambiguous|gone|unknown. A document whose path can't be read yet (still loading) makes "no hit" unknown,
+    never gone."""
     r = running(app)
     if r is None:
         return "unknown"
@@ -206,8 +207,10 @@ def close_if_saved(app, paths):
         return "gone"
     name, coll, path_of, saved_expr, close_stmt = APPS[app]
     plist = "{" + ", ".join(q(p) for p in paths) + "}"
-    script = (f'with timeout of {TIMEOUT_S - 5} seconds\ntell application {q(name)}\nset hits to {{}}\n'
-              f'repeat with i from 1 to (count of {coll})\ntry\nset d to {coll[:-1]} i\nif {plist} contains ({path_of}) then set end of hits to i\nend try\nend repeat\n'
+    script = (f'with timeout of {TIMEOUT_S - 5} seconds\ntell application {q(name)}\nset hits to {{}}\nset unread to 0\n'
+              f'repeat with i from 1 to (count of {coll})\ntry\nset d to {coll[:-1]} i\nif {plist} contains ({path_of}) then set end of hits to i\n'
+              f'on error\nset unread to unread + 1\nend try\nend repeat\n'
+              f'if (count of hits) is 0 and unread > 0 then return "unknown"\n'
               f'if (count of hits) is 0 then return "gone"\nif (count of hits) > 1 then return "ambiguous"\nset d to {coll[:-1]} (item 1 of hits)\n'
               f'if not ({saved_expr}) then return "unsaved"\n{close_stmt}\nreturn "closed"\nend tell\nend timeout')
     code, out = osa(script)
@@ -315,17 +318,37 @@ def cmd_open(agent, path, app=None):
         if r.returncode != 0:
             return 1, {"status": "failed", "why": (r.stderr or "open failed").strip()[:200]}
     note_use(app, "office-owner/" + agent, was)
+    shown = None
+    if not RUN and not shared:              # `open -g` returns before the app shows it: wait, so a close right after finds it
+        want, end = set(forms(path)), time.time() + OPEN_WAIT_S
+        while time.time() < end:
+            now_open = open_paths(app)
+            if now_open and want & set(now_open):
+                shown = True
+                break
+            time.sleep(0.5)
+        else:
+            shown = False
     lease = {"id": uuid.uuid4().hex[:12], "agent": agent, "app": app, "path": str(p), "paths": forms(path), "name": p.name,
              "openedAt": time.time(), "shared": shared}
     write_lease(lease)
     log(f"open {agent} {app} {p}{' (shared — never auto-closed)' if shared else ''}")
-    return 0, {"status": "opened", "lease": lease["id"], "shared": shared}
+    return 0, {"status": "opened", "lease": lease["id"], "shared": shared, **({"shown": shown} if shown is not None else {})}
 
 
 def _close_lease(d, reason):
     if d.get("shared"):
         return "shared"
-    res = close_if_saved(d["app"], d.get("paths") or forms(d["path"]))
+    paths = d.get("paths") or forms(d["path"])
+    res = close_if_saved(d["app"], paths)
+    fresh = time.time() - float(d.get("openedAt") or 0) < FRESH_S
+    end = time.time() + CLOSE_WAIT_S
+    while res in ("gone", "unknown") and fresh and time.time() < end:    # just opened: the app may still be loading it
+        time.sleep(1)
+        res = close_if_saved(d["app"], paths)
+    if res == "gone" and fresh:
+        log(f"close {d['agent']} {d['app']} {d['path']}: not shown by the app yet — lease kept ({reason})")
+        return "unknown"
     if res in ("closed", "gone"):
         os.remove(d["_file"])
         if res == "closed":
@@ -379,6 +402,8 @@ def drop_closed(ls):
 
 
 FRESH_S = 120
+OPEN_WAIT_S = 20        # open: how long to wait for the app to show the document (a cold launch takes seconds)
+CLOSE_WAIT_S = 15       # close of a lease younger than FRESH_S that the app does not show yet: how long to look again
 
 
 # ── office-owner: who launched each app, Word→PDF, quitting what the owner launched ──────────────────────────────────────────

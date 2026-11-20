@@ -355,6 +355,7 @@ bo.launch = None
 
 # ── agent-office ──
 ao = load("agent-office.py")
+ao.CONFINE = False                       # the tests below exercise --out anywhere; confinement has its own block
 ao.LEASES = tmp / "leases"; ao.LOG = tmp / "office.log"
 ao.APPS_STATE = tmp / "office_apps.json"; ao.INFLIGHT = tmp / "office_inflight"; ao.WORD_DIR = tmp / "word-convert"; ao.OUTPUTS = tmp / "office_outputs.json"
 ao.PGREP = lambda app: None              # never the real process table or the real state file in a test
@@ -413,6 +414,23 @@ code, out = ao.cmd_close("delta", str(f1))
 check("close by the agent: saved → closed (check + close in ONE AppleScript)", code == 0 and out["status"] == "closed" and str(f1) not in docs["Microsoft Word"], out)
 code, out = ao.cmd_close("alpha", str(f2))
 check("close: only the agent that leased that exact path", code == 1, out)
+# a lease just made whose document the app does not show yet (a cold launch still loading it) is never "gone"
+ao.CLOSE_WAIT_S = 0
+f3 = d1 / "cold.docx"; f3.write_text("x")
+code, out = ao.cmd_open("delta", str(f3))
+code, out = ao.cmd_close("delta", str(f3))
+check("close right after open, the app not showing it yet → unknown, exit 3, lease KEPT (never dropped as gone)",
+      code == 3 and out["status"] == "unknown" and any(ao.forms(f3)[0] in (json.loads(f.read_text()).get("paths") or []) for f in ao.LEASES.glob("*.json")), out)
+docs["Microsoft Word"][str(f3)] = True
+code, out = ao.cmd_close("delta", str(f3))
+check("…and once the app shows it, the same close closes it", code == 0 and out["status"] == "closed" and str(f3) not in docs["Microsoft Word"], out)
+ao.cmd_open("delta", str(f3))
+for f in ao.LEASES.glob("*.json"):
+    d = json.loads(f.read_text())
+    if ao.forms(f3)[0] in (d.get("paths") or []): d["openedAt"] = time.time() - 300; f.write_text(json.dumps(d))
+code, out = ao.cmd_close("delta", str(f3))
+check("an older lease whose document is gone → gone, lease dropped", code == 0 and out["status"] == "gone"
+      and not any(ao.forms(f3)[0] in (json.loads(f.read_text()).get("paths") or []) for f in ao.LEASES.glob("*.json")), out)
 check("a Hebrew path with quotes is escaped for AppleScript", ao.q('a"b\\c') == '"a\\"b\\\\c"')
 # a list that does not split into the count the app gave is untrusted
 real_osa = ao.RUN
@@ -1419,7 +1437,13 @@ check("xlsx --out --pdf: the recalculated copy elsewhere, plus the active sheet 
       code == 0 and (tmp / "agent" / "report-calc.xlsx").read_text() == "recalculated" and (tmp / "agent" / "report-sheet.pdf").read_bytes() == b"%PDF- sheet", out)
 code, out = ao.cmd_xlsx("bravo", str(book), pdf=str(tmp / "agent" / "report-sheet.pdf"))
 check("xlsx --pdf: never over an existing PDF without --force", code == 1 and "--force" in out["why"], out)
-# OFFICE_CONFINE (the Hermes plugin sets it): outputs stay in the source's folder, --force replaces only office-owner's own files
+# OFFICE_CONFINE (on unless the human sets it to 0): outputs stay in the source's folder, --force replaces only office-owner's own files
+_cf = os.environ.pop("OFFICE_CONFINE", None)
+check("confinement is on by default (OFFICE_CONFINE unset)", load("agent-office.py").CONFINE is True)
+os.environ["OFFICE_CONFINE"] = "0"
+check("…and OFFICE_CONFINE=0 (the human's setting) turns it off", load("agent-office.py").CONFINE is False)
+os.environ.pop("OFFICE_CONFINE")
+if _cf is not None: os.environ["OFFICE_CONFINE"] = _cf
 ao.CONFINE = True; n_x = len(xcalls)
 code, out = ao.cmd_xlsx("bravo", str(book), out=str(tmp / "not-beside" / "report.xlsx"))
 check("confined: --out in another folder is refused before Excel is touched, nothing written there",
@@ -1840,6 +1864,9 @@ with contextlib.redirect_stderr(buf_):
     sys.stdin = io.StringIO(json.dumps({"tool_input": {"command": "ls"}})); rc_ = g_mod.main([]); sys.stdin = sys.__stdin__
 check("security: an error while judging is a refusal, never a pass", rc_ == 2 and "couldn't judge" in buf_.getvalue(), buf_.getvalue())
 fv = load("rainbowomma-guard.py")
+check("guard: pkill / killall of Word or Excel points to office-owner, not the browser tools",
+      all("office-owner" in (fv.verdict(c) or "") for c in ('pkill -f "Microsoft Word"', "killall 'Microsoft Excel'", "pkill PowerPoint"))
+      and "office-owner" not in (fv.verdict("pkill -f chrome") or "x"))
 check("security: Write/Edit can't touch RainbowOMMA's state or browsers.json, and no file tool reads the human's Chrome profile",
       fv.file_verdict({"tool_name": "Write", "tool_input": {"file_path": "~/.rainbowomma/state/approvals.json"}})
       and fv.file_verdict({"tool_name": "Edit", "tool_input": {"file_path": "/Users/x/bin/browsers.json"}})
@@ -1921,6 +1948,8 @@ r_by = subprocess.run(["bash", str(HERE / "browser-owner"), "stop", "bravo", "--
                       env=dict(genv, RAINBOW_AGENT="alpha"))
 check("security: an agent can't act as the human or another agent in browser-owner, whatever the guard saw",
       r_by.returncode == 2 and json.loads(r_by.stdout)["status"] == "refused", r_by.stdout)
+check("…and the refusal says so in its own words (not the idle-stop wording)", "alpha" in json.loads(r_by.stdout)["why"]
+      and "human" in json.loads(r_by.stdout)["why"] and "keepalive" not in json.loads(r_by.stdout)["why"], r_by.stdout)
 mbx = load("rainbowomma-menubar.py")
 evil = "x\n--allow | bash=/tmp/evil terminal=false"
 menu_txt = mbx.menu([{"agent": "alpha", "label": evil, "status": evil, "color": "#E53935", "up": True}], False,

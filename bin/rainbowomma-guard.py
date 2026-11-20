@@ -32,6 +32,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))   # -I drops the
 WHY = {
     "pkill": "pkill matches processes by pattern and can hit another agent's browser",
     "killall": "killall stops every process of that name, other agents' too",
+    "kill-doc-app": "killing Word, Excel, PowerPoint, Acrobat, Preview or an iWork app closes the human's documents too, unsaved — "
+                    "close only the document you leased: `office-owner close --agent <you> <file>`",
     "search-kill": "killing what a process search found (pgrep / ps / lsof) is pkill by another name",
     "port-kill": "freeing a port by killing whatever holds it (kill-port, fkill, fuser -k) can hit another agent's or the human's server",
     "osascript": "quitting Chrome through AppleScript closes every Chrome window, the human's too",
@@ -335,6 +337,8 @@ def verdict(command):
         if name == "as-agent" and me and args and args[0] != me:
             return f"you are {me}: you can't start a command as {args[0]}"
         if name in ("pkill", "killall"):
+            if re.search(r"word|excel|powerpoint|acrobat|preview|keynote|pages|numbers", " ".join(args), re.I):
+                return WHY["kill-doc-app"]
             return WHY[name]
         if name == "xargs" and "kill" in args:
             return WHY["xargs-kill"]

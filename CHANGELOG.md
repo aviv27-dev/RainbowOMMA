@@ -14,6 +14,18 @@ upgrade prints those in full.
   job-start, never forgotten. At job-end and job-close the job's newest tab that stays comes to the front, never while
   the human is at the Mac. (#55)
 
+### Changed
+- `office-owner pdf` / `xlsx` confine their output to the source document's folder unless the human sets
+  `OFFICE_CONFINE=0` (before, only the Hermes plugin turned it on).
+- The guard's refusal of `pkill` / `killall` of an Office app points to `office-owner close`.
+
+### Fixed
+- `office-owner close` right after `open` on a cold Word launch answered `gone`, dropped the lease and left the document
+  open — the next open then took it for the human's. `open` now waits for the app to show the document; a close of a
+  lease younger than 2 minutes looks again, and answers `unknown` (exit 3, lease kept) while the app doesn't show it.
+- `browser-owner` refused an agent acting as the human with the idle-stop wording and wrote no receipt; it has its own
+  text and a receipt now. `job-start`'s close of the last job's leftovers writes a receipt, like heal's.
+
 ## [0.5.0] — 2026-11-20
 
 Hermes Agent gets RainbowOMMA as a native plugin. Agent browsers stop by themselves after an hour nobody works in them

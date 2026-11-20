@@ -56,6 +56,8 @@ M = {
     "bo.managed": {"en": "{label}'s browser is managed by {by} — report only here", "he": "הדפדפן של {label} מנוהל על ידי {by} — כאן רק דיווח"},
     "bo.no_registry": {"en": "no browsers.json at {path} — run install.sh, or copy examples/browsers.example.json there",
                        "he": "אין browsers.json ב-{path} — להריץ את install.sh, או להעתיק לשם את examples/browsers.example.json"},
+    "bo.act_as_self": {"en": "you are {me}: you act only as yourself, never as {by} — a browser of an agent is stopped by the human only",
+                       "he": "את/ה {me}: פועלים רק בשם עצמך, אף פעם לא בשם {by} — רק האדם סוגר דפדפן של סוכן"},
     "bo.idle_not_yours": {"en": "{by} is another agent — only {label}'s own reaper (or the keepalive) idle-closes {label}'s browser",
                           "he": "{by} הוא סוכן אחר — רק המנקה של {label} (או ה-keepalive) סוגר את הדפדפן של {label} בחוסר פעילות"},
     "bo.idle_too_soon": {"en": "{label}'s browser was started {mins} min ago — not idle yet (idleMinutes = {idle})",

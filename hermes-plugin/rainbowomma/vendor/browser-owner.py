@@ -1758,7 +1758,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     me = (os.environ.get("RAINBOW_AGENT") or "").strip().lower()
     if me and a.by.strip().lower() not in (me, "agent", "keepalive"):        # an agent acts as itself — never as the human or a peer
-        print(rainbow_next.dumps({"status": "refused", "why": t("bo.idle_not_yours", by=a.by, label=me)}, ensure_ascii=False))
+        rainbow_receipts.write("browser-owner", a.cmd, a.agent or me, me, "refused", why=f"--by {a.by.strip().lower()}")
+        print(rainbow_next.dumps({"status": "refused", "why": t("bo.act_as_self", me=me, by=a.by.strip().lower())}, ensure_ascii=False))
         return 2
     if me and a.by.strip().lower() == "agent":
         a.by = me
@@ -1869,6 +1870,8 @@ def main(argv=None):
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
         if out.get("closed"):
             rainbow_receipts.write("browser-owner", "job-close", ag["name"], ag["name"], "closed", tabs=len(out["closed"]))
+        if out.get("closedFromLastJob"):
+            rainbow_receipts.write("browser-owner", "job-close", ag["name"], "job-start", "closed", tabs=len(out["closedFromLastJob"]))
         print(rainbow_next.dumps(out, ensure_ascii=False))
         return code
     if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock
