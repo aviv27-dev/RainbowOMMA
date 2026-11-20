@@ -7,7 +7,19 @@ upgrade prints those in full.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-11-20
+
+Hermes Agent gets RainbowOMMA as a native plugin. Agent browsers stop by themselves after an hour nobody works in them
+(`idleMinutes`, default 60 — the clock is the agent's own commands, not a connection left open), and a nearly full swap
+is said once, with each browser's memory. Agent browsers move to the latest installed Chrome with one button, or at a
+set time. Fixed: an agent's second window lost its colors.
+
+**Before upgrading:** an agent browser that must stay up needs `"idleMinutes": 0` in `browsers.json`.
+
 ### Added
+- RainbowOMMA as a native Hermes Agent plugin (`hermes-plugin/rainbowomma/`, listed in the Hermes plugin catalog): the
+  owners as Hermes tools, the guard on every tool call, a browser provider so Hermes's own browser tools drive the agent's
+  own Chrome, `/rainbow` and a Desktop panel; it vendors the tools it needs (`hermes-plugin/tools/sync_vendor.py`).
 - Swap nearly full: the heal job says so once per event (above 85 %, again after it has gone back below 70 %) — a
   notification, a log line and a receipt with how much memory each agent browser holds; `rainbowomma-doctor status` lists
   the same while it lasts. (#91)
@@ -18,6 +30,8 @@ upgrade prints those in full.
   `"browserUpdate": {"day": "sun", "time": "04:00"}` in `browsers.json` — the heal job then restarts each one at its first
   quiet moment that day (no client attached, no tab change for 10 minutes, nobody signing in). `rainbowomma-doctor status`
   names a browser that is behind.
+- `office-owner save --agent NAME FILE`: saves a leased document in place (a shared lease is refused). More document apps
+  can be added from a setting (`OFFICE_EXTRA_APPS`) — not yet verified against a live app.
 
 ### Changed
 - Agent browsers stop by themselves when nobody works in them: `idleMinutes` defaults to 60 (`0` keeps a browser up). The
@@ -26,6 +40,18 @@ upgrade prints those in full.
   its tabs; a client that only stays connected no longer keeps it up. Never while it holds a sign-in lock (auth-owner).
   Each stop is logged first: which browser, how long it was unused, and why. `rainbowomma-doctor` names a browser that
   never stops by itself. (#91)
+- The guard refuses quitting Word, Excel, PowerPoint, Acrobat, Preview or an iWork app through AppleScript, or closing
+  their documents or windows (`doc-app`) — `office-owner` closes only what an agent leased. An agent may not set
+  `OFFICE_EXTRA_APPS`, `OFFICE_WORD_DIR` or `office_confine`.
+- `office-owner pdf` / `xlsx` write their output only beside the source document; `--force` replaces only a file
+  office-owner itself wrote and that is unchanged (refused, exit 2, otherwise).
+
+### Fixed
+- An agent's second window opened without its colors and name: Chrome's compiled theme (`Cached Theme.pak`) was taken
+  for a foreign file, so the next start rebuilt the theme folder and lost it. A theme Chrome dropped is also installed
+  again before the next start.
+- `office-owner`: Word answered a loop over `every document` with -1708 for as long as it ran, so close and the
+  open-paths check said `unknown`; the loops go by index now.
 
 ## [0.4.0] — 2026-11-09
 
@@ -367,6 +393,7 @@ First public release.
 - Desktop open/close icons, the human's Chrome theme, and `kill-chrome.sh` that spares every agent browser.
 - Tests on macOS in CI (fakes only — never a real browser or app).
 
+[0.5.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.5.0
 [0.4.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.4.0
 [0.3.1]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.1
 [0.3.0]: https://github.com/aviv27-dev/RainbowOMMA/releases/tag/v0.3.0
