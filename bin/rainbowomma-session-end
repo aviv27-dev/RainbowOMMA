@@ -1,5 +1,6 @@
 #!/bin/bash
-# The session-end hook every adapter can run: the agent's servers left behind stop, its unused port leases go back
+# The session-end hook every adapter can run: the tabs this session opened are put up for closing (browser-owner job-end —
+# nobody is left to keep them, so they close after their grace), the agent's servers left behind stop, its unused port leases go back
 # (proc-owner reap). Does nothing for an agent started without RAINBOW_AGENT. Never blocks the agent: always exit 0.
 case "${1:-}" in -h|--help)   # --help: one shape for every tool (bin/rainbow_help.py), and it never acts
   for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
@@ -11,5 +12,6 @@ esac
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cat >/dev/null 2>&1 || true                      # the framework's hook payload — not needed
 [ -n "${RAINBOW_AGENT:-}" ] || exit 0
+"$DIR/browser-owner" job-end "$RAINBOW_AGENT" >/dev/null 2>&1   # the tabs this session opened: they close after their grace (#55)
 "$DIR/proc-owner" reap "$RAINBOW_AGENT" ${RAINBOW_SESSION:+--session "$RAINBOW_SESSION"} >/dev/null 2>&1
 exit 0

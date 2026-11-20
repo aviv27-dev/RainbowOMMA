@@ -93,8 +93,17 @@ reported without falling back to the human's browser. Agent skills that call `op
 
 An agent that opens tabs for a job tells its owner when the job begins and ends: `browser-owner job-start <agent>` and
 `browser-owner job-end <agent>` (MCP: `job_start`, `job_end`). `job-end` answers with the tabs that will close and how
-to keep one (`job-keep`); the agent then calls `job-close`, or they close a minute later by themselves. Put the two
-calls in the agent's own job wrapper or skill; a framework hook (a session's start and end) can call them too.
+to keep one (`job-keep`); the agent then calls `job-close`, or they close a minute later by themselves.
+
+Where the framework has session hooks, the adapter calls them for you: `rainbowomma-session-start` (a job begins, only in a
+browser that is already up — it never opens one) and `rainbowomma-session-end` (the session's tabs are put up for closing;
+nobody is left to keep them, so they close once their grace runs out, at the next heal run or the agent's next job-start).
+Wired in the Claude Code, Factory Droid, Gemini CLI and Copilot CLI adapters (`SessionStart` / `sessionStart`). Elsewhere,
+put the two calls in the agent's own job wrapper or skill, or use the MCP tools `job_start` / `job_end`.
+
+At `job-end` and `job-close`, the newest tab the job opened that stays comes to the front of the agent's window, so it
+never shows a stale tab — not while the human is at the Mac. (A tab a page opens by itself is not brought forward the
+moment it appears: that would need a process watching the browser all the time.)
 
 ## File tools, not only the shell
 

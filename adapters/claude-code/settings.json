@@ -32,6 +32,16 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-session-start"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
