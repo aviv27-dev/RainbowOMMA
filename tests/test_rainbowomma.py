@@ -448,6 +448,13 @@ check("…but a lease younger than 2 minutes is never dropped",
       len(list(ao.LEASES.glob("*.json"))) == 2 and not out["items"], out)
 for f in ao.LEASES.glob("*.json"):
     d = json.loads(f.read_text()); d["openedAt"] = time.time() - 300; f.write_text(json.dumps(d))
+ao.APPS_STATE.parent.mkdir(parents=True, exist_ok=True)
+ao.APPS_STATE.write_text(json.dumps({"word": {"launchedBy": "office-owner/delta", "pid": 1, "lastActivity": 1000.0}}))
+code, out = ao.cmd_sweep(3.0, True)
+check("sweep --dry-run: lists the leases the real sweep will drop, removes none, never moves the app's idle clock",
+      sum(i.get("would") == "drop" for i in out["items"]) == 2 and len(list(ao.LEASES.glob("*.json"))) == 2
+      and json.loads(ao.APPS_STATE.read_text())["word"]["lastActivity"] == 1000.0, out)
+ao.APPS_STATE.unlink()
 code, out = ao.cmd_sweep(3.0)
 check("sweep: leases of documents closed by hand are dropped at once, the shared one too",
       not list(ao.LEASES.glob("*.json")) and sum(i["result"] == "dropped" for i in out["items"]) == 2, out)

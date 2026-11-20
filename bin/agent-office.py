@@ -379,7 +379,8 @@ def cmd_renew(agent, path):
     return (0 if ds else 1), {"status": "renewed" if ds else "no-lease", "count": len(ds)}
 
 
-def drop_closed(ls):
+def drop_closed(ls, dry=False):
+    """leases whose document is no longer open → dropped (dry: only reported, nothing removed)"""
     kept, dropped, cache = [], [], {}
     for d in ls:
         app = d["app"]
@@ -390,6 +391,9 @@ def drop_closed(ls):
             cache[app] = open_paths(app)
         now_open = cache[app]
         if now_open is not None and not (set(d.get("paths") or forms(d["path"])) & set(now_open)):
+            if dry:
+                dropped.append(d)
+                continue
             try:
                 os.remove(d["_file"])
             except OSError:
@@ -874,20 +878,22 @@ def idle_quit(dry=False):
             st.pop(app, None)
             log(f"quit {app} — launched by {rec.get('launchedBy')}, idle {int((time.time() - float(rec.get('lastActivity') or 0)) / 60)} min, no documents")
         out.append({"app": app, "result": res})
-    save_apps_state(st)
+    if not dry:                                    # a dry run changes nothing, the forgetting included
+        save_apps_state(st)
     return out
 
 
 def cmd_sweep(max_age_h=3.0, dry=False):
     now, report = time.time(), []
     ls = leases()
-    if not dry:
-        ls, dropped = drop_closed(ls)
-        report += [{"path": d["path"], "agent": d["agent"], "app": d["app"], "result": "dropped"} for d in dropped]
+    ls, dropped = drop_closed(ls, dry)        # a dry run says what the real one would drop, and changes nothing
+    report += [{"path": d["path"], "agent": d["agent"], "app": d["app"], ("would" if dry else "result"): ("drop" if dry else "dropped")}
+               for d in dropped]
     for d in ls:
         age_h = (now - float(d.get("openedAt") or now)) / 3600
         if age_h < max_age_h:
-            touch(d["app"])                 # a live lease keeps its app "in use"
+            if not dry:
+                touch(d["app"])             # a live lease keeps its app "in use" — a dry run never moves the idle clock
             continue
         if dry:
             report.append({"path": d["path"], "agent": d["agent"], "app": d["app"], "ageH": round(age_h, 1), "would": "check"})
