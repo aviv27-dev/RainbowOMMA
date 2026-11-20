@@ -363,7 +363,10 @@ def update_pending(running, installed):
 
 
 def processes():
-    out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, check=True).stdout
+    if os.environ.get("RAINBOW_TEST_PS"):        # tests: a file in ps's shape instead of this Mac's process table
+        out = Path(os.environ["RAINBOW_TEST_PS"]).read_text()
+    else:
+        out = subprocess.run(["ps", "-axo", "pid=,ppid=,command="], capture_output=True, text=True, check=True).stdout
     rows = []
     for line in out.splitlines():
         parts = line.strip().split(None, 2)
@@ -1482,6 +1485,9 @@ def swap_usage():
     """(used MB, total MB) of macOS swap (sysctl vm.swapusage), or None when it can't be read"""
     if SWAP:
         return SWAP()
+    if os.environ.get("RAINBOW_TEST_SWAP"):      # tests: "used,total" in MB instead of this Mac's swap
+        used, total = (float(x) for x in os.environ["RAINBOW_TEST_SWAP"].split(","))
+        return used, total
     try:
         out = subprocess.run(["sysctl", "-n", "vm.swapusage"], capture_output=True, text=True, timeout=5).stdout
         total = float(re.search(r"total\s*=\s*([\d.]+)M", out).group(1))
@@ -1846,7 +1852,15 @@ def main(argv=None):
         print(rainbow_next.dumps({"status": "failed", "why": t("bo.unknown_agent", agent=repr(a.agent), names=", ".join(reg))}, ensure_ascii=False))
         return 1
     if a.cmd == "status":
-        print(rainbow_next.dumps(view(ag), ensure_ascii=False))
+        out = dict(view(ag), log=ag["log"], idleMinutes=ag.get("idleMinutes") or 0)
+        if out.get("status") == "up" and ag.get("idleMinutes") and not ag.get("managedBy"):
+            try:                                 # the idle clock heal goes by: when it last worked here, and what that was
+                at, what = activity(ag, load(ag))
+                out["lastActivity"] = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(at)), "what": what,
+                                       "minutesAgo": int(max(0.0, time.time() - at) // 60)}
+            except Exception as exc:
+                out["lastActivity"] = {"unknown": type(exc).__name__}
+        print(rainbow_next.dumps(out, ensure_ascii=False))
         return 0
     if a.cmd == "mcp-config":
         print(rainbow_next.dumps(mcp_config(ag, a.tool, a.format), ensure_ascii=False))

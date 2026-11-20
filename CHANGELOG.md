@@ -18,6 +18,10 @@ upgrade prints those in full.
 - `office-owner pdf` / `xlsx` confine their output to the source document's folder unless the human sets
   `OFFICE_CONFINE=0` (before, only the Hermes plugin turned it on).
 - The guard's refusal of `pkill` / `killall` of an Office app points to `office-owner close`.
+- `browser-owner status AGENT` also says where the agent's log is, its `idleMinutes`, and — while its browser is up — its
+  idle clock: when it last worked there and what that was.
+- The test suite no longer reads the Mac it runs on: the process table and swap come from `RAINBOW_TEST_PS` /
+  `RAINBOW_TEST_SWAP` in the heal and doctor checks, so a stray Chrome or a full swap doesn't turn them red.
 
 ### Fixed
 - `office-owner close` right after `open` on a cold Word launch answered `gone`, dropped the lease and left the document
