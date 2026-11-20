@@ -8,6 +8,13 @@
         "timeoutSec": 10
       }
     ],
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "/Users/you/bin/rainbowomma-session-start",
+        "timeoutSec": 30
+      }
+    ],
     "sessionEnd": [
       {
         "type": "command",

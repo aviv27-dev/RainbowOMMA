@@ -262,24 +262,54 @@ def job_candidates(before, pages, kept=()):
 
 
 def job_start(cdp, shared, agent, now=None):
+    """a job begins. Tabs a finished job left pending whose grace ran out close first (#55: a new session must not forget
+    them); the ones still in their grace stay pending."""
+    old = load_state(jobs_path(shared, agent))
+    closed = job_close(cdp, shared, agent, now=now, only_expired=True)["closed"] if old.get("pending") else []
+    still = load_state(jobs_path(shared, agent)).get("pending") or {}
     d = {"start": time.time() if now is None else now, "before": [p["id"] for p in pages_of(cdp)], "pending": {}, "kept": []}
+    d["pending"] = still
     save_state(jobs_path(shared, agent), d)
-    return {"status": "started", "tabs": len(d["before"])}
+    return {"status": "started", "tabs": len(d["before"]), **({"closedFromLastJob": closed} if closed else {})}
 
 
-def job_end(cdp, shared, agent, grace=JOB_GRACE_S, now=None):
-    """→ the tabs that will close unless the agent keeps them (the question to the agent); nothing closes here"""
+def newest_job_tab(before, pages, leaving=()):
+    """the tab a job opened most recently among those that stay (no I/O): not one about to close, and not the opener of
+    another staying job tab (what it opened is newer); last in Chrome's list among the rest. None when the job opened none."""
+    staying = [p for p in pages if p["id"] not in set(before) and p["id"] not in set(leaving)]
+    openers = {p.get("opener") for p in staying}
+    leaves = [p for p in staying if p["id"] not in openers]
+    return (leaves or staying or [None])[-1]
+
+
+def activate_newest(cdp, before, pages, leaving=()):
+    """bring the job's newest staying tab to the front of the agent's window (Target.activateTarget) → its id, or None"""
+    tab = newest_job_tab(before, pages, leaving)
+    if not tab:
+        return None
+    try:
+        cdp.call("Target.activateTarget", {"targetId": tab["id"]})
+        return tab["id"]
+    except OSError:
+        return None
+
+
+def job_end(cdp, shared, agent, grace=JOB_GRACE_S, now=None, activate=False):
+    """→ the tabs that will close unless the agent keeps them (the question to the agent); nothing closes here. activate:
+    the job's newest tab that stays comes to the front (never while the human is at the Mac — the caller decides)."""
     now = time.time() if now is None else now
     d = load_state(jobs_path(shared, agent))
     if not d.get("start"):
         return 2, {"status": "refused", "why": f"no job was started — run `browser-owner job-start {agent}` when a job begins"}
-    cands = job_candidates(d.get("before") or [], pages_of(cdp), d.get("kept") or [])
+    pages = pages_of(cdp)
+    cands = job_candidates(d.get("before") or [], pages, d.get("kept") or [])
+    front = activate_newest(cdp, d.get("before") or [], pages, [p["id"] for p in cands]) if activate else None
     d["pending"] = {p["id"]: {"title": p["title"], "site": host(p["url"]), "closeAfter": now + grace, "opener": p.get("opener")}
                     for p in cands}
     d["kept"] = []                                           # what was kept is asked about again next time
     save_state(jobs_path(shared, agent), d)
     return 0, {"status": "ask" if cands else "nothing", "close": [{"id": i, "title": v["title"], "site": v["site"]} for i, v in d["pending"].items()],
-               "graceSeconds": int(grace),
+               "graceSeconds": int(grace), **({"front": front} if front else {}),
                "keep": f"keep any you still need: browser-owner job-keep {agent} <id> … — the rest close: browser-owner job-close {agent}"
                        f" (or by themselves after {int(grace)} s)"}
 
@@ -301,7 +331,7 @@ def job_keep(shared, agent, ids):
     return {"status": "kept", "kept": kept}
 
 
-def job_close(cdp, shared, agent, now=None, only_expired=False):
+def job_close(cdp, shared, agent, now=None, only_expired=False, activate=False):
     """close the pending tabs (after the agent's answer, or once their grace ran out); re-checked right before: a tab that
     became attached, or that would be the last one, stays"""
     now = time.time() if now is None else now
@@ -326,7 +356,8 @@ def job_close(cdp, shared, agent, now=None, only_expired=False):
             pending.pop(i)
     d["pending"] = pending
     save_state(jobs_path(shared, agent), d)
-    return {"status": "closed", "closed": closed, "stillPending": list(pending)}
+    front = activate_newest(cdp, d.get("before") or [], [p for p in pages if p["id"] not in closed], list(pending)) if activate and closed else None
+    return {"status": "closed", "closed": closed, "stillPending": list(pending), **({"front": front} if front else {})}
 
 
 # ── a tidy agent browser (#76): on start and before idle-stop, duplicates, blank pages and too many tabs go ──

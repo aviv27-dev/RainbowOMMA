@@ -1547,12 +1547,34 @@ def swap_alert(reg, rows=None):
     return {"swap": "warned", "usedMB": round(used), "totalMB": round(total), "browsers": mem}
 
 
+def job_leftovers(reg):
+    """heal's part (#55): the tabs a finished job left pending — a session that ended can't answer for them — close once
+    their grace ran out, in every agent browser that is up. Never one another client drives, never the last tab."""
+    out = []
+    for name, a in reg.items():
+        if a.get("managedBy") or not rainbow_tabs.load_state(rainbow_tabs.jobs_path(SHARED, name)).get("pending"):
+            continue
+        try:
+            if not healthy(a):
+                continue
+            with cdp_for(a, timeout=10) as c:
+                r = rainbow_tabs.job_close(c, SHARED, name, only_expired=True)
+        except Exception as exc:
+            out.append({"agent": name, "status": "unknown", "why": type(exc).__name__})
+            continue
+        if r.get("closed"):
+            rainbow_receipts.write("browser-owner", "job-close", name, "heal", "closed", tabs=len(r["closed"]))
+            out.append({"agent": name, "closed": r["closed"]})
+    return out
+
+
 def heal(reg):
     """keep every agent's colors: a CLOSED browser whose theme is gone (Chrome Sync, a settings reset) gets it back now
     (windowless install, under its lock); an OPEN one is never restarted from here — one notification, and its next start
     puts it back. A Chrome update is recorded, with one notification on whether every theme and Dock applet is in place."""
     idle = auto_idle(reg)                    # first: a browser it stops gets its colors back in this same run
     updates = auto_update(reg)               # then: a browser behind the Chrome on disk restarts on it, when it is safe
+    jobs = job_leftovers(reg)                # and: a finished job's tabs nobody kept, once their grace ran out (#55)
     try:
         swap = swap_alert(reg)               # and: swap nearly full → said once per event, with each browser's memory
     except Exception as exc:
@@ -1622,7 +1644,7 @@ def heal(reg):
             bad = [x["agent"] for x in out if x["theme"] not in ("ok", "kept", "installed")] + missing_apps
             notify("RainbowOMMA", t("bo.heal_chrome_ok", ver=ver) if not bad else t("bo.heal_chrome_check", ver=ver, names=", ".join(bad)))
     return {"status": "healed", "chrome": ver, "chromeChanged": bool(prev and ver != prev), "agents": out, "dockMissing": missing_apps,
-            "idle": idle, "updates": updates, "swap": swap}
+            "idle": idle, "updates": updates, "swap": swap, "jobTabs": jobs}
 
 
 def _broker():
@@ -1839,9 +1861,10 @@ def main(argv=None):
                     if a.cmd == "job-start":
                         code, out = 0, rainbow_tabs.job_start(c, SHARED, ag["name"])
                     elif a.cmd == "job-end":
-                        code, out = rainbow_tabs.job_end(c, SHARED, ag["name"], max(0.0, min(a.grace, 3600.0)))
+                        code, out = rainbow_tabs.job_end(c, SHARED, ag["name"], max(0.0, min(a.grace, 3600.0)),
+                                                         activate=not rainbow_presence.presence()["present"])
                     else:
-                        code, out = 0, rainbow_tabs.job_close(c, SHARED, ag["name"])
+                        code, out = 0, rainbow_tabs.job_close(c, SHARED, ag["name"], activate=not rainbow_presence.presence()["present"])
         except Exception as exc:   # one JSON answer, always
             code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
         if out.get("closed"):

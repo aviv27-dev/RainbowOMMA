@@ -12,6 +12,17 @@
         ]
       }
     ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "name": "rainbowomma-reap",
+            "type": "command",
+            "command": "/Users/you/bin/rainbowomma-session-start"
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [

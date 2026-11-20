@@ -145,6 +145,12 @@ H = {
         ],
         "exits": [(0, "help.rainbowomma-guard.x0"), (2, "help.rainbowomma-guard.x2")], "more": "docs/DESIGN.md §5, docs/ISOLATION.md",
     },
+    "rainbowomma-session-start": {
+        "commands": [
+            ("(no arguments)", "help.rainbowomma-session-start.1", "RAINBOW_AGENT=alpha rainbowomma-session-start"),
+        ],
+        "exits": [(0, "help.rainbowomma-session-end.x0")], "more": "docs/AGENTS.md",
+    },
     "rainbowomma-session-end": {
         "commands": [
             ("(no arguments)", "help.rainbowomma-session-end.1", "RAINBOW_AGENT=alpha rainbowomma-session-end"),

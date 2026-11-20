@@ -1,0 +1,16 @@
+#!/bin/bash
+# The session-start hook every adapter can run: a job begins in the agent's own browser (browser-owner job-start), so the
+# tabs this session opens can close when it ends (#55). Only a browser that is already up: it never opens one. Does nothing
+# for an agent started without RAINBOW_AGENT. Never blocks the agent: always exit 0.
+case "${1:-}" in -h|--help)   # --help: one shape for every tool (bin/rainbow_help.py), and it never acts
+  for p in /opt/homebrew/bin/python3 /usr/bin/python3 /usr/local/bin/python3; do
+    [ "$p" = /usr/bin/python3 ] && [ "$(uname -s)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1 && continue
+    if [ -x "$p" ] && "$p" -I -V >/dev/null 2>&1; then exec "$p" -I "$(cd "$(dirname "$0")" && pwd)/rainbow_help.py" rainbowomma-session-start; fi
+  done
+  echo "rainbowomma-session-start: no working python3 found" >&2; exit 1 ;;
+esac
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cat >/dev/null 2>&1 || true                      # the framework's hook payload — not needed
+[ -n "${RAINBOW_AGENT:-}" ] || exit 0
+"$DIR/browser-owner" job-start "$RAINBOW_AGENT" >/dev/null 2>&1   # "down" when its browser isn't up: nothing to remember
+exit 0

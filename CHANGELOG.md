@@ -7,6 +7,13 @@ upgrade prints those in full.
 
 ## [Unreleased]
 
+### Added
+- A job's tabs without the agent asking: `rainbowomma-session-start` (job-start, only in a browser that is already up) and
+  `rainbowomma-session-end` (job-end: the session's tabs close once their grace runs out) are wired in the Claude Code,
+  Factory Droid, Gemini CLI and Copilot CLI adapters. Tabs a finished job left close at the next heal run or the next
+  job-start, never forgotten. At job-end and job-close the job's newest tab that stays comes to the front, never while
+  the human is at the Mac. (#55)
+
 ## [0.5.0] — 2026-11-20
 
 Hermes Agent gets RainbowOMMA as a native plugin. Agent browsers stop by themselves after an hour nobody works in them

@@ -3298,5 +3298,63 @@ idc = next((c for c in json.loads(rd_.stdout)["checks"] if c["check"].startswith
 check("doctor (#91): names an agent browser that never stops by itself (idleMinutes 0), with the fix — optional",
       idc and not idc["ok"] and not idc["needed"] and "charlie" in idc["detail"] and "idleMinutes" in idc["fix"], idc)
 
+# ── #55: a job's tabs wired to session hooks; leftovers never forgotten; the newest tab in front ──
+jh = tmp / "job-hooks-home"
+fjs = FakeTabsCDP({"h0": ("https://docs.example/", 0.0, False)}); jsa = {"name": "alpha", "port": fjs.port}
+with jb.cdp_for(jsa) as c:
+    rt.job_start(c, jh, "alpha")
+fjs.pages.update({"old1": ("https://a.example/", 0.0, False), "old2": ("https://b.example/", 0.0, False)})
+with jb.cdp_for(jsa) as c:
+    rt.job_end(c, jh, "alpha", grace=60, now=1000.0)
+st_j = rt.load_state(rt.jobs_path(jh, "alpha")); st_j["pending"]["old2"]["closeAfter"] = time.time() + 600; rt.save_state(rt.jobs_path(jh, "alpha"), st_j)
+with jb.cdp_for(jsa) as c:
+    js2 = rt.job_start(c, jh, "alpha")
+st_j2 = rt.load_state(rt.jobs_path(jh, "alpha"))
+check("job-start (#55): a new session first closes what the last job left once its grace ran out — one still in its grace stays pending, not forgotten",
+      js2.get("closedFromLastJob") == ["old1"] and "old1" not in fjs.pages and "old2" in fjs.pages and list(st_j2["pending"]) == ["old2"]
+      and set(st_j2["before"]) == {"h0", "old2"}, (js2, st_j2))
+pgn = lambda i, opener=None: {"id": i, "url": "https://x.example/" + i, "title": "x", "attached": False, "opener": opener}   # noqa: E731
+check("newest job tab (#55): the one a job opened last among those that stay — what a tab opened is newer than its opener; none when the job opened none",
+      rt.newest_job_tab(["h"], [pgn("h"), pgn("a"), pgn("b", "a"), pgn("c")])["id"] == "c"
+      and rt.newest_job_tab(["h"], [pgn("h"), pgn("a"), pgn("b", "a")])["id"] == "b"
+      and rt.newest_job_tab(["h"], [pgn("h"), pgn("a"), pgn("b", "a")], leaving=["b"])["id"] == "a"
+      and rt.newest_job_tab(["h"], [pgn("h")]) is None)
+fja = FakeTabsCDP({"h1": ("https://docs.example/", 0.0, False)}); jaa = {"name": "bravo", "port": fja.port}
+with jb.cdp_for(jaa) as c:
+    rt.job_start(c, jh, "bravo")
+fja.pages.update({"keep1": ("https://app.example/", 0.0, True), "tmp1": ("https://tmp.example/", 0.0, False)})
+fja.calls.clear()
+with jb.cdp_for(jaa) as c:
+    _, je_a = rt.job_end(c, jh, "bravo", now=1000.0, activate=True)
+acts_a = [prm.get("targetId") for m, prm, _ in fja.calls if m == "Target.activateTarget"]
+fja.calls.clear()
+with jb.cdp_for(jaa) as c:
+    rt.job_end(c, jh, "bravo", now=1000.0, activate=False)
+check("job-end (#55): the job's newest tab that stays (not one about to close) comes to the front — and nothing moves when the caller says the human is here",
+      acts_a == ["keep1"] and je_a.get("front") == "keep1" and not [m for m, _, _ in fja.calls if m == "Target.activateTarget"], (acts_a, je_a))
+lo = load("browser-owner.py"); lo.SHARED = jh; lo.healthy = lambda a, timeout=2.0: True
+lst = rt.load_state(rt.jobs_path(jh, "alpha")); lst["pending"]["old2"]["closeAfter"] = 0; rt.save_state(rt.jobs_path(jh, "alpha"), lst)
+lj = lo.job_leftovers({"alpha": dict(jsa, label="Alpha"), "bravo": dict(jaa, label="Bravo", managedBy="x.py")})
+check("heal (#55): a finished job's tabs nobody kept close once their grace ran out — even with no tab-sweep job; never a managedBy browser's",
+      lj == [{"agent": "alpha", "closed": ["old2"]}] and "old2" not in fjs.pages, lj)
+hk = tmp / "hook-bin"; hk.mkdir()
+for f_ in ("rainbowomma-session-start", "rainbowomma-session-end"):
+    shutil.copy(HERE / f_, hk / f_)
+hk_log = tmp / "hook-calls.txt"
+for f_ in ("browser-owner", "proc-owner"):
+    (hk / f_).write_text(f"#!/bin/sh\necho \"{f_} $@\" >> {hk_log}\n"); (hk / f_).chmod(0o755)
+hrun = lambda f_, agent: subprocess.run(["bash", str(hk / f_)], input='{"session_id": "s1"}', capture_output=True, text=True,   # noqa: E731
+                                        env={k: v for k, v in dict(os.environ, RAINBOW_AGENT=agent).items() if v})
+r_s0 = hrun("rainbowomma-session-start", ""); no_agent = hk_log.read_text() if hk_log.exists() else ""
+r_s1 = hrun("rainbowomma-session-start", "alpha"); r_e1 = hrun("rainbowomma-session-end", "alpha")
+check("session hooks (#55): start → job-start, end → job-end then reap, as the agent; nothing without an agent name; never block (exit 0)",
+      r_s0.returncode == r_s1.returncode == r_e1.returncode == 0 and no_agent == ""
+      and hk_log.read_text().splitlines() == ["browser-owner job-start alpha", "browser-owner job-end alpha", "proc-owner reap alpha"], hk_log.read_text())
+starts = {"claude-code/settings.json": "SessionStart", "factory-droid/hooks.json": "SessionStart", "gemini-cli/settings.json": "SessionStart",
+          "copilot/copilot-cli.json": "sessionStart"}
+check("adapters (#55): Claude Code, Factory Droid, Gemini CLI and Copilot CLI run rainbowomma-session-start when a session starts",
+      all("rainbowomma-session-start" in json.dumps((json.loads((AD / f).read_text()).get("hooks") or json.loads((AD / f).read_text()))[k])
+          for f, k in starts.items()))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
