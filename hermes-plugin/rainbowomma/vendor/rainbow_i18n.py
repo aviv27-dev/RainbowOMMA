@@ -156,6 +156,12 @@ M = {
     "ao.xlsx_out": {"en": "--out must be a {ext} file too", "he": "--out חייב להיות גם הוא קובץ {ext}"},
     "ao.xlsx_open": {"en": "{path} is open in Excel (or Excel could not say) — not writing under it; close it, or use --out",
                      "he": "{path} פתוח ב-Excel (או ש-Excel לא ענה) — לא כותבים מתחתיו; לסגור אותו, או להשתמש ב-‎--out"},
+    "ao.excel_dialog": {"en": "Excel is showing a dialog, which blocks every call — often its one-time request for access to "
+                              "{folder} (select that folder, then Grant Access). Ask the human to answer it, then try again",
+                        "he": "Excel מציג חלון דו-שיח שחוסם כל פעולה — לרוב בקשת גישה חד-פעמית לתיקייה {folder} (לבחור את "
+                              "התיקייה וללחוץ \"הענק גישה\"). לבקש מהאדם לענות עליו, ואז לנסות שוב"},
+    "ao.excel_maybe_dialog": {"en": "Excel may be showing a dialog (often a request for access to {folder}): ask the human to look",
+                              "he": "ייתכן ש-Excel מציג חלון דו-שיח (לרוב בקשת גישה לתיקייה {folder}): לבקש מהאדם לבדוק"},
     "ao.xlsx_failed": {"en": "Excel did not recalculate the workbook — {detail}", "he": "Excel לא חישב מחדש את חוברת העבודה — {detail}"},
     "ao.pdf_failed": {"en": "Word produced no PDF — {detail}", "he": "Word לא הפיק PDF — {detail}"},
     "ao.damaged": {"en": "Word was not asked to open it: {detail} — a damaged file opens a dialog in Word that blocks every "

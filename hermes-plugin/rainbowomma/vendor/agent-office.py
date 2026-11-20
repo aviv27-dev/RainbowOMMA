@@ -553,15 +553,20 @@ def preflight(path):
     return None
 
 
-def word_dialog():
-    """→ True when Word shows a modal dialog or sheet (it then blocks every AppleScript call), False when it doesn't,
-    None when that can't be told (Word not running, or no Accessibility permission for System Events)"""
-    if not running("word"):
+def app_dialog(app):
+    """→ True when the app shows a modal dialog or sheet (it then blocks every AppleScript call — the sandbox's file-access
+    sheet "Grant Access" too), False when it doesn't, None when that can't be told (not running, or no Accessibility
+    permission for System Events)"""
+    if not running(app):
         return None
-    code, out = osa('tell application "System Events" to tell process "Microsoft Word"\n'
+    code, out = osa(f'tell application "System Events" to tell process {q(APPS[app][0])}\n'
                     'set n to count of (windows whose subrole is "AXDialog" or subrole is "AXSystemDialog")\n'
                     'repeat with w in windows\nset n to n + (count of sheets of w)\nend repeat\nreturn n as text\nend tell', 10)
     return int(out) > 0 if code == 0 and out.strip().isdigit() else None
+
+
+def word_dialog():
+    return app_dialog("word")
 
 
 def word_stuck():
@@ -781,6 +786,9 @@ def cmd_xlsx(agent, src, out=None, pdf=None, force=False):
     why = out_refusal(dest, p, force) or (pdf_dest and out_refusal(pdf_dest, p, force))
     if why:
         return 2, {"status": "refused", "why": why}
+    if app_dialog("excel"):                  # a dialog already open blocks every call — say so now, not after a long timeout
+        log(f"xlsx BLOCKED {agent} {p} (a dialog is open in Excel)")
+        return 1, {"status": "blocked-by-dialog", "why": t("ao.excel_dialog", folder=WORD_DIR)}
     now_open = open_paths("excel")
     if now_open is None or set(forms(dest)) & set(now_open or []):
         return 1, {"status": "failed", "why": t("ao.xlsx_open", path=dest)}       # never write under a workbook someone has open
@@ -810,8 +818,13 @@ def cmd_xlsx(agent, src, out=None, pdf=None, force=False):
                 note_temps("excel", [tmp.name], add=False)
         with leases_lock():
             touch("excel")
+        if not ok and app_dialog("excel"):    # e.g. the sandbox asking for the work folder: the human answers it, once
+            log(f"xlsx BLOCKED {agent} {p} (a dialog is open in Excel)")
+            return 1, {"status": "blocked-by-dialog", "why": t("ao.excel_dialog", folder=WORD_DIR)}
         if not ok:
             reason, errno = failure(code, msg if code else (msg or "Excel answered, but the workbook was not saved"))
+            if errno == -1712:
+                reason += " — " + t("ao.excel_maybe_dialog", folder=WORD_DIR)
             log(f"xlsx FAILED {agent} {p} ({reason}{', errno ' + str(errno) if errno else ''})")
             out_ = {"status": "failed", "why": t("ao.xlsx_failed", detail=reason[:160])}
             if errno:

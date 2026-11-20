@@ -1474,6 +1474,12 @@ docs["Microsoft Excel"] = {str(book): True}
 book.write_text("the human's edits")
 code, out = ao.cmd_xlsx("bravo", str(book))
 check("xlsx: a workbook open in Excel is never written under — refused, untouched", code == 1 and book.read_text() == "the human's edits", out)
+_eo = ao.RUN; n_x = len(xcalls)
+ao.RUN = lambda sc: (0, "1") if "subrole is" in sc and "Microsoft Excel" in sc else _eo(sc)
+code, out = ao.cmd_xlsx("bravo", str(tmp / "agent" / "report.xlsx"))
+check("xlsx: a dialog open in Excel (its file-access sheet) → blocked-by-dialog at once, naming the folder, Excel not asked to calculate",
+      code == 1 and out["status"] == "blocked-by-dialog" and str(ao.WORD_DIR) in out["why"] and not any("calculate" in c for c in xcalls[n_x:]), out)
+ao.RUN = _eo
 docs.pop("Microsoft Excel", None)
 def excel_fails(sc):
     xcalls.append(sc)

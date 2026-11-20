@@ -23,6 +23,9 @@ upgrade prints those in full.
 - `office-owner close` right after `open` on a cold Word launch answered `gone`, dropped the lease and left the document
   open — the next open then took it for the human's. `open` now waits for the app to show the document; a close of a
   lease younger than 2 minutes looks again, and answers `unknown` (exit 3, lease kept) while the app doesn't show it.
+- `office-owner xlsx` waited 90 s and failed with a bare AppleEvent timeout when Excel showed a dialog — on a new Mac
+  usually the sandbox's one-time request for access to the work folder. A dialog already open now answers
+  `blocked-by-dialog` at once, one that appears during the run answers it after, both naming the folder to grant.
 - `office-owner sweep --dry-run` moved the idle clock of the apps it looked at (and forgot apps no longer running), so an
   app office-owner launched could stay up long after its last document closed; a dry run now changes nothing, and lists
   the leases the real sweep will drop.
