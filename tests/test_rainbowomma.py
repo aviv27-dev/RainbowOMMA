@@ -3356,5 +3356,53 @@ check("adapters (#55): Claude Code, Factory Droid, Gemini CLI and Copilot CLI ru
       all("rainbowomma-session-start" in json.dumps((json.loads((AD / f).read_text()).get("hooks") or json.loads((AD / f).read_text()))[k])
           for f, k in starts.items()))
 
+# ── port-back from the Hermes plugin: the guard's in-process decision, the document apps, Chrome's compiled theme ──
+gmod = load("rainbowomma-guard.py")
+def jd(cmd):
+    return gmod.judge({"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": cmd}})
+j_bad, j_ok = jd("ls && pkill -f 'Google Chrome'"), jd("ls ~/notes")
+j_none = gmod.judge({"tool_name": "Read", "tool_input": {"file_path": "/tmp/pkill-notes"}})
+check("guard judge(): (why, command) for a refused payload — the command line it refused, the same reason the hook prints",
+      j_bad[0] and j_bad[1] == "ls && pkill -f 'Google Chrome'" and j_bad[0] in hook("ls && pkill -f 'Google Chrome'")[1], j_bad)
+check("…(None, None) for an allowed one, and for a payload with no command", j_ok == (None, None) and j_none == (None, None), (j_ok, j_none))
+real_verdict = gmod.verdict
+gmod.verdict = lambda cmd: 1 / 0
+try:
+    j_err = jd("ls")
+finally:
+    gmod.verdict = real_verdict
+check("…and an error while judging is a refusal, never a yes", j_err[0] and "ZeroDivisionError" in j_err[0], j_err)
+doc_blocked = ["osascript -e 'quit app \"Microsoft Word\"'", "osascript -e 'tell application \"Microsoft Excel\" to close active workbook'",
+               "osascript -e 'tell application \"Microsoft PowerPoint\" to quit'",
+               "osascript -e 'tell application \"Preview\" to close every window'", "osascript -e 'tell application \"Keynote\" to quit'",
+               "osascript -e 'tell application \"Adobe Acrobat Reader\" to close documents'",
+               "osascript -e 'tell application \"Pages\" to close front document'", "osascript -e 'tell application \"Numbers\" to quit'"]
+res = [hook(c) for c in doc_blocked]
+check("guard doc-app: quitting a document app through AppleScript, or closing its documents or windows, is refused (exit 2)",
+      all(code == 2 and gmod.WHY["doc-app"] in err for code, err in res), [c for c, (code, _) in zip(doc_blocked, res) if code != 2])
+doc_allowed = ["osascript -e 'tell application \"Microsoft Word\" to get name of active document'",
+               "osascript -e 'tell application \"Preview\" to activate'", "osascript -e 'tell application \"Numbers\" to get name of every document'",
+               "osascript -e 'tell application \"TextEdit\" to quit'", "~/bin/office-owner pdf --agent alpha a.docx"]
+res = [hook(c) for c in doc_allowed]
+check("…while reading from them, bringing one forward, an app outside the list and office-owner itself go through",
+      all(code == 0 for code, _ in res), [c for c, (code, _) in zip(doc_allowed, res) if code])
+env_bad = ["OFFICE_EXTRA_APPS='{}' ~/bin/office-owner list", "OFFICE_WORD_DIR=/tmp/x ~/bin/office-owner pdf --agent alpha a.docx",
+           "export OFFICE_EXTRA_APPS=x"]
+res = [hook(c) for c in env_bad]
+check("guard: an agent can't set office-owner's own settings (OFFICE_EXTRA_APPS, OFFICE_WORD_DIR) — they are the human's",
+      all(code == 2 for code, _ in res), [c for c, (code, _) in zip(env_bad, res) if code != 2])
+themes_was = sbo.THEMES
+sbo.THEMES = tmp / "cached-themes"
+try:
+    sbo.build_theme({"name": "alpha", "label": "Alpha", "color": "#E53935"})
+    (sbo.THEMES / "alpha" / "Cached Theme.pak").write_bytes(b"\0pak")
+    kept = sbo.theme_clean("alpha")
+    (sbo.THEMES / "alpha" / "other.pak").write_bytes(b"\0")
+    foreign = sbo.theme_clean("alpha")
+finally:
+    sbo.THEMES = themes_was
+check("theme: Chrome's own compiled theme (Cached Theme.pak) keeps the folder clean — a start doesn't rebuild it and lose the frame; any other file still doesn't",
+      kept and not foreign, (kept, foreign))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)
