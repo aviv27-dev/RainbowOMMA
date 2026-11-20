@@ -2,6 +2,11 @@
 
 Notes for carrying these changes into the stand-alone tools and the other adapters.
 
+**Status:** the code in 1 and 3 is in the stand-alone tools (released in 0.5.0). Tests for `judge()`, `doc-app`, the
+agent-set `OFFICE_*` settings and `theme_clean()` with `Cached Theme.pak` are in `tests/test_rainbowomma.py`, and
+`doc-app`, `judge()` and the theme cache are in docs/DESIGN.md. Still open: `add_apps()` (2: verify against a live app,
+then test and document), `rainbowomma-guard --serve`, and the ideas in 4.
+
 1. `bin/rainbowomma-guard.py`
    - `judge(event) -> (why, command)`: the decision without the hook's exit codes; `main()` now calls it. Any in-process or
      long-lived host can use it (the plugin's `guard_worker.py` is a 60-line example of a JSON-lines guard server —

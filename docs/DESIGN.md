@@ -71,6 +71,9 @@
   as an owner stop), then start normally. Pipe fds must be 3/4 in the child: dup the pipe ends above 4 first, use
   `close_fds=False`. A windowless Chrome does not exit when the pipe closes; a windowed one does. A failed install falls
   back to the profile color and records `themeError`. Rebuilt when `THEME_VERSION`, color or label changes.
+  Chrome compiles the installed theme into `Cached Theme.pak` inside the theme folder and paints the frame from it at
+  every later start; the folder may hold only that file, `manifest.json` and `frame.png` (anything else — a script, a link —
+  rebuilds it), so the cache is never thrown away and the agent's next window keeps its color and name.
 - **Name collision.** Do NOT call any tool `agent-browser`: Hermes Agent looks up Vercel's `agent-browser` CLI on PATH.
 
 - **Front for the human.** `front` un-minimizes first: activating an app never de-miniaturizes its windows, so through the
@@ -140,10 +143,17 @@ working in parallel is fine; the app is shared, the documents are not.
   `;`/`&&`, `$( )`, backticks, `sh -c`, `eval`, and wrappers like `sudo`/`env`/`xargs`; heredoc bodies are data) and
   judges each command by its name (`/usr/bin/pkill` is `pkill`): `pkill`, `killall`, `kill` with a process search
   (`pgrep`, or `ps`/`lsof` on Chrome or a 92xx port), AppleScript quitting Chrome, Chrome on a debug port (its binary
-  or `open -a`), and an agent acting as the human (`--by human`, `LAUNCH_BY=human`, the desktop scripts). It finds the command in each
+  or `open -a`), and an agent acting as the human (`--by human`, `LAUNCH_BY=human`, the desktop scripts, or setting the
+  human's own settings such as `RAINBOW_HOME`, `OFFICE_EXTRA_APPS` or `OFFICE_WORD_DIR`). It also refuses AppleScript
+  that quits a shared document app (Word, Excel, PowerPoint, Acrobat, Preview, Pages, Numbers, Keynote) or closes its
+  documents or windows (`doc-app`): a document the human has open, unsaved, is gone with it — `office-owner` closes only
+  the agent's own leased documents. Reading from those apps or bringing one forward goes through. It finds the command in each
   framework's payload (`tool_input.command`, Cursor's `command`, Windsurf's `tool_info.command_line`, Copilot CLI's
   `toolArgs` JSON text, Cline's `tool_call.input` / `preToolUse.parameters`) and refuses with exit 2 and the reason
   on stderr, or Cline's `{"cancel": true}` with `--format cline`. A payload it can't read is let through.
+- **In-process.** `judge(event) → (why, command)` is the same decision without the hook's exit codes (`why` is None when
+  nothing is refused; an error while judging is a refusal). `main()` prints it for the hook frameworks; a host that loads
+  the guard itself — the Hermes plugin — calls it directly.
 - **Native rules as a second layer** where a framework has them: Claude Code and Qwen `permissions.deny`, Codex exec
   policy `forbidden`, Gemini policy TOML, OpenCode / Kilo `permission.bash`, Factory `commandBlocklist`, Zed
   `always_deny`. Plugins where a framework only takes code: OpenCode / Kilo (`tool.execute.before`), OpenClaw
