@@ -5,8 +5,8 @@
 class Rainbowomma < Formula
   desc "One Mac, Many Agents: a colored Chrome, ports, processes and a guard per AI agent"
   homepage "https://github.com/aviv27-dev/RainbowOMMA"
-  url "https://github.com/aviv27-dev/RainbowOMMA/archive/refs/tags/v0.4.0.tar.gz"
-  sha256 "9bc896428abbeb4fc37716fc9b3271f7f18294cfdeff0a01322e859f99cb01f4"
+  url "https://github.com/aviv27-dev/RainbowOMMA/archive/refs/tags/v0.5.0.tar.gz"
+  sha256 "cd58304262c7c2b16f0a805a70ab84b55fe03defd8ee7b4385ed477f762f5cb3"
   license "Apache-2.0"
 
   depends_on :macos     # and a python3: Homebrew's, or the developer tools' (xcode-select --install) — install.sh checks
