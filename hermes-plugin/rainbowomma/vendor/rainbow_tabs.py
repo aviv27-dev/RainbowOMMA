@@ -21,6 +21,7 @@ with one notification when it stays above gpuPercent for hotMinutes.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import tempfile
@@ -95,6 +96,10 @@ def sample(cdp, seconds, sleep=time.sleep):
                 pass
         out.append({"id": t["targetId"], "url": str(t.get("url", "")), "title": str(t.get("title", ""))[:80],
                     "attached": bool(t.get("attached")), "cpu": cpu, "session": sid})
+    kept = kept_ids(out, getattr(cdp, "keep_rules", None))       # never reloaded or closed (keepTabs)
+    for x in out:
+        if x["id"] in kept:
+            x["attached"] = True
     return out, len([t for t in infos if t.get("type") == "page"]), gpu
 
 
@@ -242,10 +247,56 @@ def jobs_path(shared, agent):
     return shared / "state" / f"tabs-job-{agent}.json"
 
 
+# ── tabs that must stay (keepTabs): a session a person must enter again — a smart card and its PIN, say — dies with its tab ──
+def keep_rules(spec, where="keepTabs"):
+    """browsers.json "keepTabs" (top level, and/or in an agent's row) → [{"match", "keep", "why"}]. Each rule: "match" — a
+    host pattern ("*.portal.example") or, with "://", a pattern on the whole address; "keep" — how many of its tabs stay
+    (the most recently used first; default 1); "why" — shown in the answer. Raises ValueError on anything else."""
+    if spec in (None, []):
+        return []
+    if not isinstance(spec, list):
+        raise ValueError(f"{where} must be a list of {{\"match\": …, \"keep\": N, \"why\": …}}")
+    out = []
+    for r in spec:
+        m = str(r.get("match") or "").strip() if isinstance(r, dict) else ""
+        if not m or len(m) > 200 or any(c in m for c in "\x00\n\r"):
+            raise ValueError(f"{where}: each rule needs a \"match\" (a host like *.portal.example, or an address pattern)")
+        try:
+            keep = int(r.get("keep", 1))
+        except (TypeError, ValueError):
+            raise ValueError(f"{where}: \"keep\" is a number of tabs (1 or more)") from None
+        if keep < 1:
+            raise ValueError(f"{where}: \"keep\" is a number of tabs (1 or more)")
+        out.append({"match": m, "keep": keep, "why": str(r.get("why") or "keepTabs")[:80]})
+    return out
+
+
+def keep_matches(pattern, url):
+    if "://" in pattern:
+        return fnmatch.fnmatchcase(url, pattern)
+    h = (urlsplit(url).hostname or "").lower()
+    return bool(h) and fnmatch.fnmatchcase(h, pattern.lower())
+
+
+def kept_ids(tabs, rules):
+    """{tab id: why} — for each rule, its first `keep` matching tabs in Chrome's order (no I/O)"""
+    out = {}
+    for r in rules or ():
+        hits = [t["id"] for t in tabs if t["id"] not in out and keep_matches(r["match"], t["url"])]
+        out.update({i: r["why"] for i in hits[:r["keep"]]})
+    return out
+
+
 def pages_of(cdp):
-    """→ [{"id", "url", "title", "attached", "opener"}] for the browser's page tabs"""
-    return [{"id": t["targetId"], "url": str(t.get("url", "")), "title": str(t.get("title", ""))[:80], "attached": bool(t.get("attached")),
-             "opener": t.get("openerId")} for t in cdp.call("Target.getTargets").get("targetInfos", []) if t.get("type") == "page"]
+    """→ [{"id", "url", "title", "attached", "opener"}] for the browser's page tabs. A tab keepTabs keeps (the rules ride on
+    the connection: browser-owner's cdp_for) reads as attached — every closing path already leaves such a tab alone."""
+    pages = [{"id": t["targetId"], "url": str(t.get("url", "")), "title": str(t.get("title", ""))[:80], "attached": bool(t.get("attached")),
+              "opener": t.get("openerId")} for t in cdp.call("Target.getTargets").get("targetInfos", []) if t.get("type") == "page"]
+    kept = kept_ids(pages, getattr(cdp, "keep_rules", None))
+    for p in pages:
+        if p["id"] in kept:
+            p.update(attached=True, keep=kept[p["id"]])
+    return pages
 
 
 def job_candidates(before, pages, kept=()):

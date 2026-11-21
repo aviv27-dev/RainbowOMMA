@@ -131,7 +131,9 @@ def auth_sites(path=None):
 
 
 def registry(path=None):
-    raw = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))["agents"]
+    full = json.loads(Path(path or REGISTRY).read_text(encoding="utf-8"))
+    raw = full["agents"]
+    keep_all = rainbow_tabs.keep_rules(full.get("keepTabs"))      # tabs that must stay in every agent's browser
     out, ports, profiles, states, ranges = {}, {}, {}, {}, {}
     for name, r in raw.items():
         if not NAME_RE.match(name) or name == "human" or name.startswith("human-"):
@@ -201,6 +203,7 @@ def registry(path=None):
             raise ValueError(f"{name}: maxTabs must be a number of tabs") from None
         if not 1 <= a["maxTabs"] <= 100:
             raise ValueError(f"{name}: maxTabs must be between 1 and 100")
+        a["keepTabs"] = keep_all + rainbow_tabs.keep_rules(r.get("keepTabs"), f"{name}: keepTabs")
         a["tcp_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
         a["port_re"] = re.compile(r"(?:^|\s)--remote-debugging-pipe(?:\s|$)") if a["cdp"] == "pipe" else a["tcp_re"]
         a["dir_re"] = re.compile(r"(?:^|\s)--user-data-dir=" + re.escape(a["profile"]) + r"(?:\s|$)")
@@ -993,9 +996,9 @@ class Cdp:
 
 def cdp_for(a, timeout=5.0):
     """a CDP connection to the agent's own browser: its port, or in pipe mode the broker's socket"""
-    if a.get("cdp") == "pipe":
-        return Cdp(None, timeout, unix=str(SHARED / "cdp" / a["name"] / "cdp.sock"))
-    return Cdp(a["port"], timeout)
+    c = Cdp(None, timeout, unix=str(SHARED / "cdp" / a["name"] / "cdp.sock")) if a.get("cdp") == "pipe" else Cdp(a["port"], timeout)
+    c.keep_rules = a.get("keepTabs") or []        # keepTabs: those tabs read as in use — nothing closes or reloads them
+    return c
 
 
 def _cdp_browser_calls(port, calls, timeout=5.0):
