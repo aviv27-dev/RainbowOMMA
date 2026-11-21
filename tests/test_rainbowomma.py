@@ -3464,5 +3464,41 @@ finally:
 check("theme: Chrome's own compiled theme (Cached Theme.pak) keeps the folder clean — a start doesn't rebuild it and lose the frame; any other file still doesn't",
       kept and not foreign, (kept, foreign))
 
+# the human's own Chrome: its color from human.json, and the Dock/desktop icon that brings it forward un-minimized
+hbo = load("browser-owner.py"); hbo.SHARED = tmp / "human-home"; hbo.SHARED.mkdir()
+hd = tmp / "human-data"; (hd / "Default").mkdir(parents=True)
+(hd / "Default" / "Preferences").write_text(json.dumps({"profile": {"name": "Mine"}, "extensions": {"theme": {"id": ""}}, "browser": {"theme": {"color_scheme2": 1}}}))
+(hd / "Local State").write_text(json.dumps({"profile": {"info_cache": {"Default": {"name": "Mine"}}}}))
+EXE_ = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+up_rows = [(915, 1, EXE_ + " --user-data-dir=" + str(hd) + " --no-first-run")]
+agent_rows = [(9, 1, EXE_ + " --user-data-dir=/x/agent --remote-debugging-port=9225"), (10, 9, EXE_ + " --type=renderer")]
+r_up = hbo.human_paint(hd, "#FDD835", rows=up_rows)
+r_dock = hbo.human_paint(hd, "#FDD835", rows=[(5, 1, EXE_)])
+r1 = hbo.human_paint(hd, "#FDD835", rows=agent_rows)
+pr = json.loads((hd / "Default" / "Preferences").read_text()); ls_ = json.loads((hd / "Local State").read_text())
+r2 = hbo.human_paint(hd, "#FDD835", rows=agent_rows)
+check("human Chrome: the color from human.json is written only while it is closed (open from the Dock with no --user-data-dir counts as open); agents' Chromes don't count",
+      r_up["status"] == "refused" and r_dock["status"] == "refused" and r1["status"] == "painted", (r_up, r_dock, r1))
+check("human Chrome: frame + avatar get the color, the name stays, a copy of both files is kept, and a second run changes nothing",
+      pr["browser"]["theme"]["user_color"] == hbo.chrome_color("#FDD835") and pr["extensions"]["theme"]["id"] == "user_color_theme_id"
+      and pr["profile"]["name"] == "Mine" and pr["browser"]["theme"]["color_scheme2"] == 1
+      and ls_["profile"]["info_cache"]["Default"]["default_avatar_fill_color"] == hbo.chrome_color("#FDD835")
+      and ls_["profile"]["info_cache"]["Default"]["name"] == "Mine"
+      and (hbo.SHARED / "backup" / "human-chrome" / "Preferences").exists() and r2["status"] == "unchanged", (pr, ls_, r2))
+pr["extensions"]["theme"]["id"] = "abcdefghijklmnopabcdefghijklmnop"; (hd / "Default" / "Preferences").write_text(json.dumps(pr))
+r3 = hbo.human_paint(hd, "#43A047", rows=[])
+check("human Chrome: a Web Store theme the human installed wins (skipped), and no color in human.json means nothing is written",
+      r3["status"] == "skipped" and json.loads((hd / "Default" / "Preferences").read_text())["browser"]["theme"]["user_color"] == hbo.chrome_color("#FDD835")
+      and hbo.human_paint(hd, None, rows=[])["status"] == "skipped", r3)
+hp_env = dict(os.environ, RAINBOW_AGENT="alpha", RAINBOW_HOME=str(hbo.SHARED), BROWSER_OWNER_REGISTRY=str(REG))
+hp = subprocess.run([sys.executable, "-I", str(HERE / "browser-owner.py"), "human-paint"], capture_output=True, text=True, env=hp_env, timeout=30)
+check("human Chrome: an agent can't paint the human's Chrome (human-paint refused under RAINBOW_AGENT)",
+      hp.returncode == 2 and '"refused"' in hp.stdout, (hp.returncode, hp.stdout[-200:], hp.stderr[-200:]))
+hc = (HERE / "human-chrome.sh").read_text(encoding="utf-8")
+check("human Chrome: the icon sends Chrome's own 'reopen' to that pid (restores a minimized window, or opens one), never asks for a grant, and paints before a cold start",
+      "0x72617070" in hc and "0x10" in hc and "human-paint" in hc and hc.index("human-paint") > hc.index("front \"$pid\"\n  exit 0"))
+dk = (HERE.parent / "install" / "make-desktop-apps.sh").read_text(encoding="utf-8")
+check("desktop icons: the human's icon takes its name and color from human.json, like the Dock tray", "human.json" in dk and '"$HC" "$H" open human' in dk)
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -35,7 +35,7 @@ H = {
             ("open AGENT URL", "help.browser-owner.5", "browser-owner open alpha https://example.com"),
             ("tabs [AGENT] [--apply] · job-start | job-end | job-keep | job-close AGENT", "help.browser-owner.6", "browser-owner job-start alpha"),
             ("mcp-config AGENT [--tool devtools|playwright] [--format json|claude]", "help.browser-owner.7", "browser-owner mcp-config alpha --format claude"),
-            ("heal | human-theme | presence", "help.browser-owner.8", "browser-owner presence"),
+            ("heal | human-theme | human-paint | presence", "help.browser-owner.8", "browser-owner presence"),
         ],
         "exits": [(0, "help.x.ok"), (2, "help.x.refused"), (1, "help.x.failed")], "more": "docs/DESIGN.md §3",
     },

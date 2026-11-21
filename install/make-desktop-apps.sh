@@ -72,13 +72,22 @@ for a in json.load(sys.stdin).get("agents", []):
         print("\t".join((a["agent"], a["label"], a["color"])))' "$("$BIN/browser-owner" names 2>/dev/null)") || AGENTS=""
 [ -n "$AGENTS" ] || { echo "no agents: is $BIN/browser-owner installed and browsers.json filled in?" >&2; exit 1; }
 
-H="$(msg desk.name.human)"
+# the human's own Chrome: their name and color from $RAINBOW_HOME/human.json {"label", "color"} (as in the Dock tray); else
+# "Human", neutral grey
+HUMAN=$(py -I -c 'import json, sys
+try:
+    h = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    h = {}
+print((h.get("label") or sys.argv[2]).strip() + "\t" + (h.get("color") or "#B0BEC5"))' "${RAINBOW_HOME:-$HOME/.rainbowomma}/human.json" "$(msg desk.name.human)") || HUMAN=""
+H="${HUMAN%%$'\t'*}"; HC="${HUMAN##*$'\t'}"
+[ -n "$H" ] || { H="$(msg desk.name.human)"; HC="#B0BEC5"; }
 n=1
-app "$n · $(msg desk.app.open_human)" "#B0BEC5" "$H" open human; n=$((n + 1))
+app "$n · $(msg desk.app.open_human)" "$HC" "$H" open human; n=$((n + 1))
 while IFS=$'\t' read -r who label hex; do
   app "$n · $(msg desk.app.open_agent name="$label")" "$hex" "$label" open "$who"; n=$((n + 1))
 done <<< "$AGENTS"
-app "$n · ✖ $(msg desk.app.close_human)" "#B0BEC5" "✖ $H" close human; n=$((n + 1))
+app "$n · ✖ $(msg desk.app.close_human)" "$HC" "✖ $H" close human; n=$((n + 1))
 LABELS=""
 while IFS=$'\t' read -r who label hex; do
   app "$n · ✖ $(msg desk.app.close_agent name="$label")" "$hex" "✖ $label" close "$who" "$(msg desk.confirm_one name="$label")"; n=$((n + 1))
