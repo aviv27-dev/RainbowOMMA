@@ -7,6 +7,10 @@ upgrade prints those in full.
 
 ## [Unreleased]
 
+**Before upgrading:** an agent's browser now closes when its session ends and opens fresh. An agent whose browser must
+stay up on one site gets `"stayUp": "https://…"` in its row; one that should bring its last session back gets
+`"restoreTabs": "lastJob"`.
+
 ### Added
 - `keepTabs` in `browsers.json`: tabs that stay open, for a session a person must enter again with a smart card and
   PIN. Set it at the top level for every agent, or in an agent's row for that agent only: `match` is a host pattern, or
@@ -19,6 +23,12 @@ upgrade prints those in full.
   the human is at the Mac. (#55)
 
 ### Changed
+- An agent's browser is off unless it's working. The session-end hook (and the Hermes plugin) runs the new
+  `browser-owner finish AGENT`, which closes the whole browser, and `restoreTabs` now defaults to `none`, so the next
+  start opens a fresh window. Abandoned tabs are no longer in front, ahead of the tabs the agent is working in. It never
+  runs while the agent holds a sign-in lock, never on a `managedBy` browser, and never at a peer's request.
+- `stayUp` (per agent, an http(s) address): that browser never closes or idle-stops. At each session's end, every other
+  tab closes, and its tab is opened again if it was gone and comes to the front. `restoreTabs` stays `lastJob` for it.
 - `office-owner pdf` / `xlsx` confine their output to the source document's folder unless the human sets
   `OFFICE_CONFINE=0` (before, only the Hermes plugin turned it on).
 - The guard's refusal of `pkill` / `killall` of an Office app points to `office-owner close`.

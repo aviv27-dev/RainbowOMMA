@@ -3135,16 +3135,18 @@ def reg_with(**extra):
     raw_ = json.loads(Path(REG).read_text()); n_ = next(iter(raw_["agents"])); raw_["agents"][n_].update(extra)
     rreg.write_text(json.dumps(raw_)); return n_, jb.registry(rreg)
 n0, r_def = reg_with()
-_, r_none = reg_with(restoreTabs="none", maxTabs=5)
+_, r_none = reg_with(restoreTabs="lastJob", maxTabs=5)
+_, r_stay = reg_with(stayUp="https://portal.example/home")
 bad_ = []
 for kw in ({"restoreTabs": "some"}, {"maxTabs": 0}, {"maxTabs": "many"}):
     try:
         reg_with(**kw); bad_.append(kw)
     except ValueError:
         pass
-check("restoreTabs (#76): lastJob by default (the last session comes back); none opens a fresh window; a bad value or maxTabs is refused",
-      r_def[n0]["restoreTabs"] == "lastJob" and r_def[n0]["maxTabs"] == 8 and "--restore-last-session" in jb.chrome_args(r_def[n0])
-      and "--restore-last-session" not in jb.chrome_args(r_none[n0]) and r_none[n0]["maxTabs"] == 5 and not bad_, bad_)
+check("restoreTabs (#76): none by default — a browser that closes with every session opens fresh; lastJob brings the last session back (the default for stayUp); a bad value or maxTabs is refused",
+      r_def[n0]["restoreTabs"] == "none" and r_def[n0]["maxTabs"] == 8 and "--restore-last-session" not in jb.chrome_args(r_def[n0])
+      and "--restore-last-session" in jb.chrome_args(r_none[n0]) and r_none[n0]["maxTabs"] == 5 and r_stay[n0]["restoreTabs"] == "lastJob"
+      and not bad_, bad_)
 
 # ── the agents in the Dock: doctor shows whether the named group is built (#77) ──
 dk = tmp / "Dock-Apps" / "RainbowOMMA"
@@ -3407,9 +3409,9 @@ hrun = lambda f_, agent: subprocess.run(["bash", str(hk / f_)], input='{"session
                                         env={k: v for k, v in dict(os.environ, RAINBOW_AGENT=agent).items() if v})
 r_s0 = hrun("rainbowomma-session-start", ""); no_agent = hk_log.read_text() if hk_log.exists() else ""
 r_s1 = hrun("rainbowomma-session-start", "alpha"); r_e1 = hrun("rainbowomma-session-end", "alpha")
-check("session hooks (#55): start → job-start, end → job-end then reap, as the agent; nothing without an agent name; never block (exit 0)",
+check("session hooks (#55): start → job-start, end → finish (the browser closes, or stays on its one tab) then reap, as the agent; nothing without an agent name; never block (exit 0)",
       r_s0.returncode == r_s1.returncode == r_e1.returncode == 0 and no_agent == ""
-      and hk_log.read_text().splitlines() == ["browser-owner job-start alpha", "browser-owner job-end alpha", "proc-owner reap alpha"], hk_log.read_text())
+      and hk_log.read_text().splitlines() == ["browser-owner job-start alpha", "browser-owner finish alpha", "proc-owner reap alpha"], hk_log.read_text())
 starts = {"claude-code/settings.json": "SessionStart", "factory-droid/hooks.json": "SessionStart", "gemini-cli/settings.json": "SessionStart",
           "copilot/copilot-cli.json": "sessionStart"}
 check("adapters (#55): Claude Code, Factory Droid, Gemini CLI and Copilot CLI run rainbowomma-session-start when a session starts",
@@ -3561,6 +3563,71 @@ check("keepTabs in browsers.json: the top-level rules apply to every agent, a ro
       [x["match"] for x in kr_all["alpha"]["keepTabs"]] == ["*.portal.example", "*.bank.example"]
       and [x["match"] for x in kr_all["charlie"]["keepTabs"]] == ["*.portal.example"]
       and k_conn == kr_all["alpha"]["keepTabs"] and k_bad and k_bad.startswith("charlie"), (kr_all["alpha"]["keepTabs"], k_bad))
+
+# ── off by default: a session's end closes the agent's browser; stayUp keeps it on its one tab ──
+sreg_f = tmp / "stay-reg.json"
+sraw = json.loads(REG.read_text()); sraw["agents"]["alpha"]["stayUp"] = "https://portal.example/home"
+sraw["agents"]["alpha"]["idleMinutes"] = 30
+sreg_f.write_text(json.dumps(sraw))
+sreg = bo.registry(sreg_f)
+s_bad = []
+for v_ in ("portal.example", "ftp://x.example/", "javascript:alert(1)"):
+    sraw["agents"]["alpha"]["stayUp"] = v_; sreg_f.write_text(json.dumps(sraw))
+    try:
+        bo.registry(sreg_f); s_bad.append(v_)
+    except ValueError:
+        pass
+check("stayUp: the address its browser stays on; it is never idle-stopped (idleMinutes dropped), its tab is kept from every closing path; anything but an http(s) address is refused",
+      sreg["alpha"]["stayUp"] == {"url": "https://portal.example/home", "host": "portal.example"} and "idleMinutes" not in sreg["alpha"]
+      and {"match": "portal.example", "keep": 1, "why": "stayUp"} in sreg["alpha"]["keepTabs"] and "stayUp" not in sreg["charlie"]
+      and not s_bad, (sreg["alpha"], s_bad))
+fin = load("browser-owner.py"); fin.SHARED = tmp / "finish-home"; fin.SHARED.mkdir()
+fin.view = lambda a, st=None, rows=None: {"status": "up"}
+fin.processes = lambda: []
+fin.tree_of = lambda a, rows: ([501], [501, 502, 503])
+killed_ = []
+fin.terminate_tree = lambda tree, grace=8.0: killed_.append(list(tree)) or []
+fin.log = lambda a, m: None
+fin.AUTH_LEASES = lambda: {}
+fa = dict(CHARLIE_A, state=str(tmp / "finish-charlie.json"), peers=["alpha", "bravo", "charlie"])
+f_code, f_out = fin.do_finish(fa, "charlie")
+f_peer = fin.do_finish(fa, "alpha")
+fin.AUTH_LEASES = lambda: {"x": {"holder": "charlie"}}
+f_lock = fin.do_finish(fa, "charlie")
+fin.AUTH_LEASES = lambda: {}
+fin.view = lambda a, st=None, rows=None: {"status": "down"}
+f_down = fin.do_finish(fa, "charlie")
+check("finish: a session's end closes the agent's whole browser, recorded as the owner's stop (never a person's ⌘Q); never by a peer, never while it holds a sign-in lock; a closed one is left alone",
+      f_code == 0 and f_out["status"] == "stopped" and killed_ == [[501, 502, 503]] and fin.load(fa)["lastStop"]["finish"] is True
+      and f_peer[0] == 2 and f_lock[1]["status"] == "kept" and f_down[1]["status"] == "not-running" and len(killed_) == 1,
+      (f_out, f_peer, f_lock, f_down, killed_))
+class StayCDP(KeepCDP):
+    def __init__(self, tabs, rules):
+        super().__init__(tabs, rules); self.created, self.active = [], []
+    def call(self, method, params=None, sid=None):
+        if method == "Target.createTarget":
+            tid = f"new{len(self.created)}"; self.created.append(params["url"])
+            self.tabs = self.tabs + [pg(tid, params["url"])]; return {"targetId": tid}
+        if method == "Target.activateTarget":
+            self.active.append(params["targetId"]); return {}
+        return super().call(method, params, sid)
+    def __enter__(self):
+        return self
+    def __exit__(self, *e):
+        return False
+sa = dict(sreg["alpha"], peers=list(sreg))
+fin.view = lambda a, st=None, rows=None: {"status": "up"}
+sc = StayCDP([pg("j1", "https://news.example/"), pg("p1", "https://portal.example/inbox"), pg("j2", "about:blank"),
+              pg("p2", "https://portal.example/old")], sa["keepTabs"])
+fin.cdp_for = lambda a, timeout=5.0: sc
+s_code, s_out = fin.do_finish(sa, "alpha")
+sc2 = StayCDP([pg("j1", "https://news.example/"), pg("j2", "https://other.example/")], sa["keepTabs"])
+fin.cdp_for = lambda a, timeout=5.0: sc2
+s2 = fin.do_finish(sa, "alpha")[1]
+check("finish, stayUp: the browser stays — every other tab closes, its portal tab comes to the front; with that tab gone, it is opened first, then the rest close",
+      s_code == 0 and s_out["status"] == "stays-up" and sorted(sc.closed) == ["j1", "j2", "p2"] and sc.active == ["p1"] and not killed_[1:]
+      and s2["status"] == "stays-up" and s2.get("reopened") and sc2.created == ["https://portal.example/home"]
+      and sorted(sc2.closed) == ["j1", "j2"] and sc2.active == ["new0"], (s_out, sc.closed, sc.active, s2, sc2.closed))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

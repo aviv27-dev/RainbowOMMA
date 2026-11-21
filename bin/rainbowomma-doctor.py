@@ -112,7 +112,7 @@ def run_checks(launch_agents=None):
     out.append(check(t("dr.dock"), bool(apps) and docked is not False,
                      t("dr.dock_detail", n=len(apps), agents=len(reg)) + ("" if docked is None else " · " + t("dr.dock_in" if docked else "dr.dock_out")),
                      t("dr.dock_fix"), needed=False))
-    stays = sorted(n for n, a in reg.items() if not a.get("idleMinutes") and not a.get("managedBy"))
+    stays = sorted(n for n, a in reg.items() if not a.get("idleMinutes") and not a.get("managedBy") and not a.get("stayUp"))
     out.append(check(t("dr.idle_policy"), not stays, t("dr.idle_stays", names=", ".join(stays)) if stays else t("dr.idle_all"),
                      t("dr.idle_fix"), needed=False))
     for h in hermes_findings(reg):                       # only agents whose row names their Hermes config

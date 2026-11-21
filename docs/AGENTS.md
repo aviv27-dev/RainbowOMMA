@@ -96,8 +96,9 @@ An agent that opens tabs for a job tells its owner when the job begins and ends:
 to keep one (`job-keep`); the agent then calls `job-close`, or they close a minute later by themselves.
 
 Where the framework has session hooks, the adapter calls them for you: `rainbowomma-session-start` (a job begins, only in a
-browser that is already up — it never opens one) and `rainbowomma-session-end` (the session's tabs are put up for closing;
-nobody is left to keep them, so they close once their grace runs out, at the next heal run or the agent's next job-start).
+browser that is already up — it never opens one) and `rainbowomma-session-end` (`browser-owner finish`: the agent's
+browser closes — or, for an agent with `stayUp`, stays on that one tab with every other tab closed). One agent name runs
+one session at a time: a second session of the same agent loses its browser when the first one ends.
 Wired in the Claude Code, Factory Droid, Gemini CLI and Copilot CLI adapters (`SessionStart` / `sessionStart`). Elsewhere,
 put the two calls in the agent's own job wrapper or skill, or use the MCP tools `job_start` / `job_end`.
 
