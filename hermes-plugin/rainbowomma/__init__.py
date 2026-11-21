@@ -113,6 +113,10 @@ def register(ctx):
             keeper.start()
         except Exception as exc:
             logger.warning("rainbowomma: %s", exc)
+        try:
+            keeper.session_start()                     # the session's job: its tabs close when it ends
+        except Exception as exc:
+            logger.warning("rainbowomma session start: %s: %s", type(exc).__name__, exc)
 
     def on_session_finalize(session_id: str | None = None, **kwargs):
         try:

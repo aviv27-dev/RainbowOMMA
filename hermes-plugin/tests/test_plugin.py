@@ -319,10 +319,14 @@ housekeeping.Housekeeper(fo).idle_pass()
 check("housekeeping: tab_cleanup dry-run only reports, off skips the tab sweep",
       fr.calls[0] == ["browser-owner.py", "tabs", "alpha"] and [c[1] for c in fo.calls] == ["heal", "sweep"], (fr.calls, fo.calls))
 fr = FakeRainbow()
+housekeeping.Housekeeper(fr).session_start()
+check("housekeeping: a session's start begins a job in this agent's own browser (without it, the end had no job to close)",
+      fr.calls == [["browser-owner.py", "job-start", "alpha"]], fr.calls)
+fr = FakeRainbow()
 housekeeping.Housekeeper(fr).session_end("s1")
-check("housekeeping: a session's end closes the job's tabs, frees the screen, reaps orphaned servers and sweeps documents",
-      [c[:2] for c in fr.calls] == [["browser-owner.py", "job-close"], ["screen-owner.py", "release"], ["proc-owner.py", "reap"],
-                                    ["agent-office.py", "sweep"]], fr.calls)
+check("housekeeping: a session's end puts the job's tabs up and closes them, frees the screen, reaps orphaned servers and sweeps documents",
+      [c[:2] for c in fr.calls] == [["browser-owner.py", "job-end"], ["browser-owner.py", "job-close"], ["screen-owner.py", "release"],
+                                    ["proc-owner.py", "reap"], ["agent-office.py", "sweep"]] and fr.calls[0][2] == "alpha", fr.calls)
 k = housekeeping.Housekeeper(FakeRainbow(housekeeping_minutes=0))
 k2 = housekeeping.Housekeeper(FakeRainbow())
 check("housekeeping: the timer starts once, not at all with housekeeping_minutes 0, and stops on unload",
