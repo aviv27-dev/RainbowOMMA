@@ -24,6 +24,7 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # -I drops the script's folder; the message catalog lives beside it
 import rainbow_receipts  # noqa: E402
@@ -183,6 +184,13 @@ def registry(path=None):
             raise ValueError(f"{name}: idleMinutes can't be negative (0 keeps it up)")
         if idle:
             a["idleMinutes"] = idle
+        stay = r.get("stayUp")                                     # off by default: the browser closes when the session ends
+        if stay not in (None, False, ""):
+            u = urlsplit(str(stay).strip())
+            if u.scheme not in ("http", "https") or not u.hostname:
+                raise ValueError(f"{name}: stayUp is the address of the tab its browser stays on (https://…), not {stay!r}")
+            a["stayUp"] = {"url": str(stay).strip(), "host": u.hostname.lower()}
+            a.pop("idleMinutes", None)                              # it stays up: never idle-stopped
         lo, hi = port_range(r.get("ports"), port)
         for other, (olo, ohi) in ranges.items():
             if lo <= ohi and olo <= hi:
@@ -194,7 +202,8 @@ def registry(path=None):
             raise ValueError(f"{name}: cdp must be port or pipe, not {a['cdp']!r}")
         if a["cdp"] == "pipe" and a.get("launcher"):
             raise ValueError(f"{name}: cdp pipe starts Chrome itself — it can't go with a launcher")
-        a["restoreTabs"] = str(r.get("restoreTabs") or "lastJob").strip()
+        a["restoreTabs"] = str(r.get("restoreTabs") or ("lastJob" if a.get("stayUp") else "none")).strip()   # a browser that
+        # closes with every session opens fresh: last session's abandoned tabs never come back in front
         if a["restoreTabs"] not in RESTORE:
             raise ValueError(f"{name}: restoreTabs must be one of {', '.join(RESTORE)}, not {a['restoreTabs']!r}")
         try:
@@ -203,7 +212,8 @@ def registry(path=None):
             raise ValueError(f"{name}: maxTabs must be a number of tabs") from None
         if not 1 <= a["maxTabs"] <= 100:
             raise ValueError(f"{name}: maxTabs must be between 1 and 100")
-        a["keepTabs"] = keep_all + rainbow_tabs.keep_rules(r.get("keepTabs"), f"{name}: keepTabs")
+        a["keepTabs"] = keep_all + rainbow_tabs.keep_rules(r.get("keepTabs"), f"{name}: keepTabs") \
+            + ([{"match": a["stayUp"]["host"], "keep": 1, "why": STAY_WHY}] if a.get("stayUp") else [])
         a["tcp_re"] = re.compile(rf"(?:^|\s)--remote-debugging-port={port}(?:\s|$)")
         a["port_re"] = re.compile(r"(?:^|\s)--remote-debugging-pipe(?:\s|$)") if a["cdp"] == "pipe" else a["tcp_re"]
         a["dir_re"] = re.compile(r"(?:^|\s)--user-data-dir=" + re.escape(a["profile"]) + r"(?:\s|$)")
@@ -1250,6 +1260,60 @@ def do_idle_stop(a, by):
                **({"jobTabs": jobs} if jobs and jobs.get("closed") else {}), **({"tidy": tidied} if tidied else {})}
 
 
+STAY_WHY = "stayUp"
+
+
+def do_finish(a, by):
+    """a session is over. Default: the agent's browser closes — all of it — and its next start opens fresh (restoreTabs
+    "none"), so nothing left behind is ever in front. stayUp: the browser stays, on its one tab — every other tab closes,
+    that tab is opened if it is gone, and comes to the front. Never while the agent holds a sign-in lock (auth-owner); never
+    a managedBy one; only the agent itself or the human."""
+    if a.get("managedBy"):
+        return 2, {"status": "refused", "why": t("bo.managed", label=a["label"], by=a["managedBy"])}
+    if by in a.get("peers", ()) and by != a["name"]:
+        return 2, {"status": "refused", "why": t("bo.idle_not_yours", by=by, label=a["label"])}
+    rows = processes()
+    if view(a, rows=rows)["status"] != "up":
+        return 0, {"status": "not-running"}
+    holders = _auth_holders()
+    if holders is None or a["name"] in holders:
+        return 0, {"status": "kept", "why": "holds a sign-in lock (auth-owner)" if holders else "auth leases unreadable"}
+    if a.get("stayUp"):
+        return finish_stay(a, by)
+    _, tree = tree_of(a, rows)
+    st = load(a)
+    st["lastStop"] = {"at": now_iso(), "by": by, "pids": len(tree), "finish": True}
+    save(a, st)
+    left = terminate_tree(tree)
+    log(a, f"finish by {by}: the session is over — browser closed ({len(tree)} processes, {len(left)} needed KILL)")
+    return 0, {"status": "stopped", "processes": len(tree), "killed": len(left)}
+
+
+def finish_stay(a, by):
+    """stayUp at a session's end: the stay tab (opened first when it is gone), every other tab closes, the stay tab in front"""
+    url, opened = a["stayUp"]["url"], None
+    with cdp_for(a, timeout=10) as c:
+        pages = rainbow_tabs.pages_of(c)
+        stay = [p for p in pages if p.get("keep") == STAY_WHY]
+        if not stay:
+            opened = c.call("Target.createTarget", {"url": url}).get("targetId")
+            pages = rainbow_tabs.pages_of(c)
+            stay = [p for p in pages if p["id"] == opened or p.get("keep") == STAY_WHY]
+        closed = rainbow_tabs.close_tabs(c, [p["id"] for p in pages if not p.get("keep")])
+        front = None
+        if stay:
+            try:
+                c.call("Target.activateTarget", {"targetId": stay[0]["id"]})
+                front = stay[0]["id"]
+            except OSError:
+                pass
+    js = rainbow_tabs.load_state(rainbow_tabs.jobs_path(SHARED, a["name"]))
+    js.update({"pending": {}, "start": None, "before": [], "kept": []})
+    rainbow_tabs.save_state(rainbow_tabs.jobs_path(SHARED, a["name"]), js)
+    log(a, f"finish by {by}: stays up on {a['stayUp']['host']} — {len(closed)} other tabs closed" + (", the tab reopened" if opened else ""))
+    return 0, {"status": "stays-up", "tab": front, "closed": closed, **({"reopened": True} if opened else {})}
+
+
 UPDATE_QUIET_S = 10 * 60                     # an update restart waits for this long with no client and no tab change
 
 
@@ -1826,7 +1890,7 @@ def tabs(reg, only=None, apply=None, scheduled=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="browser-owner")
-    ap.add_argument("cmd", choices=["list", "names", "windows", "status", "start", "stop", "idle-stop", "recover", "update", "front", "heal", "mcp-config", "human-theme", "human-paint",
+    ap.add_argument("cmd", choices=["list", "names", "windows", "status", "start", "stop", "idle-stop", "recover", "update", "finish", "front", "heal", "mcp-config", "human-theme", "human-paint",
                                     "tabs", "open", "job-start", "job-end", "job-keep", "job-close", "presence"])
     ap.add_argument("agent", nargs="?")
     ap.add_argument("url", nargs="*", help="open: the address to open in the agent's own browser · job-keep: the tab ids to keep")
@@ -1970,6 +2034,20 @@ def main(argv=None):
             rainbow_receipts.write("browser-owner", "job-close", ag["name"], ag["name"], "closed", tabs=len(out["closed"]))
         if out.get("closedFromLastJob"):
             rainbow_receipts.write("browser-owner", "job-close", ag["name"], "job-start", "closed", tabs=len(out["closedFromLastJob"]))
+        print(rainbow_next.dumps(out, ensure_ascii=False))
+        return code
+    if a.cmd == "finish":                    # a session ended: off by default, or stayUp on its one tab
+        if me and me != ag["name"]:
+            code, out = 2, {"status": "refused", "why": t("bo.idle_not_yours", by=me, label=ag["label"])}
+        else:
+            ag["peers"] = list(reg)
+            try:
+                with open_lock(ag["lock"]) as lk:
+                    fcntl.flock(lk, fcntl.LOCK_EX)
+                    code, out = do_finish(ag, a.by if a.by != "agent" else ag["name"])
+            except Exception as exc:   # one JSON answer, always
+                code, out = 1, {"status": "failed", "why": f"{type(exc).__name__}: {exc}"[:200]}
+        rainbow_receipts.write("browser-owner", "finish", ag["name"], a.by, out.get("status"), closed=len(out.get("closed") or []))
         print(rainbow_next.dumps(out, ensure_ascii=False))
         return code
     if a.cmd == "front":                     # the human's request; changes nothing the owner keeps, so no lock

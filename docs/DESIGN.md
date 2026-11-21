@@ -316,6 +316,12 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   answer), `apply` closes. Before idle-stop the tabs the agent's job opened close first, with no question asked — the
   agent is idle by definition — and their addresses are kept (`lastJobUrls`), so the restored session drops them once.
   Human-activated tabs aren't tracked, so the pass never runs while the human is the one opening the browser.
+- **Off unless working** (`finish`). A session's end (the session-end hook, or the Hermes plugin) runs
+  `browser-owner finish AGENT`: the agent's browser closes — the owner's stop, recorded in `lastStop` with `finish`,
+  so a later start never reads it as a person's ⌘Q — and `restoreTabs` defaults to `none`, so the next start opens a
+  fresh window. Never while the agent holds a sign-in lock, never a `managedBy` browser, never by a peer. `stayUp`
+  (an http(s) address, per agent) instead keeps the browser up: no idle-stop, its tab is a `keepTabs` rule (host, keep 1),
+  and `finish` closes every other tab, opens that one if it is gone, and activates it; `restoreTabs` stays `lastJob`.
 - **Tabs that must stay** (`keepTabs`). Rules from the install's own `browsers.json` (top level for every agent, a row
   adds its own): `match` — a host pattern (fnmatch on the host) or, with `://`, on the whole address; `keep` (default 1)
   — how many of its tabs stay, in Chrome's order; `why`. The rules ride on the agent's CDP connection (`cdp_for`), and

@@ -33,7 +33,7 @@ H = {
             ("stop AGENT --by human [--allow-reopen]", "help.browser-owner.3", "browser-owner stop alpha --by human"),
             ("idle-stop | recover | update | front AGENT", "help.browser-owner.4", "browser-owner update all --by human"),
             ("open AGENT URL", "help.browser-owner.5", "browser-owner open alpha https://example.com"),
-            ("tabs [AGENT] [--apply] · job-start | job-end | job-keep | job-close AGENT", "help.browser-owner.6", "browser-owner job-start alpha"),
+            ("tabs [AGENT] [--apply] · job-start | job-end | job-keep | job-close | finish AGENT", "help.browser-owner.6", "browser-owner job-start alpha"),
             ("mcp-config AGENT [--tool devtools|playwright] [--format json|claude]", "help.browser-owner.7", "browser-owner mcp-config alpha --format claude"),
             ("heal | human-theme | human-paint | presence", "help.browser-owner.8", "browser-owner presence"),
         ],

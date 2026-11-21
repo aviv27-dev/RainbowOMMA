@@ -74,10 +74,10 @@ class Housekeeper:
         return self.rb.run("browser-owner.py", "job-start", self.rb.me)[1]
 
     def session_end(self, session_id: str = "") -> dict:
-        """a session ended: the job's tabs close, the screen goes back, orphaned servers stop, unused ports go back"""
+        """a session ended: the agent's browser closes (stayUp: stays on its one tab, every other tab closed), the screen goes
+        back, orphaned servers stop, unused ports go back"""
         me, out = self.rb.me, {}
-        out["jobEnd"] = self.rb.run("browser-owner.py", "job-end", me)[1]     # the job's tabs, nobody left to keep them …
-        out["tabs"] = self.rb.run("browser-owner.py", "job-close", me)[1]     # … close now
+        out["browser"] = self.rb.run("browser-owner.py", "finish", me)[1]
         out["screen"] = self.rb.run("screen-owner.py", "release", me)[1]
         out["processes"] = self.rb.run("proc-owner.py", "reap", me)[1]
         out["documents"] = self.rb.run("agent-office.py", "sweep", "--scheduled")[1]

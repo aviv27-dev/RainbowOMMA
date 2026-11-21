@@ -206,6 +206,16 @@ through the usual port — but only at a WebSocket path with the agent's own tok
 <agent>` puts in the entry (`--wsEndpoint`). `/json/*` on that port answers nobody. It keeps out other users, other
 programs and web pages; an agent running as you could still read the token file, which the guardrail refuses.
 
+### 💤 An agent's browser is off unless it's working
+By default an agent's Chrome closes when its session ends (`browser-owner finish <agent>`, run by the session-end hook),
+and its next start opens a fresh window: last session's abandoned tabs never come back, so the tab in front is always
+the one the agent is working in. Its sign-ins stay — they live in its profile, not in its tabs. A browser nobody works
+in still stops after `idleMinutes` (default 60), for agents whose framework has no session-end hook.
+An agent that must keep a warm session to one site (a portal you signed in to with a smart card, say) gets
+`"stayUp": "https://portal.example/home"` in its row: its browser never closes, and at the end of every session every
+other tab closes and that tab comes to the front (opened again if it was closed). Never while the agent holds a sign-in
+lock; never a `managedBy` browser.
+
 ### 🧺 A job's tabs close when it ends — after asking
 Every job opens a few tabs, and pages open more. `browser-owner job-start alpha` when a job begins; `job-end alpha`
 when it's done lists the tabs the job opened (title, site) and asks: `job-keep alpha <id> …` keeps what the agent still
