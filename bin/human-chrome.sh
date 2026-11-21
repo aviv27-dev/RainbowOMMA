@@ -38,19 +38,37 @@ mine() {
   done | head -1
 }
 
+# a click that "does nothing": the human's Chrome was running with every window
+# minimized, and activating a process never un-minimizes. A "reopen" Apple Event to THIS pid is what a Dock click sends: Chrome
+# restores a minimized window, or opens a new one when it has none. Sent to a pid it needs no Automation grant (kAENeverInteract:
+# never a dialog); then AppKit brings that pid forward, System Events stays the fallback.
+front() {
+  local r
+  r=$(osascript -l JavaScript -e "ObjC.import('AppKit');
+const t = \$.NSAppleEventDescriptor.descriptorWithProcessIdentifier($1);
+\$.NSAppleEventDescriptor.appleEventWithEventClassEventIDTargetDescriptorReturnIDTransactionID(0x61657674, 0x72617070, t, -1, 0)
+  .sendEventWithOptionsTimeoutError(3 | 0x10, 5, Ref());
+const a = \$.NSRunningApplication.runningApplicationWithProcessIdentifier($1);
+a.isNil() ? 'none' : String(a.activateWithOptions(\$.NSApplicationActivateAllWindows))" 2>/dev/null)
+  [ "$r" = "true" ] || osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $1) to true" >/dev/null 2>&1
+}
+
 pid=$(mine)
 if [ -n "$pid" ]; then
-  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true" >/dev/null 2>&1
+  front "$pid"
   exit 0
 fi
 
+# closed: its color from human.json goes on first (Chrome reads it at start; never while it runs) — then open it
+OWNER="$(cd "$(dirname "$0")" && pwd)/browser-owner"
+[ -x "$OWNER" ] && "$OWNER" human-paint >/dev/null 2>&1
 open -n -a "Google Chrome" --args --user-data-dir="$DATA_DIR" --no-first-run --no-default-browser-check
 for _ in $(seq 1 20); do
   pid=$(mine); [ -n "$pid" ] && break
   sleep 0.5
 done
 if [ -n "$pid" ]; then
-  osascript -e "tell application \"System Events\" to set frontmost of (first process whose unix id is $pid) to true" >/dev/null 2>&1
+  front "$pid"
 else
   notify "$(msg hc.not_up)"
   exit 1

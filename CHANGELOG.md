@@ -24,6 +24,13 @@ upgrade prints those in full.
   `RAINBOW_TEST_SWAP` in the heal and doctor checks, so a stray Chrome or a full swap doesn't turn them red.
 
 ### Fixed
+- The human's own Chrome from the Dock tray or the desktop icon: when it was running with every window minimized (or with
+  no window), the click activated it and nothing showed. The icon now sends Chrome's own "reopen" to that process, which
+  restores a minimized window or opens one, with no Automation grant, then brings it to the front.
+- The human's Chrome now takes the color in `~/.rainbowomma/human.json`: `browser-owner human-paint` writes it on the frame
+  and avatar while that Chrome is closed, and `human-chrome.sh` runs it before every cold start. The name is left alone, a
+  Web Store theme the human installed wins, the first write keeps a copy in `~/.rainbowomma/backup/human-chrome/`, and an
+  agent is refused. The desktop icons take the human's name and color from `human.json` too, as the Dock tray already did.
 - `office-owner close` right after `open` on a cold Word launch answered `gone`, dropped the lease and left the document
   open — the next open then took it for the human's. `open` now waits for the app to show the document; a close of a
   lease younger than 2 minutes looks again, and answers `unknown` (exit 3, lease kept) while the app doesn't show it.
