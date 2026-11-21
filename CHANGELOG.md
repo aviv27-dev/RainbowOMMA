@@ -24,6 +24,9 @@ upgrade prints those in full.
   `RAINBOW_TEST_SWAP` in the heal and doctor checks, so a stray Chrome or a full swap doesn't turn them red.
 
 ### Fixed
+- Hermes agents' tabs stayed open after a session: the plugin closed the session's job at its end, but never started
+  one, so there was nothing to close. Its session start now runs `job-start` in the agent's own browser, and its end runs
+  `job-end`, then `job-close`.
 - The human's own Chrome from the Dock tray or the desktop icon: when it was running with every window minimized (or with
   no window), the click activated it and nothing showed. The icon now sends Chrome's own "reopen" to that process, which
   restores a minimized window or opens one, with no Automation grant, then brings it to the front.
