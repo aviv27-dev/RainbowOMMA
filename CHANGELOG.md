@@ -38,6 +38,8 @@ stay up on one site gets `"stayUp": "https://…"` in its row; one that should b
   `RAINBOW_TEST_SWAP` in the heal and doctor checks, so a stray Chrome or a full swap doesn't turn them red.
 
 ### Fixed
+- `finish` for a `stayUp` agent left a tab open when a client was still attached to it (a browser tool's leftover
+  connection from the session that just ended). Now only the kept tabs stay.
 - Hermes agents' tabs stayed open after a session: the plugin closed the session's job at its end, but never started
   one, so there was nothing to close. Its session start now runs `job-start` in the agent's own browser, and its end runs
   `job-end`, then `job-close`.

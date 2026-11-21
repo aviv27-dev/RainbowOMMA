@@ -3617,14 +3617,14 @@ class StayCDP(KeepCDP):
         return False
 sa = dict(sreg["alpha"], peers=list(sreg))
 fin.view = lambda a, st=None, rows=None: {"status": "up"}
-sc = StayCDP([pg("j1", "https://news.example/"), pg("p1", "https://portal.example/inbox"), pg("j2", "about:blank"),
+sc = StayCDP([pg("j1", "https://news.example/", att=True), pg("p1", "https://portal.example/inbox"), pg("j2", "about:blank"),
               pg("p2", "https://portal.example/old")], sa["keepTabs"])
 fin.cdp_for = lambda a, timeout=5.0: sc
 s_code, s_out = fin.do_finish(sa, "alpha")
 sc2 = StayCDP([pg("j1", "https://news.example/"), pg("j2", "https://other.example/")], sa["keepTabs"])
 fin.cdp_for = lambda a, timeout=5.0: sc2
 s2 = fin.do_finish(sa, "alpha")[1]
-check("finish, stayUp: the browser stays — every other tab closes, its portal tab comes to the front; with that tab gone, it is opened first, then the rest close",
+check("finish, stayUp: the browser stays — every other tab closes (one a leftover client is still attached to as well), its portal tab comes to the front; with that tab gone, it is opened first, then the rest close",
       s_code == 0 and s_out["status"] == "stays-up" and sorted(sc.closed) == ["j1", "j2", "p2"] and sc.active == ["p1"] and not killed_[1:]
       and s2["status"] == "stays-up" and s2.get("reopened") and sc2.created == ["https://portal.example/home"]
       and sorted(sc2.closed) == ["j1", "j2"] and sc2.active == ["new0"], (s_out, sc.closed, sc.active, s2, sc2.closed))
