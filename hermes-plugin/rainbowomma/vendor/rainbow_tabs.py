@@ -454,12 +454,14 @@ def tidy_plan(pages, max_tabs=MAX_TABS, drop_urls=()):
     return close
 
 
-def close_tabs(cdp, ids):
-    """close these tabs through CDP — re-checked right before: a tab that got a client, or would be the last one, stays"""
+def close_tabs(cdp, ids, attached_too=False):
+    """close these tabs through CDP — re-checked right before: a tab that got a client, or would be the last one, stays.
+    attached_too (a session's end, `finish`): a client still attached is that session's own leftover connection, so only a
+    kept tab (keepTabs, stayUp) stays."""
     live = {p["id"]: p for p in pages_of(cdp)}
     closed = []
     for i in ids:
-        if i not in live or live[i]["attached"] or len(live) - len(closed) <= 1:
+        if i not in live or (live[i].get("keep") if attached_too else live[i]["attached"]) or len(live) - len(closed) <= 1:
             continue
         try:
             cdp.call("Target.closeTarget", {"targetId": i})

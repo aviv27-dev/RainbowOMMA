@@ -1299,7 +1299,8 @@ def finish_stay(a, by):
             opened = c.call("Target.createTarget", {"url": url}).get("targetId")
             pages = rainbow_tabs.pages_of(c)
             stay = [p for p in pages if p["id"] == opened or p.get("keep") == STAY_WHY]
-        closed = rainbow_tabs.close_tabs(c, [p["id"] for p in pages if not p.get("keep")])
+        closed = rainbow_tabs.close_tabs(c, [p["id"] for p in pages if not p.get("keep")], attached_too=True)   # the session is over:
+        # a client still attached to a tab (its browser tool's leftover connection) doesn't keep that tab
         front = None
         if stay:
             try:
