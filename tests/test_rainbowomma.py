@@ -3500,5 +3500,67 @@ check("human Chrome: the icon sends Chrome's own 'reopen' to that pid (restores 
 dk = (HERE.parent / "install" / "make-desktop-apps.sh").read_text(encoding="utf-8")
 check("desktop icons: the human's icon takes its name and color from human.json, like the Dock tray", "human.json" in dk and '"$HC" "$H" open human' in dk)
 
+# ── keepTabs: tabs that must stay (a session a person enters again with a smart card), from the install's own settings ──
+kr = rt.keep_rules([{"match": "*.portal.example", "keep": 2, "why": "smart-card session"}, {"match": "https://court.example/case/*"}])
+bad_kr = []
+for spec in ({"match": "x"}, [{"keep": 1}], [{"match": "x", "keep": 0}], [{"match": "x", "keep": "two"}], ["x"]):
+    try:
+        rt.keep_rules(spec); bad_kr.append(spec)
+    except ValueError:
+        pass
+check("keepTabs: rules are read with defaults (keep 1, a why), and nonsense is refused, not guessed",
+      kr == [{"match": "*.portal.example", "keep": 2, "why": "smart-card session"}, {"match": "https://court.example/case/*", "keep": 1, "why": "keepTabs"}]
+      and rt.keep_rules(None) == [] and not bad_kr, (kr, bad_kr))
+ktabs = [pg("p1", "https://login.portal.example/a"), pg("x", "https://news.example/"), pg("p2", "https://www.portal.example/b"),
+         pg("p3", "https://portal.example/c"), pg("c1", "https://court.example/case/12"), pg("c2", "https://court.example/case/13"),
+         pg("o", "https://other.example/portal.example")]
+kk = rt.kept_ids(ktabs, kr)
+check("keepTabs: a host pattern keeps that many of its tabs in Chrome's order; an address pattern matches the whole address; nothing else is kept",
+      kk == {"p1": "smart-card session", "p2": "smart-card session", "c1": "keepTabs"}, kk)
+class KeepCDP:
+    def __init__(self, tabs, rules=None):
+        self.tabs, self.closed = tabs, []
+        if rules is not None:
+            self.keep_rules = rules
+    def call(self, method, params=None, sid=None):
+        if method == "Target.getTargets":
+            return {"targetInfos": [{"targetId": t["id"], "url": t["url"], "type": "page", "attached": t["attached"]} for t in self.tabs
+                                    if t["id"] not in self.closed]}
+        if method == "Target.closeTarget":
+            self.closed.append(params["targetId"]); return {}
+        return {}
+kc, kn = KeepCDP(ktabs, kr), KeepCDP(ktabs)
+kpages = {x["id"]: x for x in rt.pages_of(kc)}
+check("keepTabs: on a connection that carries the rules, a kept tab reads as in use (with its why); without rules nothing changes",
+      kpages["p1"]["attached"] and kpages["p1"]["keep"] == "smart-card session" and not kpages["p3"]["attached"]
+      and not any(x["attached"] for x in rt.pages_of(kn)), kpages)
+kshared = tmp / "keep-shared"; kshared.mkdir()
+rt.save_state(rt.jobs_path(kshared, "alpha"), {"start": 1, "before": ["x"], "pending": {}, "kept": []})
+kc2 = KeepCDP(ktabs, kr)
+kend = rt.job_end(kc2, kshared, "alpha", grace=0, now=10)
+rt.job_close(kc2, kshared, "alpha", now=20)
+ktidy = rt.tidy_plan(rt.pages_of(KeepCDP(ktabs, kr)), max_tabs=1)
+check("keepTabs: a finished job closes the tabs it opened but the kept ones (2 of the portal's, the case page); the tidy pass leaves them too",
+      sorted(kc2.closed) == ["c2", "o", "p3"] and not {"p1", "p2", "c1"} & {x["id"] for x in ktidy}, (kend, kc2.closed, ktidy))
+kreg = json.loads(REG.read_text()); kreg["keepTabs"] = [{"match": "*.portal.example", "why": "smart-card session"}]
+kreg["agents"]["alpha"]["keepTabs"] = [{"match": "*.bank.example", "keep": 1}]
+kreg_f = tmp / "keep-reg.json"; kreg_f.write_text(json.dumps(kreg))
+kr_all = bo.registry(kreg_f)
+kreg["agents"]["charlie"]["keepTabs"] = [{"match": ""}]; kreg_f2 = tmp / "keep-reg-bad.json"; kreg_f2.write_text(json.dumps(kreg))
+try:
+    bo.registry(kreg_f2); k_bad = None
+except ValueError as exc:
+    k_bad = str(exc)
+real_cdp_ = bo.Cdp
+bo.Cdp = lambda *a_, **k_: type("C", (), {})()
+try:
+    k_conn = bo.cdp_for(kr_all["alpha"]).keep_rules
+finally:
+    bo.Cdp = real_cdp_
+check("keepTabs in browsers.json: the top-level rules apply to every agent, a row adds its own, the connection carries them; a bad rule names the agent",
+      [x["match"] for x in kr_all["alpha"]["keepTabs"]] == ["*.portal.example", "*.bank.example"]
+      and [x["match"] for x in kr_all["charlie"]["keepTabs"]] == ["*.portal.example"]
+      and k_conn == kr_all["alpha"]["keepTabs"] and k_bad and k_bad.startswith("charlie"), (kr_all["alpha"]["keepTabs"], k_bad))
+
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

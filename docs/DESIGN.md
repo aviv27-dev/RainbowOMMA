@@ -316,6 +316,12 @@ cua-driver cursor-theme list            # com.rainbowomma.cursor.<agent> …
   answer), `apply` closes. Before idle-stop the tabs the agent's job opened close first, with no question asked — the
   agent is idle by definition — and their addresses are kept (`lastJobUrls`), so the restored session drops them once.
   Human-activated tabs aren't tracked, so the pass never runs while the human is the one opening the browser.
+- **Tabs that must stay** (`keepTabs`). Rules from the install's own `browsers.json` (top level for every agent, a row
+  adds its own): `match` — a host pattern (fnmatch on the host) or, with `://`, on the whole address; `keep` (default 1)
+  — how many of its tabs stay, in Chrome's order; `why`. The rules ride on the agent's CDP connection (`cdp_for`), and
+  `pages_of()` / the sweep's `sample()` report a kept tab as attached, so every closing path — a job's end, idle-stop,
+  heal's job leftovers, the tidy pass, the CPU sweep — already leaves it alone. A bad rule is a registry error that names
+  the agent. The repository ships no site names; an install lists its own.
 
 ## 16. auth-owner — one agent at a time signs in (optional)
 - **Off by default.** Only sites under `"authSites"` in `browsers.json` count (a host or any subdomain of it).

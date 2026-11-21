@@ -8,6 +8,10 @@ upgrade prints those in full.
 ## [Unreleased]
 
 ### Added
+- `keepTabs` in `browsers.json`: tabs that stay open, for a session a person must enter again with a smart card and
+  PIN. Set it at the top level for every agent, or in an agent's row for that agent only: `match` is a host pattern, or
+  an address pattern with `://`, and `keep` (default 1) is how many tabs stay. Nothing closes or reloads them: not a
+  finished job, idle-stop, heal, the tidy pass or the CPU sweep. The repository ships no site names.
 - A job's tabs without the agent asking: `rainbowomma-session-start` (job-start, only in a browser that is already up) and
   `rainbowomma-session-end` (job-end: the session's tabs close once their grace runs out) are wired in the Claude Code,
   Factory Droid, Gemini CLI and Copilot CLI adapters. Tabs a finished job left close at the next heal run or the next

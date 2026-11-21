@@ -191,6 +191,13 @@ reload and close go through CDP. It is a **dry run** until `browsers.json` says 
 reports what it would do, in its answer and in the log. `install.sh --with-tab-sweep` runs it every 15 minutes, with one
 summary a day and a notification for every tab it closes.
 
+**Tabs that must stay.** Some sessions die with their tab, and a person has to enter them again (a smart card and its
+PIN, say). List them in your own `browsers.json`, never in the code:
+`"keepTabs": [{"match": "*.portal.example", "keep": 1, "why": "smart-card session"}]` at the top level (every agent) or in
+an agent's row (that agent only). `match` is a host pattern, or a pattern on the whole address when it has `://`; `keep`
+is how many of its tabs stay (the most recently used first). Nothing closes or reloads those: not a finished job, not
+the tidy pass, not the sweep.
+
 ### 🔐 No open DevTools port (optional: `"cdp": "pipe"`)
 Chrome's DevTools port answers any program on the Mac that connects to it. Give an agent `"cdp": "pipe"` in
 `browsers.json` and its Chrome starts with `--remote-debugging-pipe` behind `cdp-broker`, the only one holding the pipe:
